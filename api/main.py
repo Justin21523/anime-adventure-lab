@@ -6,6 +6,7 @@ Main entry point for the API server
 
 import logging
 import uvicorn
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,8 +21,10 @@ sys.path.append(str(ROOT_DIR))
 from core.shared_cache import bootstrap_cache
 from core.config import get_config
 
+cache = bootstrap_cache()
+
 # Import routers (will be implemented in later stages)
-from api.routers import health
+from api.routers import health, llm
 
 # Setup logging
 logging.basicConfig(
@@ -84,11 +87,17 @@ def create_app() -> FastAPI:
             content={"detail": "Internal server error", "type": type(exc).__name__},
         )
 
+    # Health check
+    @app.get("/healthz")
+    async def root_health():
+        """Root health check"""
+        return {"status": "ok", "service": "saga-forge-api", "version": "0.1.0"}
+
     # Include routers
     app.include_router(health.router, prefix="/api/v1", tags=["health"])
 
     # Future routers (placeholders)
-    # app.include_router(llm.router, prefix="/api/v1", tags=["llm"])
+    app.include_router(llm.router, prefix="/api/v1", tags=["llm"])
     # app.include_router(rag.router, prefix="/api/v1", tags=["rag"])
     # app.include_router(t2i.router, prefix="/api/v1", tags=["t2i"])
     # app.include_router(vlm.router, prefix="/api/v1", tags=["vlm"])
