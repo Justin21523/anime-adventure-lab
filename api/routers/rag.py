@@ -15,9 +15,14 @@ sys.path.append(str(ROOT_DIR))
 sys.path.append("../..")
 
 from api.dependencies import AI_CACHE_ROOT, APP_DIRS
+from core.shared_cache import bootstrap_cache
 from core.rag.engine import ChineseRAGEngine, DocumentMetadata
 
-router = APIRouter()
+# Setup cache on module import
+cache = bootstrap_cache()
+
+router = APIRouter(prefix="/rag", tags=["RAG"])
+
 # Initialize RAG engine
 rag_engine = ChineseRAGEngine(APP_DIRS["RAG_INDEX"])
 

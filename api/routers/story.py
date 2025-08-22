@@ -6,6 +6,14 @@ import json
 import logging
 from datetime import datetime
 
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT_DIR))
+sys.path.append("../..")
+
+from core.shared_cache import bootstrap_cache
 from core.story.engine import StoryEngine, TurnRequest
 from core.story.game_state import GameState, RelationType
 from core.story.persona import PersonaManager
@@ -13,6 +21,10 @@ from core.rag.engine import ChineseRAGEngine
 from core.llm.adapter import LLMAdapter
 
 logger = logging.getLogger(__name__)
+
+# Setup cache on module import
+cache = bootstrap_cache()
+
 router = APIRouter(prefix="/story", tags=["story"])
 
 
