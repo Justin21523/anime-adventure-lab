@@ -1,0 +1,4 @@
+embed_model: "bge-m3"
+chunk_chars: 700
+overlap_chars: 120
+top_k: 8

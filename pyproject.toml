@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "saga-forge"
+version = "0.1.0"
+description = "LLM + RAG + T2I + VLM + LoRA service stack (FastAPI + Celery)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []

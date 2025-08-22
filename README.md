@@ -1,1 +1,2 @@
-# anime-adventure-lab
+# SagaForge (skeleton)
+See README in chat.
