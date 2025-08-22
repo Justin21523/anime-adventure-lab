@@ -1,1 +1,31 @@
-style_id: anime
+# configs/presets/anime_style.yaml
+style_id: "anime_style"
+description: "High quality anime style with vibrant colors"
+base_model: "stabilityai/stable-diffusion-xl-base-1.0"
+
+# Prompt templates
+prompt_template: "{prompt}, anime style, highly detailed, vibrant colors"
+style_suffix: "masterpiece, best quality, ultra-detailed, illustration, 4k"
+negative_prompt: "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, artist name, monochrome, zombie"
+
+# Generation defaults
+default_params:
+  width: 768
+  height: 768
+  num_inference_steps: 25
+  guidance_scale: 7.5
+
+# Lora settings (if available)
+lora:
+  enabled: false
+  path: null
+  scale: 0.75
+
+# Usage examples
+examples:
+  - prompt: "a girl with blue hair in school uniform"
+    description: "校園少女角色"
+  - prompt: "mountain landscape at sunset"
+    description: "動畫風格風景"
+  - prompt: "cyberpunk city street at night"
+    description: "賽博龐克場景"

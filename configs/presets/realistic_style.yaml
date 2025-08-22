@@ -1,1 +1,25 @@
-style_id: realistic
+# configs/presets/realistic.yaml
+style_id: "realistic"
+description: "Photorealistic style with natural lighting"
+base_model: "stabilityai/stable-diffusion-xl-base-1.0"
+
+prompt_template: "{prompt}, photorealistic, natural lighting, high resolution"
+style_suffix: "professional photography, sharp focus, realistic textures, detailed"
+negative_prompt: "cartoon, anime, painting, drawing, illustration, sketch, low quality, blurry, oversaturated, plastic, artificial"
+
+default_params:
+  width: 1024
+  height: 768
+  num_inference_steps: 30
+  guidance_scale: 6.0
+
+lora:
+  enabled: false
+  path: null
+  scale: 0.6
+
+examples:
+  - prompt: "portrait of a woman in business suit"
+    description: "商務人像攝影"
+  - prompt: "modern office interior with large windows"
+    description: "室內建築攝影"
