@@ -3,6 +3,12 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 import json
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT_DIR))
+sys.path.append("../..")
 
 from core.shared_cache import bootstrap_cache
 from core.llm.transformers_llm import TransformersLLM
