@@ -1,25 +1,50 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
 .venv/
+venv/
 .env
 .env.*
 *.log
-outputs/
-storage/
-ai_warehouse/
-datasets/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Large files/models (use AI_CACHE_ROOT instead)
 models/
+datasets/
+outputs/
 checkpoints/
 *.safetensors
 *.pt
 *.ckpt
 *.bin
+*.pth
+
+# Cache directories
+ai_warehouse/
+storage/
+cache/
+.cache/
+
+# Node/React (future frontend)
 node_modules/
 dist/
 build/
-.vscode/
-.idea/
-.DS_Store
-.pytest_cache/
-.coverage
-htmlcov/
+*.tsbuildinfo
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Temporary
+tmp/
+temp/
+*.tmp
