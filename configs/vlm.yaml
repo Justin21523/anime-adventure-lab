@@ -1,0 +1,191 @@
+# configs/vlm.yaml
+# VLM (Vision-Language Model) Configuration for SagaForge
+# Optimized for low-VRAM environments (4GB+ GPU)
+
+# Default model selection
+default_model: "blip2" # Options: blip2, llava
+
+# Device configuration
+device: "auto" # auto, cuda, cpu
+low_vram: true # Enable memory optimizations
+
+# Model configurations
+models:
+  # BLIP-2 Models (recommended for low VRAM)
+  blip2:
+    model_name: "Salesforce/blip2-opt-2.7b" # Smaller than 6.7b variant
+    quantization: "4bit" # 4bit, 8bit, none
+    torch_dtype: "float16"
+    load_in_4bit: true
+    bnb_4bit_use_double_quant: true
+    bnb_4bit_quant_type: "nf4"
+    bnb_4bit_compute_dtype: "float16"
+
+  # LLaVA Models (higher VRAM requirements)
+  llava:
+    model_name: "liuhaotian/llava-v1.6-mistral-7b"
+    quantization: "8bit" # 8bit recommended for LLaVA
+    torch_dtype: "float16"
+    load_in_8bit: true
+
+  # Alternative smaller models
+  blip2_small:
+    model_name: "Salesforce/blip2-flan-t5-xl" # Even smaller
+    quantization: "4bit"
+    torch_dtype: "float16"
+
+# WD14 Tagger Configuration
+wd14:
+  model_name: "SmilingWolf/wd-v1-4-convnext-tagger-v2"
+  threshold: 0.35 # Confidence threshold for tags
+  max_tags: 50 # Maximum tags to return
+  filter_nsfw: true # Automatically filter NSFW tags
+
+  # Alternative models
+  alternatives:
+    - "SmilingWolf/wd-v1-4-swinv2-tagger-v2" # SwinV2 variant
+    - "SmilingWolf/wd-v1-4-vit-tagger-v2" # ViT variant
+
+# Consistency Checking
+consistency:
+  embed_model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+  semantic_threshold: 0.6 # Similarity threshold for consistency
+  character_weight: 0.4 # Weight for character consistency
+  scene_weight: 0.3 # Weight for scene consistency
+  semantic_weight: 0.3 # Weight for semantic consistency
+
+  # Severity thresholds
+  severity_thresholds:
+    high: 0.3 # Below this similarity = high severity
+    medium: 0.6 # Below this similarity = medium severity
+    low: 0.8 # Below this similarity = low severity
+
+# Memory Management
+memory:
+  # Automatic model unloading
+  auto_unload: true
+  unload_timeout: 300 # Seconds of inactivity before unload
+
+  # Memory limits
+  max_gpu_memory: 4096 # MB, adjust based on your GPU
+  memory_warning_threshold: 0.8 # Warn when 80% memory used
+
+  # Garbage collection
+  gc_after_inference: true
+  torch_empty_cache: true
+
+# Image Processing
+image:
+  # Preprocessing
+  max_size: 1024 # Maximum image dimension
+  resize_method: "lanczos" # lanczos, bicubic, bilinear
+  normalize: true
+
+  # Supported formats
+  supported_formats: ["jpg", "jpeg", "png", "webp", "bmp"]
+  max_file_size: 10485760 # 10MB in bytes
+
+  # Batch processing
+  batch_size: 1 # Process images one at a time for low VRAM
+  max_batch_images: 20 # Maximum images in batch request
+
+# API Configuration
+api:
+  # Request limits
+  max_concurrent_requests: 2 # Limit concurrent VLM requests
+  request_timeout: 60 # Seconds
+
+  # Response options
+  include_debug_info: false # Include model internals in response
+  return_confidence_scores: true
+
+  # Caching
+  enable_cache: true
+  cache_ttl: 3600 # Cache results for 1 hour
+
+# Prompt Templates
+prompts:
+  # Default prompts for different scenarios
+  general: "Describe this image in detail"
+  character: "Describe the character in this image, including their appearance, clothing, and expression"
+  scene: "Describe the setting and environment shown in this image"
+  mood: "What mood or emotion does this image convey?"
+  style: "Describe the artistic style and visual characteristics of this image"
+
+  # Multilingual prompts
+  zh:
+    general: "詳細描述這張圖片"
+    character: "描述圖片中的角色，包括外觀、服裝和表情"
+    scene: "描述圖片中的場景和環境"
+    mood: "這張圖片傳達了什麼情緒或氛圍？"
+
+# Fallback Configuration
+fallback:
+  # When primary model fails
+  enable_fallback: true
+  fallback_model: "blip2_small"
+
+  # CPU fallback
+  cpu_fallback: true
+  cpu_model: "blip2_small"
+
+  # Error handling
+  max_retries: 3
+  retry_delay: 1.0 # Seconds
+
+# Logging
+logging:
+  level: "INFO" # DEBUG, INFO, WARNING, ERROR
+  log_model_loading: true
+  log_inference_time: true
+  log_memory_usage: true
+
+  # Performance metrics
+  track_metrics: true
+  metrics_file: "vlm_metrics.json"
+
+# Development/Debug Options
+debug:
+  save_processed_images: false # Save preprocessed images for debugging
+  output_raw_logits: false # Include raw model outputs
+  profile_memory: false # Detailed memory profiling
+  timing_breakdown: false # Detailed timing information
+
+# Model-specific optimizations
+optimizations:
+  # BLIP-2 specific
+  blip2:
+    enable_xformers: true # Use xformers for attention
+    gradient_checkpointing: true
+    use_flash_attention: false # May not be available
+
+  # LLaVA specific
+  llava:
+    enable_xformers: true
+    gradient_checkpointing: true
+    use_better_transformer: false
+
+# Environment-specific overrides
+environments:
+  development:
+    logging:
+      level: "DEBUG"
+    debug:
+      save_processed_images: true
+      timing_breakdown: true
+
+  production:
+    memory:
+      auto_unload: true
+      unload_timeout: 180
+    api:
+      max_concurrent_requests: 1
+    logging:
+      level: "WARNING"
+
+  testing:
+    models:
+      blip2:
+        model_name: "Salesforce/blip2-opt-2.7b" # Consistent for tests
+    memory:
+      auto_unload: false # Keep loaded for faster tests
