@@ -14,6 +14,13 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File,
 from pydantic import BaseModel, Field
 import yaml
 
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT_DIR))
+sys.path.append("../..")
+
 from workers.tasks.training import train_lora_task
 from workers.utils.job_tracker import JobTracker
 
