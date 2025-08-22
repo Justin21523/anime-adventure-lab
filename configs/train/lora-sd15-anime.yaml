@@ -1,0 +1,51 @@
+# LoRA Training Config for SD1.5 Anime Characters
+base_model: "runwayml/stable-diffusion-v1-5"
+model_type: "sd15" # sd15 | sdxl
+resolution: 768
+rank: 16
+alpha: 32 # typically rank * 2
+learning_rate: 1e-4
+text_encoder_lr: 0.0 # 0 = freeze text encoder (recommended for anime)
+train_steps: 4000
+batch_size: 1
+gradient_accumulation_steps: 8
+seed: 42
+mixed_precision: "fp16"
+gradient_checkpointing: true
+use_8bit_adam: true
+caption_dropout: 0.05
+min_snr_gamma: 5.0
+noise_offset: 0.1
+
+# Validation during training
+validation_prompts:
+  - "portrait of <token> in school uniform, looking at viewer, anime style"
+  - "<token> sitting in cafe, gentle smile, warm lighting"
+  - "close-up of <token>, outdoor scene, cherry blossoms"
+validation_steps: 500
+num_validation_images: 2
+
+# Dataset configuration
+dataset:
+  root: "../ai_warehouse/datasets/anime-char-sample"
+  train_list: "splits/train.txt" # list of image filenames
+  caption_dir: "captions" # .txt files with same basename
+  image_dir: "images"
+  instance_token: "<token>" # placeholder in captions
+  class_token: "anime character" # for prior preservation (optional)
+  dropout_tags: ["rating:questionable", "rating:explicit"] # filter out
+
+# Output configuration
+output:
+  dir: "../ai_warehouse/outputs/lora"
+  run_id: "${timestamp}_${character_name}" # auto-generated if not specified
+  save_every: 500
+  sample_every: 250
+
+# Low-VRAM optimizations
+optimizations:
+  enable_xformers: true
+  gradient_checkpointing: true
+  use_8bit_adam: true
+  mixed_precision: "fp16"
+  cpu_offload_optimizer: false # enable if very low VRAM
