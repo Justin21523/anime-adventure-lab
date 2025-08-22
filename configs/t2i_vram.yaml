@@ -1,0 +1,92 @@
+# configs/t2i_vram.yaml
+# T2I Pipeline VRAM optimization settings
+
+# Memory profiles for different VRAM sizes
+profiles:
+  low_vram_4gb:
+    # For 4GB VRAM (minimum viable)
+    torch_dtype: "float16"
+    enable_attention_slicing: true
+    enable_vae_slicing: true
+    enable_cpu_offload: true
+    enable_sequential_cpu_offload: true
+    max_resolution: 512
+    recommended_steps: 20
+    batch_size: 1
+
+  medium_vram_8gb:
+    # For 8GB VRAM (good balance)
+    torch_dtype: "float16"
+    enable_attention_slicing: true
+    enable_vae_slicing: true
+    enable_cpu_offload: false
+    enable_sequential_cpu_offload: false
+    max_resolution: 768
+    recommended_steps: 25
+    batch_size: 1
+
+  high_vram_12gb:
+    # For 12GB+ VRAM (performance focus)
+    torch_dtype: "float16"
+    enable_attention_slicing: false
+    enable_vae_slicing: false
+    enable_cpu_offload: false
+    enable_sequential_cpu_offload: false
+    max_resolution: 1024
+    recommended_steps: 30
+    batch_size: 2
+
+# Model-specific optimizations
+models:
+  "runwayml/stable-diffusion-v1-5":
+    base_vram_mb: 2048
+    supports_xformers: true
+    supports_cpu_offload: true
+    recommended_profile: "medium_vram_8gb"
+
+  "stabilityai/stable-diffusion-xl-base-1.0":
+    base_vram_mb: 6144
+    supports_xformers: true
+    supports_cpu_offload: true
+    recommended_profile: "high_vram_12gb"
+    fallback_profile: "medium_vram_8gb"
+
+# Generation parameter limits by VRAM
+parameter_limits:
+  low_vram:
+    max_width: 512
+    max_height: 512
+    max_steps: 25
+    max_guidance_scale: 10.0
+
+  medium_vram:
+    max_width: 768
+    max_height: 768
+    max_steps: 35
+    max_guidance_scale: 15.0
+
+  high_vram:
+    max_width: 1024
+    max_height: 1024
+    max_steps: 50
+    max_guidance_scale: 20.0
+
+# Automatic optimization settings
+auto_optimization:
+  # Monitor VRAM usage and adjust
+  monitor_memory: true
+
+  # Automatic fallback strategies
+  fallback_strategies:
+    - "reduce_resolution"
+    - "enable_cpu_offload"
+    - "reduce_steps"
+    - "enable_attention_slicing"
+
+  # Memory thresholds (MB)
+  memory_warning_threshold: 6144
+  memory_error_threshold: 1024
+
+  # Auto-retry with lower settings
+  auto_retry: true
+  max_retries: 3
