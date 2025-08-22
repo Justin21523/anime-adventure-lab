@@ -1,8 +1,23 @@
 # core/story/engine.py
 import json
-from typing import Dict, Any, Optional
-from ..llm.adapter import LLMAdapter
-from ..llm.prompt_templates import PromptTemplates
+from typing import Dict, List, Optional, Any, Tuple
+import logging
+from dataclasses import dataclass
+from datetime import datetime
+
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT_DIR))
+sys.path.append("../..")
+
+from core.llm.adapter import LLMAdapter
+from core.llm.prompt_templates import PromptTemplates
+from .game_state import GameState, EventType, RelationType
+from .choice_resolver import ChoiceResolver
+from .persona import PersonaManager
+from core.rag.engine import ChineseRAGEngine
 from .data_structures import (
     Persona,
     GameState,
@@ -31,7 +46,7 @@ class StoryEngine:
                 request.player_input,
                 request.persona,
                 request.game_state,
-                request.choice_id, # type: ignore
+                request.choice_id,  # type: ignore
             )
 
             # Format messages for LLM
