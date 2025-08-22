@@ -1,9 +1,12 @@
 # api/routers/monitoring.py
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from typing import Dict, Any, Optional
 import psutil
 import torch
 import time
+from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 import json
 from pathlib import Path
@@ -15,12 +18,38 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 sys.path.append("../..")
 
+from core.config import get_settings
+from core.database import get_db_session
 from core.performance.memory_manager import MemoryManager, MemoryConfig
 from core.performance.cache_manager import CacheManager, CacheConfig
+from workers.celery_app import celery_app
 
 # Global instances
 memory_manager = None
 cache_manager = None
+
+
+class HealthStatus(BaseModel):
+    service: str
+    status: str  # "healthy", "degraded", "unhealthy"
+    latency_ms: Optional[float] = None
+    details: Optional[Dict[str, Any]] = None
+
+
+class SystemMetrics(BaseModel):
+    timestamp: datetime
+    cpu_percent: float
+    memory_percent: float
+    disk_percent: float
+    gpu_info: Optional[Dict[str, Any]] = None
+    active_workers: int
+    queue_depth: int
+    uptime_seconds: float
+
+
+# Global startup time for uptime calculation
+startup_time = time.time()
+
 
 def get_managers():
     global memory_manager, cache_manager
@@ -30,50 +59,6 @@ def get_managers():
         cache_manager = CacheManager(CacheConfig())
     return memory_manager, cache_manager
 
-@router.get("/metrics")
-def get_detailed_metrics():
-    """Get detailed system metrics"""
-    mm, cm = get_managers()
-
-    # System metrics
-    cpu_percent = psutil.cpu_percent(interval=1)
-    memory = psutil.virtual_memory()
-    disk = psutil.disk_usage('/')
-
-    # GPU metrics
-    gpu_metrics = {}
-    if torch.cuda.is_available():
-        gpu_metrics = {
-            "device_count": torch.cuda.device_count(),
-            "current_device": torch.cuda.current_device(),
-            "device_name": torch.cuda.get_device_name(),
-            "memory_allocated": torch.cuda.memory_allocated() / 1024**3,
-            "memory_reserved": torch.cuda.memory_reserved() / 1024**3,
-            "memory_total": torch.cuda.get_device_properties(0).total_memory / 1024**3,
-            "utilization_percent": None  # Would need nvidia-ml-py for this
-        }
-
-    # Cache metrics
-    cache_stats = cm.get_cache_stats()
-
-    # Memory manager stats
-    memory_stats = mm.get_memory_info()
-
-    return {
-        "timestamp": datetime.now().isoformat(),
-        "system": {
-            "cpu_percent": cpu_percent,
-            "memory_total_gb": memory.total / 1024**3,
-            "memory_used_gb": memory.used / 1024**3,
-            "memory_percent": memory.percent,
-            "disk_total_gb": disk.total / 1024**3,
-            "disk_used_gb": disk.used / 1024**3,
-            "disk_percent": disk.percent
-        },
-        "gpu": gpu_metrics,
-        "cache": cache_stats,
-        "memory_manager": memory_stats
-    }
 
 @router.get("/models")
 def get_loaded_models():
@@ -85,15 +70,15 @@ def get_loaded_models():
         try:
             model_info = {
                 "loaded_at": datetime.now().isoformat(),  # Would track this properly
-                "device": str(getattr(model, 'device', 'unknown')),
-                "dtype": str(getattr(model, 'dtype', 'unknown')),
-                "memory_usage": mm.memory_usage.get(model_key, {})
+                "device": str(getattr(model, "device", "unknown")),
+                "dtype": str(getattr(model, "dtype", "unknown")),
+                "memory_usage": mm.memory_usage.get(model_key, {}),
             }
 
             # Try to get model size
-            if hasattr(model, 'num_parameters'):
+            if hasattr(model, "num_parameters"):
                 model_info["parameters"] = model.num_parameters()
-            elif hasattr(model, 'get_memory_footprint'):
+            elif hasattr(model, "get_memory_footprint"):
                 model_info["memory_footprint"] = model.get_memory_footprint()
 
             models_info[model_key] = model_info
@@ -104,8 +89,9 @@ def get_loaded_models():
     return {
         "timestamp": datetime.now().isoformat(),
         "loaded_models": models_info,
-        "total_loaded": len(models_info)
+        "total_loaded": len(models_info),
     }
+
 
 @router.post("/cleanup")
 def force_cleanup():
@@ -128,10 +114,11 @@ def force_cleanup():
         "memory_before": initial_memory,
         "memory_after": final_memory,
         "gpu_memory_freed_gb": (
-            initial_memory.get("gpu_allocated_gb", 0) -
-            final_memory.get("gpu_allocated_gb", 0)
-        )
+            initial_memory.get("gpu_allocated_gb", 0)
+            - final_memory.get("gpu_allocated_gb", 0)
+        ),
     }
+
 
 @router.post("/models/{model_key}/unload")
 def unload_model(model_key: str):
@@ -150,10 +137,11 @@ def unload_model(model_key: str):
         "model_key": model_key,
         "timestamp": datetime.now().isoformat(),
         "memory_freed_gb": (
-            initial_memory.get("gpu_allocated_gb", 0) -
-            final_memory.get("gpu_allocated_gb", 0)
-        )
+            initial_memory.get("gpu_allocated_gb", 0)
+            - final_memory.get("gpu_allocated_gb", 0)
+        ),
     }
+
 
 @router.get("/cache/stats")
 def get_cache_detailed_stats():
@@ -169,11 +157,13 @@ def get_cache_detailed_stats():
         cache_dir = Path(cm.config.disk_cache_dir)
 
         # Count by prefix
-        for prefix in ['emb:', 'img:', 'kv:']:
-            files = list(cache_dir.glob(f"{prefix}*.json")) + list(cache_dir.glob(f"{prefix}*.pkl"))
-            cache_breakdown[prefix.rstrip(':')] = {
+        for prefix in ["emb:", "img:", "kv:"]:
+            files = list(cache_dir.glob(f"{prefix}*.json")) + list(
+                cache_dir.glob(f"{prefix}*.pkl")
+            )
+            cache_breakdown[prefix.rstrip(":")] = {
                 "files": len(files),
-                "size_mb": sum(f.stat().st_size for f in files) / 1024**2
+                "size_mb": sum(f.stat().st_size for f in files) / 1024**2,
             }
 
     except Exception as e:
@@ -182,8 +172,9 @@ def get_cache_detailed_stats():
     return {
         "timestamp": datetime.now().isoformat(),
         "overview": stats,
-        "breakdown": cache_breakdown
+        "breakdown": cache_breakdown,
     }
+
 
 @router.post("/cache/cleanup")
 def cleanup_cache():
@@ -200,10 +191,11 @@ def cleanup_cache():
         "files_before": initial_stats.get("disk_cache_files", 0),
         "files_after": final_stats.get("disk_cache_files", 0),
         "size_freed_mb": (
-            initial_stats.get("disk_cache_size_mb", 0) -
-            final_stats.get("disk_cache_size_mb", 0)
-        )
+            initial_stats.get("disk_cache_size_mb", 0)
+            - final_stats.get("disk_cache_size_mb", 0)
+        ),
     }
+
 
 @router.get("/performance/recommendations")
 def get_performance_recommendations():
@@ -217,57 +209,70 @@ def get_performance_recommendations():
 
     # Memory recommendations
     gpu_usage_percent = (
-        memory_info.get("gpu_allocated_gb", 0) /
-        memory_info.get("gpu_total_gb", 8) * 100
+        memory_info.get("gpu_allocated_gb", 0)
+        / memory_info.get("gpu_total_gb", 8)
+        * 100
     )
 
     if gpu_usage_percent > 80:
-        recommendations.append({
-            "type": "memory",
-            "priority": "high",
-            "message": "GPU memory usage is high. Consider enabling CPU offload or reducing batch size.",
-            "action": "Enable cpu_offload in memory config"
-        })
+        recommendations.append(
+            {
+                "type": "memory",
+                "priority": "high",
+                "message": "GPU memory usage is high. Consider enabling CPU offload or reducing batch size.",
+                "action": "Enable cpu_offload in memory config",
+            }
+        )
 
     if memory_info.get("memory_percent", 0) > 85:
-        recommendations.append({
-            "type": "memory",
-            "priority": "medium",
-            "message": "RAM usage is high. Consider closing unused applications.",
-            "action": "Free system RAM"
-        })
+        recommendations.append(
+            {
+                "type": "memory",
+                "priority": "medium",
+                "message": "RAM usage is high. Consider closing unused applications.",
+                "action": "Free system RAM",
+            }
+        )
 
     # Cache recommendations
     if cache_stats.get("disk_cache_size_mb", 0) > 1000:
-        recommendations.append({
-            "type": "cache",
-            "priority": "low",
-            "message": "Cache size is large. Consider cleanup to free disk space.",
-            "action": "Run cache cleanup"
-        })
+        recommendations.append(
+            {
+                "type": "cache",
+                "priority": "low",
+                "message": "Cache size is large. Consider cleanup to free disk space.",
+                "action": "Run cache cleanup",
+            }
+        )
 
     if not cache_stats.get("redis_available", False):
-        recommendations.append({
-            "type": "cache",
-            "priority": "medium",
-            "message": "Redis is not available. Performance may be degraded.",
-            "action": "Start Redis server"
-        })
+        recommendations.append(
+            {
+                "type": "cache",
+                "priority": "medium",
+                "message": "Redis is not available. Performance may be degraded.",
+                "action": "Start Redis server",
+            }
+        )
 
     # Performance recommendations
     if not mm.config.enable_xformers:
-        recommendations.append({
-            "type": "performance",
-            "priority": "medium",
-            "message": "xformers is disabled. Enable for better memory efficiency.",
-            "action": "Enable xformers in config"
-        })
+        recommendations.append(
+            {
+                "type": "performance",
+                "priority": "medium",
+                "message": "xformers is disabled. Enable for better memory efficiency.",
+                "action": "Enable xformers in config",
+            }
+        )
 
     return {
         "timestamp": datetime.now().isoformat(),
         "recommendations": recommendations,
-        "total_recommendations": len(recommendations)
-    }get("/health")
+        "total_recommendations": len(recommendations),
+    }
+
+
 def get_system_health():
     """Get overall system health status"""
     try:
@@ -285,12 +290,15 @@ def get_system_health():
             health_status = "warning"
             issues.append("High RAM usage")
 
-        if memory_info.get("gpu_allocated_gb", 0) > memory_info.get("gpu_total_gb", 8) * 0.9:
+        if (
+            memory_info.get("gpu_allocated_gb", 0)
+            > memory_info.get("gpu_total_gb", 8) * 0.9
+        ):
             health_status = "warning"
             issues.append("High GPU memory usage")
 
         # Check disk space
-        disk_usage = psutil.disk_usage('/')
+        disk_usage = psutil.disk_usage("/")
         if disk_usage.percent > 90:
             health_status = "critical"
             issues.append("Low disk space")
@@ -301,12 +309,250 @@ def get_system_health():
             "issues": issues,
             "memory": memory_info,
             "cache": cache_stats,
-            "disk_usage_percent": disk_usage.percent
+            "disk_usage_percent": disk_usage.percent,
         }
 
     except Exception as e:
         return {
             "status": "error",
             "timestamp": datetime.now().isoformat(),
-            "error": str(e)
+            "error": str(e),
         }
+
+
+@router.get("/health", response_model=Dict[str, HealthStatus])
+async def health_check(db: AsyncSession = Depends(get_db_session)):
+    """Comprehensive health check for all services"""
+    settings = get_settings()
+    health_status = {}
+
+    # Database health
+    try:
+        start_time = time.time()
+        result = await db.execute("SELECT 1")
+        latency = (time.time() - start_time) * 1000
+        health_status["database"] = HealthStatus(
+            service="database", status="healthy", latency_ms=latency
+        )
+    except Exception as e:
+        health_status["database"] = HealthStatus(
+            service="database", status="unhealthy", details={"error": str(e)}
+        )
+
+    # Redis health
+    try:
+        start_time = time.time()
+        r = redis.from_url(settings.redis_url)
+        r.ping()
+        latency = (time.time() - start_time) * 1000
+        health_status["redis"] = HealthStatus(
+            service="redis", status="healthy", latency_ms=latency
+        )
+    except Exception as e:
+        health_status["redis"] = HealthStatus(
+            service="redis", status="unhealthy", details={"error": str(e)}
+        )
+
+    # GPU health
+    try:
+        if torch.cuda.is_available():
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory
+            gpu_allocated = torch.cuda.memory_allocated(0)
+            gpu_percent = (gpu_allocated / gpu_memory) * 100
+
+            health_status["gpu"] = HealthStatus(
+                service="gpu",
+                status="healthy" if gpu_percent < 90 else "degraded",
+                details={
+                    "device_name": torch.cuda.get_device_name(0),
+                    "memory_used_gb": gpu_allocated / 1024**3,
+                    "memory_total_gb": gpu_memory / 1024**3,
+                    "memory_percent": gpu_percent,
+                },
+            )
+        else:
+            health_status["gpu"] = HealthStatus(
+                service="gpu",
+                status="unavailable",
+                details={"message": "No CUDA devices available"},
+            )
+    except Exception as e:
+        health_status["gpu"] = HealthStatus(
+            service="gpu", status="unhealthy", details={"error": str(e)}
+        )
+
+    # Celery worker health
+    try:
+        active_workers = celery_app.control.inspect().active()
+        worker_count = len(active_workers) if active_workers else 0
+
+        health_status["workers"] = HealthStatus(
+            service="workers",
+            status="healthy" if worker_count > 0 else "degraded",
+            details={
+                "active_workers": worker_count,
+                "worker_nodes": list(active_workers.keys()) if active_workers else [],
+            },
+        )
+    except Exception as e:
+        health_status["workers"] = HealthStatus(
+            service="workers", status="unhealthy", details={"error": str(e)}
+        )
+
+    return health_status
+
+
+@router.get("/metrics", response_model=SystemMetrics)
+async def get_system_metrics():
+    """Get detailed system metrics"""
+
+    # CPU and Memory
+    cpu_percent = psutil.cpu_percent(interval=1)
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+
+    # GPU metrics
+    gpu_info = None
+    if torch.cuda.is_available():
+        gpu_info = {
+            "device_count": torch.cuda.device_count(),
+            "current_device": torch.cuda.current_device(),
+            "devices": [],
+        }
+
+        for i in range(torch.cuda.device_count()):
+            props = torch.cuda.get_device_properties(i)
+            allocated = torch.cuda.memory_allocated(i)
+            cached = torch.cuda.memory_reserved(i)
+
+            gpu_info["devices"].append(
+                {
+                    "id": i,
+                    "name": props.name,
+                    "memory_total_gb": props.total_memory / 1024**3,
+                    "memory_allocated_gb": allocated / 1024**3,
+                    "memory_cached_gb": cached / 1024**3,
+                    "utilization_percent": (allocated / props.total_memory) * 100,
+                }
+            )
+
+    # Celery queue metrics
+    try:
+        inspect = celery_app.control.inspect()
+        active_tasks = inspect.active()
+        active_count = (
+            sum(len(tasks) for tasks in active_tasks.values()) if active_tasks else 0
+        )
+
+        # Get queue length from Redis
+        r = redis.from_url(get_settings().redis_url)
+        queue_depth = r.llen("celery")
+    except:
+        active_count = 0
+        queue_depth = 0
+
+    uptime = time.time() - startup_time
+
+    return SystemMetrics(
+        timestamp=datetime.now(),
+        cpu_percent=cpu_percent,
+        memory_percent=memory.percent,
+        disk_percent=disk.percent,
+        gpu_info=gpu_info,
+        active_workers=active_count,
+        queue_depth=queue_depth,
+        uptime_seconds=uptime,
+    )
+
+
+@router.get("/tasks")
+async def get_task_statistics():
+    """Get Celery task statistics"""
+    try:
+        inspect = celery_app.control.inspect()
+
+        # Active tasks
+        active = inspect.active()
+        active_tasks = []
+        if active:
+            for worker, tasks in active.items():
+                for task in tasks:
+                    active_tasks.append(
+                        {
+                            "worker": worker,
+                            "task_id": task["id"],
+                            "task_name": task["name"],
+                            "args": task.get("args", []),
+                            "kwargs": task.get("kwargs", {}),
+                            "time_start": task.get("time_start"),
+                        }
+                    )
+
+        # Scheduled tasks
+        scheduled = inspect.scheduled()
+        scheduled_tasks = []
+        if scheduled:
+            for worker, tasks in scheduled.items():
+                for task in tasks:
+                    scheduled_tasks.append(
+                        {
+                            "worker": worker,
+                            "task_id": task["request"]["id"],
+                            "task_name": task["request"]["task"],
+                            "eta": task["eta"],
+                        }
+                    )
+
+        # Worker stats
+        stats = inspect.stats()
+        worker_stats = []
+        if stats:
+            for worker, stat in stats.items():
+                worker_stats.append(
+                    {
+                        "worker": worker,
+                        "total_tasks": stat.get("total", {}),
+                        "pool_processes": stat.get("pool", {}).get("processes"),
+                        "rusage": stat.get("rusage"),
+                    }
+                )
+
+        return {
+            "active_tasks": active_tasks,
+            "scheduled_tasks": scheduled_tasks,
+            "worker_stats": worker_stats,
+            "summary": {
+                "active_count": len(active_tasks),
+                "scheduled_count": len(scheduled_tasks),
+                "worker_count": len(worker_stats),
+            },
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get task statistics: {str(e)}"},
+        )
+
+
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str):
+    """Cancel a running task"""
+    try:
+        celery_app.control.revoke(task_id, terminate=True)
+        return {"message": f"Task {task_id} cancelled successfully"}
+    except Exception as e:
+        return JSONResponse(
+            status_code=500, content={"error": f"Failed to cancel task: {str(e)}"}
+        )
+
+
+@router.get("/logs/{service}")
+async def get_service_logs(service: str, lines: int = 100):
+    """Get recent logs for a service (requires log aggregation setup)"""
+    # This would typically read from a centralized logging system
+    # For now, return a placeholder
+    return {
+        "service": service,
+        "message": "Log retrieval not implemented yet. Use docker logs for now.",
+        "command": f"docker logs --tail {lines} saga-{service}",
+    }
