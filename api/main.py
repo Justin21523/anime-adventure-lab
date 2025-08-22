@@ -24,7 +24,7 @@ from core.config import get_config
 cache = bootstrap_cache()
 
 # Import routers (will be implemented in later stages)
-from api.routers import health, llm
+from api.routers import health, llm, rag, story, t2i
 
 # Setup logging
 logging.basicConfig(
@@ -89,17 +89,54 @@ def create_app() -> FastAPI:
 
     # Health check
     @app.get("/healthz")
-    async def root_health():
-        """Root health check"""
-        return {"status": "ok", "service": "saga-forge-api", "version": "0.1.0"}
+    async def health_check():
+        """Global health check"""
+        try:
+            # Basic health indicators
+            import torch
+
+            gpu_available = torch.cuda.is_available()
+
+            health_status = {
+                "status": "healthy",
+                "version": "0.5.0",
+                "stage": "Stage 5 - T2I Pipeline",
+                "gpu_available": gpu_available,
+                "cache_root": os.getenv("AI_CACHE_ROOT", "default"),
+            }
+
+            # GPU memory info if available
+            if gpu_available:
+                health_status["gpu_memory_mb"] = (
+                    torch.cuda.memory_allocated(0) / 1024**2
+                )
+
+            return health_status
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Health check failed: {str(e)}"
+            )
+
+    # Root endpoint
+    @app.get("/")
+    async def root():
+        return {
+            "message": "SagaForge API - Stage 5: T2I Pipeline",
+            "docs": "/docs",
+            "health": "/healthz",
+            "endpoints": {
+                "t2i": "/api/v1/t2i",
+            },
+        }
 
     # Include routers
     app.include_router(health.router, prefix="/api/v1", tags=["health"])
 
     # Future routers (placeholders)
     app.include_router(llm.router, prefix="/api/v1", tags=["llm"])
-    # app.include_router(rag.router, prefix="/api/v1", tags=["rag"])
-    # app.include_router(t2i.router, prefix="/api/v1", tags=["t2i"])
+    app.include_router(rag.router, prefix="/api/v1", tags=["rag"])
+    app.include_router(t2i.router, prefix="/api/v1", tags=["t2i"])
     # app.include_router(vlm.router, prefix="/api/v1", tags=["vlm"])
     # app.include_router(finetune.router, prefix="/api/v1", tags=["finetune"])
     # app.include_router(batch.router, prefix="/api/v1", tags=["batch"])
