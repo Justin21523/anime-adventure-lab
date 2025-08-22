@@ -59,6 +59,11 @@ class SharedCache:
             "OUTPUT_BATCH": f"{self.cache_root}/outputs/batch",
             "OUTPUT_LORA": f"{self.cache_root}/outputs/lora",
             "OUTPUT_RAG": f"{self.cache_root}/outputs/rag",
+            # RAG
+            "RAG_INDEX": f"{self.cache_root}/rag/indexes",
+            "RAG_DOCS": f"{self.cache_root}/rag/documents",
+            "RAG_EMBEDDINGS": f"{self.cache_root}/rag/embeddings",
+            "WORLDPACKS": f"{self.cache_root}/worldpacks",
         }
 
         for dir_path in self.app_dirs.values():
