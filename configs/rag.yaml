@@ -1,4 +1,30 @@
-embed_model: "bge-m3"
-chunk_chars: 700
-overlap_chars: 120
-top_k: 8
+# configs/rag.yaml
+models:
+  embedding: "BAAI/bge-m3"
+  reranker: "BAAI/bge-reranker-large" # Optional for Stage 4
+
+chunking:
+  target_chars: 700
+  overlap_chars: 120
+  separators: ["。", "！", "？", "；", "…", "\\n\\n"]
+
+retrieval:
+  top_k: 8
+  hybrid_alpha: 0.7 # 0.0=pure BM25, 1.0=pure semantic
+  enable_rerank: false
+  rerank_top_k: 50
+
+storage:
+  index_dir: "${AI_CACHE_ROOT}/rag/indexes"
+  docs_dir: "${AI_CACHE_ROOT}/rag/documents"
+  cache_embeddings: true
+
+chinese:
+  enable_traditional_conversion: true
+  enable_alias_expansion: false # For Stage 4
+  alias_file: "configs/aliases.yaml"
+
+performance:
+  batch_size: 32
+  max_seq_length: 512
+  device: "auto" # auto, cpu, cuda
