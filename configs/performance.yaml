@@ -1,0 +1,140 @@
+# configs/performance.yaml
+# Performance optimization settings for SagaForge
+
+memory:
+  # Quantization settings
+  enable_8bit: true # Enable 8-bit quantization for LLM
+  enable_4bit: false # Enable 4-bit quantization (more aggressive)
+
+  # CPU offloading
+  cpu_offload: true # Enable CPU offloading for models
+  sequential_cpu_offload: false # More aggressive CPU offloading
+  low_cpu_mem_usage: true # Reduce CPU memory usage
+
+  # Attention optimizations
+  attention_slicing: true # Enable attention slicing for diffusion models
+  vae_slicing: true # Enable VAE slicing
+  enable_xformers: true # Enable xformers memory efficient attention
+
+  # Advanced options
+  torch_compile: false # Experimental: torch.compile optimization
+  gradient_checkpointing: true # For training
+
+  # Memory limits (GB)
+  max_gpu_memory: 8.0 # Maximum GPU memory to use
+  reserved_gpu_memory: 1.0 # Reserve GPU memory for system
+
+cache:
+  # Redis settings
+  redis_url: "redis://localhost:6379/1"
+  redis_enabled: true
+
+  # Disk cache
+  disk_cache_dir: "../ai_warehouse/cache/pipeline_cache"
+  max_disk_cache_gb: 5.0
+
+  # Cache TTL (seconds)
+  embedding_cache_ttl: 604800 # 1 week
+  image_cache_ttl: 259200 # 3 days
+  kv_cache_ttl: 3600 # 1 hour
+
+  # KV caching for LLM
+  enable_kv_cache: true
+  kv_cache_max_length: 2048
+
+  # Prefetch settings
+  prefetch_queue_size: 3
+  prefetch_enabled: true
+
+inference:
+  # Batch processing
+  max_batch_size: 4
+  dynamic_batching: true
+  batch_timeout_ms: 100
+
+  # Model loading
+  lazy_loading: true # Load models on demand
+  model_timeout_minutes: 30 # Unload unused models after timeout
+
+  # Pipeline optimization
+  pipeline_sequential: false # Use sequential pipeline for low VRAM
+  use_safetensors: true # Prefer safetensors format
+
+  # Generation settings
+  use_deterministic: false # Disable for better performance
+  enable_attention_mask: true
+
+models:
+  # Model-specific optimizations
+  llm:
+    quantization: "8bit" # none, 8bit, 4bit
+    max_context_length: 2048
+    use_flash_attention: true
+
+  diffusion:
+    scheduler: "euler_a" # Faster scheduler
+    num_inference_steps: 20 # Reduced steps for speed
+    guidance_scale: 7.5
+    use_karras_sigmas: true
+
+  embedding:
+    batch_size: 32
+    normalize_embeddings: true
+    pooling_mode: "mean"
+
+# Environment-specific overrides
+profiles:
+  # Low VRAM profile (4GB GPU)
+  low_vram:
+    memory:
+      enable_4bit: true
+      cpu_offload: true
+      sequential_cpu_offload: true
+      attention_slicing: true
+      vae_slicing: true
+    inference:
+      max_batch_size: 1
+      pipeline_sequential: true
+    models:
+      diffusion:
+        num_inference_steps: 15
+
+  # High performance profile (24GB+ GPU)
+  high_performance:
+    memory:
+      enable_8bit: false
+      cpu_offload: false
+      torch_compile: true
+    inference:
+      max_batch_size: 8
+      dynamic_batching: true
+    cache:
+      prefetch_queue_size: 5
+
+  # Balanced profile (8-16GB GPU)
+  balanced:
+    memory:
+      enable_8bit: true
+      cpu_offload: false
+      attention_slicing: true
+    inference:
+      max_batch_size: 2
+      dynamic_batching: true
+
+# Monitoring settings
+monitoring:
+  enable_metrics: true
+  metrics_interval: 30 # seconds
+  log_memory_usage: true
+  enable_profiling: false # Detailed profiling (impacts performance)
+
+  # Alerts
+  memory_threshold: 0.9 # Alert when memory > 90%
+  gpu_threshold: 0.85 # Alert when GPU memory > 85%
+
+# Development settings
+development:
+  enable_debug_logging: false
+  save_intermediate_outputs: false
+  benchmark_mode: false
+  profile_inference: false
