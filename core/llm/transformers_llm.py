@@ -1,7 +1,13 @@
 # core/llm/transformers_llm.py
+import logging
+import time, json
+import random
 from typing import List, Dict, Any, Optional
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from .base import MinimalLLM
+from ..shared_cache import get_shared_cache
+from ..config import get_config
 from .adapter import LLMAdapter
 
 
@@ -12,6 +18,7 @@ class TransformersLLM(LLMAdapter):
         super().__init__(model_name, **kwargs)
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.cache = get_shared_cache()
         self.use_4bit = kwargs.get("use_4bit", True)
         self.use_8bit = kwargs.get("use_8bit", False)
         self.trust_remote_code = kwargs.get("trust_remote_code", False)

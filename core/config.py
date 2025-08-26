@@ -41,6 +41,7 @@ class ModelConfig(BaseSettings):
 
     # Memory optimization
     use_4bit_loading: bool = Field(default=True, description="Use 4-bit quantization")
+    use_fp16: bool = True
     use_gradient_checkpointing: bool = Field(
         default=True, description="Use gradient checkpointing"
     )
@@ -56,6 +57,9 @@ class ModelConfig(BaseSettings):
     )
     default_sd_model: str = Field(
         default="runwayml/stable-diffusion-v1-5", description="Default SD model"
+    )
+    default_vlm_model: str = Field(
+        default="runwayml/stable-diffusion-v1-5", description="Default VLM model"
     )
 
 

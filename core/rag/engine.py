@@ -1,14 +1,9 @@
 # core/rag/engine.py
-# Cell 1: Shared Cache Bootstrap
+
 import os, pathlib, torch, json, hashlib
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 from datetime import datetime
-import warnings
-
-warnings.filterwarnings("ignore")
-
-# Cell 2: Dependencies & Model Setup
 import numpy as np
 import pandas as pd
 from sentence_transformers import SentenceTransformer
@@ -24,12 +19,11 @@ import uuid
 import sys
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
-sys.path.append("../..")
-
-from api.dependencies import APP_DIRS
-from core.rag.chunkers import ChineseHierarchicalChunker
+from .schemas import DocumentMetadata, RetrievalItem
+from .retrievers import SimpleRetriever
+from .parsers import SimpleParser
+from .memory import RAGMemory
+from ..shared_cache import get_shared_cache
 
 
 @dataclass
@@ -52,6 +46,75 @@ class ChunkResult:
     score: float
     section_title: str = ""
     metadata: Dict[str, Any] = None  # type: ignore
+
+
+class RAGEngine:
+    """Main RAG processing engine"""
+
+    def __init__(self):
+        self.cache = get_shared_cache()
+        self.retriever = SimpleRetriever()
+        self.parser = SimpleParser()
+        self.memory = RAGMemory()
+
+    def add_document(self, text: str, metadata: DocumentMetadata | dict) -> dict:
+        """Add document to RAG index"""
+        try:
+            # Convert dict to DocumentMetadata if needed
+            if isinstance(metadata, dict):
+                metadata = DocumentMetadata(**metadata)
+
+            # Parse document into chunks
+            chunks = self.parser.parse_text(text)
+
+            # Generate chunk IDs and prepare for indexing
+            doc_id = metadata.doc_id
+            chunk_ids = [f"{doc_id}_{chunk['chunk_id']}" for chunk in chunks]
+            texts = [chunk["text"] for chunk in chunks]
+            doc_ids = [doc_id] * len(chunks)
+
+            # Add to retrieval index
+            self.retriever.add_documents(texts, doc_ids, chunk_ids)
+
+            return {"chunks_added": len(chunks)}
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to add document: {str(e)}")
+
+    def retrieve(
+        self,
+        *,
+        query: str,
+        world_id: Optional[str] = None,
+        top_k: int = 8,
+        alpha: float = 0.7,
+    ) -> List[RetrievalItem]:
+        """Retrieve relevant documents"""
+        try:
+            return self.retriever.retrieve(query, world_id, top_k)
+        except Exception as e:
+            raise RuntimeError(f"Retrieval failed: {str(e)}")
+
+    def write_memory(
+        self,
+        *,
+        world_id: str,
+        scope: str,
+        content: str,
+        doc_id: str,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        """Write to memory store"""
+        try:
+            self.memory.write_memory(
+                world_id=world_id,
+                scope=scope,
+                content=content,
+                doc_id=doc_id,
+                metadata=metadata,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to write memory: {str(e)}")
 
 
 class ChineseRAGEngine:
