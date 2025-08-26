@@ -201,7 +201,7 @@ class LLaVACaptioner(VLMAdapter):
         if prompt is None:
             prompt = "USER: <image>\nDescribe this image in detail.\nASSISTANT:"
 
-        inputs = self.processor(prompt, image, return_tensors="pt")
+        inputs = self.processor(prompt, image, return_tensors="pt")  # type: ignore
 
         if not self.low_vram and self.device != "auto":
             inputs = {
@@ -210,15 +210,15 @@ class LLaVACaptioner(VLMAdapter):
 
         with torch.no_grad():
             outputs = self.model.generate(
-                **inputs,
+                **inputs,  # type: ignore
                 max_new_tokens=200,
                 do_sample=True,
                 temperature=0.7,
                 top_p=0.9,
-                pad_token_id=self.processor.tokenizer.eos_token_id,
+                pad_token_id=self.processor.tokenizer.eos_token_id,  # type: ignore
             )
 
-        response = self.processor.decode(outputs[0], skip_special_tokens=True)
+        response = self.processor.decode(outputs[0], skip_special_tokens=True)  # type: ignore
         # Extract assistant response
         if "ASSISTANT:" in response:
             caption = response.split("ASSISTANT:")[-1].strip()
@@ -307,7 +307,7 @@ class VLMCaptioner:
         if model_type is None:
             model_type = self.default_model
 
-        model = self.load_model(model_type)
+        model = self.load_model(model_type)  # type: ignore
         return model.caption(image, prompt)
 
     def analyze(
@@ -317,7 +317,7 @@ class VLMCaptioner:
         if model_type is None:
             model_type = self.default_model
 
-        model = self.load_model(model_type)
+        model = self.load_model(model_type)  # type: ignore
         analysis = model.analyze(image)
 
         # Add metadata
