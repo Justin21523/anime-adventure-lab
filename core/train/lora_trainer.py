@@ -1,3 +1,4 @@
+# core/train/lora_trainer.py
 """
 LoRA Trainer for Stable Diffusion (SD1.5/SDXL)
 Supports low-VRAM training with bitsandbytes + gradient checkpointing
@@ -19,17 +20,27 @@ from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 import yaml
 
-from diffusers import (
-    StableDiffusionPipeline,
+from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import (
     StableDiffusionXLPipeline,
-    UNet2DConditionModel,
-    AutoencoderKL,
-    DDPMScheduler,
 )
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import (
+    StableDiffusionPipeline,
+)
+from diffusers.schedulers.scheduling_dpmsolver_multistep import (
+    DPMSolverMultistepScheduler,
+)
+from diffusers.schedulers.scheduling_euler_ancestral_discrete import (
+    EulerAncestralDiscreteScheduler,
+)
+from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
+from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKL
+
 from transformers import CLIPTextModel, CLIPTokenizer
 from peft import LoraConfig, get_peft_model, TaskType
 from accelerate import Accelerator
 from accelerate.utils import set_seed
+import bitsandbytes as bnb
 
 import sys
 from pathlib import Path
@@ -37,11 +48,6 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 sys.path.append("../..")
-
-from core.shared_cache import bootstrap_cache
-
-# setup cache
-cache = bootstrap_cache()
 
 
 @dataclass
@@ -91,7 +97,7 @@ class AnimeDataset(Dataset):
         image_dir: str,
         resolution: int,
         instance_token: str = "<token>",
-        dropout_tags: List[str] = None,
+        dropout_tags: List[str] = None,  # type: ignore
         caption_dropout: float = 0.05,
     ):
         self.root_dir = Path(root_dir)
@@ -118,7 +124,9 @@ class AnimeDataset(Dataset):
 
         # Load image
         image = Image.open(image_path).convert("RGB")
-        image = image.resize((self.resolution, self.resolution), Image.LANCZOS)
+        image = image.resize(
+            (self.resolution, self.resolution), Image.Resampling.LANCZOS
+        )
 
         # Convert to tensor and normalize to [-1, 1]
         image = torch.tensor(np.array(image)).float() / 127.5 - 1.0
@@ -228,9 +236,9 @@ class LoRATrainer:
             lora_alpha=self.config.alpha,
             target_modules=["to_k", "to_q", "to_v", "to_out.0"],
             lora_dropout=0.1,
-            task_type=TaskType.DIFFUSION,
+            task_type=TaskType.DIFFUSION,  # type: ignore
         )
-        self.unet = get_peft_model(self.unet, lora_config)
+        self.unet = get_peft_model(self.unet, lora_config)  # type: ignore
 
         # Print trainable parameters
         trainable_params = sum(
@@ -312,8 +320,6 @@ class LoRATrainer:
         # Use 8-bit Adam if specified
         if self.config.use_8bit_adam:
             try:
-                import bitsandbytes as bnb
-
                 optimizer_cls = bnb.optim.AdamW8bit
             except ImportError:
                 print("[Warning] bitsandbytes not available, using regular AdamW")
@@ -333,8 +339,8 @@ class LoRATrainer:
             # Convert images to latent space
             latents = self.vae.encode(
                 batch["pixel_values"].to(self.vae.dtype)
-            ).latent_dist.sample()
-            latents = latents * self.vae.config.scaling_factor
+            ).latent_dist.sample()  # type: ignore
+            latents = latents * self.vae.config.scaling_factor  # type: ignore
 
             # Sample noise
             noise = torch.randn_like(latents)
@@ -346,13 +352,13 @@ class LoRATrainer:
             # Sample timesteps
             timesteps = torch.randint(
                 0,
-                self.noise_scheduler.config.num_train_timesteps,
+                self.noise_scheduler.config.num_train_timesteps,  # type: ignore
                 (latents.shape[0],),
                 device=latents.device,
             ).long()
 
             # Add noise to latents
-            noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
+            noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)  # type: ignore
 
             # Get text embeddings
             encoder_hidden_states = self.text_encoder(batch["input_ids"])[0]
@@ -363,13 +369,13 @@ class LoRATrainer:
             ).sample
 
             # Get target
-            if self.noise_scheduler.config.prediction_type == "epsilon":
+            if self.noise_scheduler.config.prediction_type == "epsilon":  # type: ignore
                 target = noise
-            elif self.noise_scheduler.config.prediction_type == "v_prediction":
-                target = self.noise_scheduler.get_velocity(latents, noise, timesteps)
+            elif self.noise_scheduler.config.prediction_type == "v_prediction":  # type: ignore
+                target = self.noise_scheduler.get_velocity(latents, noise, timesteps)  # type: ignore
             else:
                 raise ValueError(
-                    f"Unknown prediction type {self.noise_scheduler.config.prediction_type}"
+                    f"Unknown prediction type {self.noise_scheduler.config.prediction_type}"  # type: ignore
                 )
 
             # Calculate loss with min SNR gamma
@@ -446,8 +452,9 @@ class LoRATrainer:
                     generator=torch.Generator(
                         device=self.accelerator.device
                     ).manual_seed(step + j),
-                ).images[0]
-
+                ).images[  # type: ignore
+                    0
+                ]
                 image.save(validation_dir / f"prompt_{i:02d}_seed_{j:02d}.png")
 
         # Clean up
