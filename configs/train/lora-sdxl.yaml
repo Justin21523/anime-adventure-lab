@@ -1,2 +1,51 @@
-base_model: "stabilityai/stable-diffusion-xl-base-1.0"
-rank: 8
+# configs/train/lora-sdxl.yaml - SDXL LoRA training config
+model:
+  model_id: "stabilityai/stable-diffusion-xl-base-1.0"
+  revision: null
+  variant: null
+
+training:
+  resolution: 1024
+  train_batch_size: 2
+  gradient_accumulation_steps: 8
+  learning_rate: 1e-4
+  lr_scheduler: "cosine"
+  lr_warmup_steps: 500
+  max_train_steps: 8000
+  checkpointing_steps: 1000
+  validation_epochs: 5
+
+optimization:
+  mixed_precision: "fp16"
+  gradient_checkpointing: true
+  use_8bit_adam: true
+  dataloader_num_workers: 2
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_weight_decay: 1e-2
+  adam_epsilon: 1e-8
+
+lora:
+  rank: 16
+  alpha: 16
+  dropout: 0.1
+  bias: "none"
+  target_modules:
+    - "to_k"
+    - "to_q"
+    - "to_v"
+    - "to_out.0"
+  text_encoder_train: false
+
+dataset:
+  train_data_dir: "${AI_CACHE_ROOT}/datasets/processed"
+  image_column: "image_path"
+  caption_column: "text"
+  max_train_samples: null
+  cache_latents: true
+
+output:
+  output_dir: "${AI_CACHE_ROOT}/models/lora"
+  logging_dir: "${AI_CACHE_ROOT}/logs"
+  save_model_card: true
+  push_to_hub: false

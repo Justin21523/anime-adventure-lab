@@ -1,3 +1,58 @@
-llm: {}
-t2i: {}
-vlm: {}
+# configs/models.yaml - Model configurations
+models:
+  t2i:
+    sd15:
+      model_id: "runwayml/stable-diffusion-v1-5"
+      resolution: 768
+      scheduler: "DPMSolverMultistepScheduler"
+      enable_xformers: true
+    sdxl:
+      model_id: "stabilityai/stable-diffusion-xl-base-1.0"
+      resolution: 1024
+      scheduler: "DPMSolverMultistepScheduler"
+      enable_xformers: true
+
+  caption:
+    blip2:
+      model_id: "Salesforce/blip2-opt-2.7b"
+      processor_id: "Salesforce/blip2-opt-2.7b"
+      max_length: 50
+      num_beams: 3
+
+  vqa:
+    llava:
+      model_id: "llava-hf/llava-1.5-7b-hf"
+      processor_id: "llava-hf/llava-1.5-7b-hf"
+      max_length: 200
+    qwen_vl:
+      model_id: "Qwen/Qwen-VL-Chat"
+      max_length: 200
+
+  chat:
+    qwen:
+      model_id: "Qwen/Qwen2-7B-Instruct"
+      max_length: 1024
+      temperature: 0.7
+      top_p: 0.9
+    llama3:
+      model_id: "meta-llama/Meta-Llama-3-8B-Instruct"
+      max_length: 1024
+
+  embeddings:
+    sentence_transformer:
+      model_id: "BAAI/bge-base-en-v1.5"
+      max_seq_length: 512
+    multilingual:
+      model_id: "BAAI/bge-m3"
+      max_seq_length: 8192
+
+controlnet:
+  pose:
+    model_id: "lllyasviel/control_v11p_sd15_openpose"
+    preprocessor: "openpose"
+  depth:
+    model_id: "lllyasviel/control_v11f1p_sd15_depth"
+    preprocessor: "depth_midas"
+  canny:
+    model_id: "lllyasviel/control_v11p_sd15_canny"
+    preprocessor: "canny"
