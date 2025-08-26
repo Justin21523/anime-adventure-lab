@@ -1,15 +1,9 @@
 # api/routers/llm.py
+from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 import json
-
-import sys
-from pathlib import Path
-
-ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
-sys.path.append("../..")
 
 from core.shared_cache import bootstrap_cache
 from core.llm.transformers_llm import TransformersLLM
@@ -25,10 +19,11 @@ from core.story.data_structures import (
     RelationType,
 )
 
-# Setup cache on module import
-cache = bootstrap_cache()
+from ..dependencies import get_llm  # shared LLM singleton
+from core.story.engine import StoryEngine  # use core engine, no sys.path hacks
 
-router = APIRouter(prefix="/api/v1", tags=["LLM"])
+
+router = APIRouter(tags=["llm"])
 
 
 # Pydantic models for API
@@ -84,108 +79,68 @@ class TurnResponseAPI(BaseModel):
 _story_engine: Optional[StoryEngine] = None
 
 
-def get_story_engine() -> StoryEngine:
+def get_story_engine(llm) -> StoryEngine:
     """Get or create story engine instance"""
     global _story_engine
     if _story_engine is None:
-        # Initialize with a lightweight model for testing
-        # In production, this should be configurable
-        llm = TransformersLLM(
-            model_name="microsoft/DialoGPT-medium",  # Small model for testing
-            use_4bit=True,
-            trust_remote_code=False,
-        )
         _story_engine = StoryEngine(llm)
     return _story_engine
 
 
-@router.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    engine = get_story_engine()
-    return {
-        "status": "ok",
-        "llm_available": engine.llm.is_available(),
-        "model": engine.llm.model_name,
-    }
+@router.get("/llm/health")
+async def llm_health(llm=Depends(get_llm)):
+    """Health check for LLM-backed story engine."""
+    eng = get_story_engine(llm)
+    is_available = getattr(eng.llm, "is_available", lambda: True)()
+    model_name = getattr(eng.llm, "model_name", "unknown")
+    return {"status": "ok", "llm_available": is_available, "model": model_name}
 
 
-@router.post("/turn", response_model=TurnResponseAPI)
-async def process_turn(request: TurnRequestAPI):
-    """Process a story turn"""
+@router.post("/llm/turn", response_model=TurnResponseAPI)
+async def process_turn(request: TurnRequestAPI, llm=Depends(get_llm)):
+    """Orchestrate a story turn with the shared LLM."""
     try:
-        engine = get_story_engine()
-
-        if not engine.llm.is_available():
+        eng = get_story_engine(llm)
+        if hasattr(eng.llm, "is_available") and not eng.llm.is_available():
             raise HTTPException(status_code=503, detail="LLM model not available")
 
-        # Convert API models to core models
-        persona = Persona(
-            name=request.persona.name,
-            age=request.persona.age,
-            personality=request.persona.personality,
-            background=request.persona.background,
-            speaking_style=request.persona.speaking_style,
-            appearance=request.persona.appearance,
-            goals=request.persona.goals,
-            secrets=request.persona.secrets,
-            memory_preferences=request.persona.memory_preferences,
-        )
+        # Build core objects using engine helpers to avoid tight coupling
+        persona = eng.build_persona(**request.persona.dict())
+        game_state = eng.build_game_state(**request.game_state.dict())
 
-        game_state = GameState(
-            scene_id=request.game_state.scene_id,
-            turn_count=request.game_state.turn_count,
-            flags=request.game_state.flags,
-            inventory=request.game_state.inventory,
-            current_location=request.game_state.current_location,
-            timeline_notes=request.game_state.timeline_notes,
-        )
-
-        turn_request = TurnRequest(
+        turn_req = eng.build_turn_request(
             player_input=request.player_input,
             persona=persona,
             game_state=game_state,
             choice_id=request.choice_id,
         )
+        resp = eng.process_turn(turn_req)
 
-        # Process turn
-        response = engine.process_turn(turn_request)
-
-        # Convert back to API models
-        api_response = TurnResponseAPI(
-            narration=response.narration,
+        api_resp = TurnResponseAPI(
+            narration=resp.narration,
             dialogues=[
                 DialogueAPI(speaker=d.speaker, text=d.text, emotion=d.emotion)
-                for d in response.dialogues
+                for d in resp.dialogues
             ],
             choices=[
                 ChoiceAPI(id=c.id, text=c.text, description=c.description)
-                for c in response.choices
+                for c in resp.choices
             ],
-            scene_change=response.scene_change,
+            scene_change=resp.scene_change,
         )
-
-        # Add updated state if available
-        if response.updated_state:
-            api_response.updated_state = GameStateAPI(
-                scene_id=response.updated_state.scene_id,
-                turn_count=response.updated_state.turn_count,
-                flags=response.updated_state.flags,
-                inventory=response.updated_state.inventory,
-                current_location=response.updated_state.current_location,
-                timeline_notes=response.updated_state.timeline_notes,
-            )
-
-        return api_response
-
+        if resp.updated_state:
+            api_resp.updated_state = GameStateAPI(**resp.updated_state.dict())
+        return api_resp
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Turn processing failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Turn processing failed: {e}")
 
 
-@router.get("/persona/sample", response_model=PersonaAPI)
-async def get_sample_persona():
+@router.get("/llm/persona/sample", response_model=PersonaAPI)
+async def get_sample_persona(llm=Depends(get_llm)):
     """Get a sample persona for testing"""
-    engine = get_story_engine()
+    engine = get_story_engine(llm)
     persona = engine.create_sample_persona()
 
     return PersonaAPI(
@@ -201,10 +156,10 @@ async def get_sample_persona():
     )
 
 
-@router.get("/gamestate/sample", response_model=GameStateAPI)
-async def get_sample_game_state():
+@router.get("/llm/gamestate/sample", response_model=GameStateAPI)
+async def get_sample_game_state(llm=Depends(get_llm)):
     """Get a sample game state for testing"""
-    engine = get_story_engine()
+    engine = get_story_engine(llm)
     state = engine.create_sample_game_state()
 
     return GameStateAPI(

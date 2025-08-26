@@ -3,19 +3,22 @@
 Health Check Router
 Provides system health and status information
 """
-
+from __future__ import annotations
 import time
 import psutil
 import os
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from pydantic import BaseModel
 import sys
 import platform
 
-router = APIRouter()
+from ..dependencies import get_cache, get_settings
+from core.performance import gpu_available
+
+router = APIRouter(tags=["health"])  # no prefix; keep path clean via main.py
 
 
 class HealthResponse(BaseModel):
@@ -44,60 +47,51 @@ class SystemInfo(BaseModel):
 _start_time = time.time()
 
 
-@router.get("/healthz", response_model=HealthResponse)
-async def health_check(request: Request):
+@router.get("/health", response_model=HealthResponse)
+async def health_check(cache=Depends(get_cache), settings=Depends(get_settings)):
     """
-    Get system health status
-    Returns comprehensive health information including GPU, memory, and cache status
+    Comprehensive health information including GPU, memory, and cache status.
     """
-    current_time = time.time()
-    uptime = current_time - _start_time
+    uptime = time.time() - _start_time
 
-    # Get system info
-    memory = psutil.virtual_memory()
+    mem = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
 
     system_info = {
-        "cpu_percent": psutil.cpu_percent(interval=1),
-        "memory_percent": memory.percent,
-        "memory_available_gb": round(memory.available / 1024**3, 2),
-        "memory_total_gb": round(memory.total / 1024**3, 2),
+        "cpu_percent": psutil.cpu_percent(interval=0.3),
+        "memory_percent": mem.percent,
+        "memory_available_gb": round(mem.available / 1024**3, 2),
+        "memory_total_gb": round(mem.total / 1024**3, 2),
         "disk_free_gb": round(disk.free / 1024**3, 2),
         "disk_total_gb": round(disk.total / 1024**3, 2),
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
-        "platform": platform.system(),  # Windows / Linux / Darwin
-        "platform_release": platform.release(),  # 版本（可選）
-        "platform_machine": platform.machine(),  # 架構（可選）
+        "platform": platform.system(),
+        "platform_release": platform.release(),
+        "platform_machine": platform.machine(),
+        "gpu_available": gpu_available(),
     }
 
-    # Get cache info from app state
-    cache_info = {}
-    config_info = {}
-
+    # Cache summary (shared_cache provides a summary method)
     try:
-        if hasattr(request.app.state, "cache"):
-            cache = request.app.state.cache
-            cache_summary = cache.get_summary()
-            cache_info = {
-                "root": cache_summary["cache_root"],
-                "gpu_available": cache_summary["gpu_info"]["cuda_available"],
-                "gpu_count": cache_summary["gpu_info"]["device_count"],
-                "gpu_memory": cache_summary["gpu_info"].get("memory_info", {}),
-                "directories_created": len(cache_summary["directories"]),
-            }
+        cs = cache.get_summary()
+        cache_info = {
+            "root": cs["cache_root"],
+            "directories_created": len(cs["directories"]),
+            "gpu_info": cs.get("gpu_info", {}),
+        }
     except Exception as e:
         cache_info = {"error": str(e)}
 
+    # Config summary (if your config has a .get_summary)
     try:
-        if hasattr(request.app.state, "config"):
-            config = request.app.state.config
-            config_summary = config.get_summary()
-            config_info = {
-                "app_name": config_summary.get("app", {}).get("name", "SagaForge"),
-                "features_enabled": config_summary.get("features", {}),
-                "model_config": config_summary.get("model", {}),
-                "api_debug": config_summary.get("api", {}).get("debug", False),
-            }
+        cfg = getattr(settings, "get_summary", None)
+        summary = cfg() if callable(cfg) else {}
+        config_info = {
+            "app": summary.get("app", {}),  # type: ignore
+            "features": summary.get("features", {}),  # type: ignore
+            "model": summary.get("model", {}),  # type: ignore
+            "api": summary.get("api", {}),  # type: ignore
+        }
     except Exception as e:
         config_info = {"error": str(e)}
 
@@ -113,27 +107,29 @@ async def health_check(request: Request):
 
 
 @router.get("/ready")
-async def readiness_check(request: Request):
+async def readiness_check(cache=Depends(get_cache), settings=Depends(get_settings)):
     """
-    Readiness probe for Kubernetes/Docker
-    Returns 200 if service is ready to accept requests
+    Readiness probe for Kubernetes/Docker.
+    Returns 200 if essential components are available.
     """
-    # Check if essential components are initialized
-    ready = True
     issues = []
+    ready = True
 
-    if not hasattr(request.app.state, "cache"):
+    try:
+        _ = cache.get_path  # callable attribute presence
+    except Exception:
         ready = False
         issues.append("Shared cache not initialized")
 
-    if not hasattr(request.app.state, "config"):
+    if settings is None:
         ready = False
         issues.append("Configuration not loaded")
 
-    if ready:
-        return {"status": "ready", "timestamp": datetime.now()}
-    else:
-        return {"status": "not_ready", "issues": issues, "timestamp": datetime.now()}
+    return {
+        "status": "ready" if ready else "not_ready",
+        "issues": issues,
+        "timestamp": datetime.now(),
+    }
 
 
 @router.get("/metrics")

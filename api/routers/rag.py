@@ -1,188 +1,229 @@
+# api/routers/rag.py
+"""
+RAG router (DI-based).
+- No import-time side effects
+- Engines injected from api/dependencies.py
+- Unified request/response models
+"""
+from __future__ import annotations
 from typing import Dict, List, Optional, Any
+import time
 from datetime import datetime
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Form
+from fastapi import (
+    FastAPI,
+    APIRouter,
+    UploadFile,
+    File,
+    HTTPException,
+    Form,
+    UploadFile,
+    Depends,
+)
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import tempfile
 import uuid
 import fitz  # PyMuPDF for PDF parsing
 
-import sys
-from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
-sys.path.append("../..")
-
-from api.dependencies import AI_CACHE_ROOT, APP_DIRS
-from core.shared_cache import bootstrap_cache
-from core.rag.engine import ChineseRAGEngine, DocumentMetadata
-
-# Setup cache on module import
-cache = bootstrap_cache()
-
-router = APIRouter(prefix="/rag", tags=["RAG"])
-
-# Initialize RAG engine
-rag_engine = ChineseRAGEngine(APP_DIRS["RAG_INDEX"])
+from api.schemas import RAGRequest, RAGResponse, RAGSource
+from ..dependencies import get_rag, get_llm  # shared singletons
+from api.schemas import RAGRequest, RAGResponse, RAGSource  # keep your existing schemas
+from core.rag.engine import DocumentMetadata
 
 
-@router.post("/upload")
-async def upload(file: UploadFile = File(...), world_id: str = Form("default")):
-    # Stub: accept file and say indexed
-    return {"world_id": world_id, "doc_id": f"{file.filename}", "chunks": 0}
+router = APIRouter(prefix="/rag", tags=["rag"])
 
 
-@router.post("/retrieve")
-def retrieve(query: str, world_id: str = "default", top_k: int = 8):
-    # Stub: return empty hits
-    return {"query": query, "world_id": world_id, "hits": []}
-
-
-app = FastAPI(title="SagaForge RAG API", version="0.1.0")
-
-
+#  ocal models for /retrieve -----
 class RetrieveRequest(BaseModel):
     query: str
     world_id: Optional[str] = None
-    top_k: int = 8
-    alpha: float = 0.7
+    top_k: int = Field(8, ge=1, le=50)
+    alpha: float = Field(0.7, ge=0.0, le=1.0)
+
+
+class RetrieveItem(BaseModel):
+    chunk_id: str
+    doc_id: str
+    text: str
+    score: float
+    section_title: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RetrieveResponse(BaseModel):
     query: str
-    results: List[Dict[str, Any]]
+    results: List[RetrieveItem]
     total_found: int
     processing_time_ms: float
 
 
-@app.get("/healthz")
-async def health_check():
-    """Health check endpoint"""
+# -Helpers
+def _parse_pdf_bytes(content: bytes) -> str:
+    """Best-effort PDF to text."""
+    if fitz is None:
+        raise HTTPException(
+            status_code=400,
+            detail="PDF support is not available (PyMuPDF not installed)",
+        )
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(content)
+            tmp.flush()
+            doc = fitz.open(tmp.name)
+            text = "".join(page.get_text() for page in doc)
+            doc.close()
+            return text
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"PDF parsing failed: {e}")
+
+
+@router.get("/health")
+async def rag_health(rag=Depends(get_rag)):
+    """Lightweight health info for RAG engine."""
+    # Engine may expose stats attributes; keep best-effort
+    chunks = getattr(rag, "num_chunks", lambda: None)()
+    docs = getattr(rag, "num_documents", lambda: None)()
     return {
-        "status": "healthy",
+        "status": "ok",
         "timestamp": datetime.now().isoformat(),
-        "rag_chunks": len(rag_engine.chunks),
-        "rag_documents": len(rag_engine.documents),
+        "rag_chunks": chunks,
+        "rag_documents": docs,
     }
 
 
-@app.post("/upload")
+@router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
     world_id: str = Form(...),
-    title: str = Form(None),
+    title: Optional[str] = Form(None),
     license: str = Form("unspecified"),
+    rag=Depends(get_rag),
 ):
-    """Upload and index a document"""
+    """Upload and index a document into RAG."""
     try:
-        # Generate document ID
-        doc_id = f"{world_id}_{uuid.uuid4().hex[:8]}"
-
-        # Read file content
+        doc_id = f"{world_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         content = await file.read()
 
-        # Parse based on file type
-        if file.filename.endswith(".pdf"):
-            text_content = _parse_pdf(content)
-        elif file.filename.endswith((".md", ".txt")):
-            text_content = content.decode("utf-8")
+        if file.filename.lower().endswith(".pdf"):
+            text_content = _parse_pdf_bytes(content)
+        elif file.filename.lower().endswith((".md", ".txt")):
+            text_content = content.decode("utf-8", errors="ignore")
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        # Create metadata
-        metadata = DocumentMetadata(
-            doc_id=doc_id,
-            title=title or file.filename,
-            source=file.filename,
-            world_id=world_id,
-            upload_time=datetime.now().isoformat(),
-            license=license,
-        )
+        meta_dict = {
+            "doc_id": doc_id,
+            "title": title or file.filename,
+            "source": file.filename,
+            "world_id": world_id,
+            "upload_time": datetime.now().isoformat(),
+            "license": license,
+        }
+        metadata = (
+            DocumentMetadata(**meta_dict) if DocumentMetadata else meta_dict
+        )  # tolerate absent class
 
-        # Add to RAG index
-        result = rag_engine.add_document(text_content, metadata)
-
-        return JSONResponse(
-            {
-                "success": True,
-                "doc_id": doc_id,
-                "chunks_added": result["chunks_added"],
-                "message": f"Document '{file.filename}' uploaded and indexed successfully",
-            }
-        )
-
+        result = rag.add_document(text_content, metadata)
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "chunks_added": (
+                result.get("chunks_added", 0) if isinstance(result, dict) else result
+            ),
+            "message": f"Document '{file.filename}' uploaded and indexed",
+        }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
 
 
-@app.post("/retrieve", response_model=RetrieveResponse)
-async def retrieve_documents(request: RetrieveRequest):
-    """Retrieve relevant documents with citations"""
-    import time
-
-    start_time = time.time()
-
+@router.post("/retrieve", response_model=RetrieveResponse)
+async def retrieve_documents(request: RetrieveRequest, rag=Depends(get_rag)):
+    """Retrieve relevant chunks with simple formatting."""
+    start = time.time()
     try:
-        # Perform retrieval
-        results = rag_engine.retrieve(
+        results = rag.retrieve(
             query=request.query,
             world_id=request.world_id,
             top_k=request.top_k,
             alpha=request.alpha,
         )
-
-        # Format results
-        formatted_results = []
-        for result in results:
-            formatted_results.append(
-                {
-                    "chunk_id": result.chunk_id,
-                    "doc_id": result.doc_id,
-                    "text": result.text,
-                    "score": round(result.score, 4),
-                    "section_title": result.section_title,
-                    "metadata": {
-                        "title": result.metadata.get("title", ""),
-                        "source": result.metadata.get("source", ""),
-                        "world_id": result.metadata.get("world_id", ""),
-                    },
-                }
+        items: List[RetrieveItem] = []
+        for r in results:
+            items.append(
+                RetrieveItem(
+                    chunk_id=str(getattr(r, "chunk_id", "")),
+                    doc_id=str(getattr(r, "doc_id", "")),
+                    text=str(getattr(r, "text", "")),
+                    score=round(float(getattr(r, "score", 0.0)), 4),
+                    section_title=getattr(r, "section_title", None),
+                    metadata=getattr(r, "metadata", {}) or {},
+                )
             )
-
-        processing_time = (time.time() - start_time) * 1000
-
         return RetrieveResponse(
             query=request.query,
-            results=formatted_results,
-            total_found=len(formatted_results),
-            processing_time_ms=round(processing_time, 2),
+            results=items,
+            total_found=len(items),
+            processing_time_ms=round((time.time() - start) * 1000, 2),
         )
-
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Retrieval failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Retrieval failed: {e}")
 
 
-def _parse_pdf(content: bytes) -> str:
-    """Parse PDF content to text"""
+@router.post("/ask", response_model=RAGResponse)
+async def rag_ask(request: RAGRequest, rag=Depends(get_rag), llm=Depends(get_llm)):
+    """
+    Answer a question using retrieved context.
+    Keeps LLM call minimal so it works with your stub or real engine.
+    """
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-            tmp_file.write(content)
-            tmp_file.flush()
+        hits = rag.retrieve(
+            query=request.question, world_id=None, top_k=request.top_k, alpha=0.7
+        )
+        sources: List[RAGSource] = []
+        context_snippets: List[str] = []
 
-            doc = fitz.open(tmp_file.name)
-            text = ""
-            for page in doc:
-                text += page.get_text()
-            doc.close()
+        for r in hits:
+            text = str(getattr(r, "text", ""))
+            meta = getattr(r, "metadata", {}) or {}
+            sources.append(
+                RAGSource(
+                    content=text[:200] + ("..." if len(text) > 200 else ""),
+                    score=float(getattr(r, "score", 0.0)),
+                    metadata=meta,
+                )
+            )
+            context_snippets.append(text)
 
-            return text
+        # Compose a very small prompt (works with MinimalLLM)
+        context = "\n\n".join(context_snippets[:5]) if context_snippets else ""
+        messages = [
+            {
+                "role": "system",
+                "content": "Answer concisely using the provided context. If unsure, say you don't know.",
+            },
+            {
+                "role": "user",
+                "content": f"Question: {request.question}\n\nContext:\n{context}",
+            },
+        ]
+        answer = llm.chat(messages)
+
+        return RAGResponse(
+            answer=answer, sources=sources, model_used=getattr(llm, "model_name", "llm")
+        )
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"PDF parsing failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"RAG ask failed: {e}")
 
 
-print("[api] FastAPI routes registered")
-print("Available endpoints:")
-print("  GET  /healthz")
-print("  POST /upload")
-print("  POST /retrieve")
+@router.get("/stats")
+async def rag_stats(rag=Depends(get_rag)):
+    """Return internal stats if engine exposes them."""
+    try:
+        stats = getattr(rag, "get_stats", lambda: {})()
+        return stats or {"status": "ok", "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
