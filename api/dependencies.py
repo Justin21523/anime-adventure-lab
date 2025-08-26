@@ -1,157 +1,261 @@
 # api/dependencies.py
 """
-FastAPI dependencies for VLM services
-Provides dependency injection for VLM captioner and related services
+Centralized dependency providers for FastAPI routers.
+- Single source of truth for settings and cache paths
+- Lazy-loaded global singletons for engines (t2i / lora / controlnet / llm / vlm / rag / game)
+- No side effects at import time (no mkdir, no downloads here)
 """
+from __future__ import annotations
+from functools import lru_cache
 import os, pathlib, torch
 from functools import lru_cache
 from typing import Iterator, Dict, Any, Optional, List
 from fastapi import Depends, HTTPException
 
-from core.vlm.captioner import VLMCaptioner
-from core.vlm.tagger import WD14Tagger
+from core import registry
 from core.config import get_config
-from core.rag.engine import ChineseRAGEngine
+from core.shared_cache import get_shared_cache, bootstrap_cache
+from core.safety.detector import SafetyEngine
+from core.safety.license import LicenseManager
+from core.safety.watermark import AttributionManager, ComplianceLogger
+from core.story.engine import StoryEngine
+from core.story.persona import PersonaManager
+from core.performance import gpu_available  # optional, but useful for /health
 
-# Global instances (lazy loaded)
-_vlm_captioner = None
-_wd14_tagger = None
-
-AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "../ai_warehouse/cache")
-for k, v in {
-    "HF_HOME": f"{AI_CACHE_ROOT}/hf",
-    "TRANSFORMERS_CACHE": f"{AI_CACHE_ROOT}/hf/transformers",
-    "HF_DATASETS_CACHE": f"{AI_CACHE_ROOT}/hf/datasets",
-    "HUGGINGFACE_HUB_CACHE": f"{AI_CACHE_ROOT}/hf/hub",
-    "TORCH_HOME": f"{AI_CACHE_ROOT}/torch",
-}.items():
-    os.environ[k] = v
-    pathlib.Path(v).mkdir(parents=True, exist_ok=True)
-
-APP_DIRS = {
-    "MODELS_SD": f"{AI_CACHE_ROOT}/models/sd",
-    "MODELS_SDXL": f"{AI_CACHE_ROOT}/models/sdxl",
-    "MODELS_CONTROLNET": f"{AI_CACHE_ROOT}/models/controlnet",
-    "MODELS_LORA": f"{AI_CACHE_ROOT}/models/lora",
-    "MODELS_IPADAPTER": f"{AI_CACHE_ROOT}/models/ipadapter",
-    "DATASETS_META": f"{AI_CACHE_ROOT}/datasets/metadata",
-    "OUTPUT_DIR": f"{AI_CACHE_ROOT}/outputs/saga-forge",
-    # RAG
-    "RAG_INDEX": f"{AI_CACHE_ROOT}/rag/indexes",
-    "RAG_DOCS": f"{AI_CACHE_ROOT}/rag/documents",
-    "RAG_EMBEDDINGS": f"{AI_CACHE_ROOT}/rag/embeddings",
-    "WORLDPACKS": f"{AI_CACHE_ROOT}/worldpacks",
-}
-for p in APP_DIRS.values():
-    pathlib.Path(p).mkdir(parents=True, exist_ok=True)
+# Replace with your actual implementation when ready
+# from core.t2i.pipeline import RealT2IEngine
+# from core.llm.adapter import RealLLM
+# from core.vlm.captioner import RealVLM
+# from core.rag.engine import RealRAG
+# from core.story.engine import RealStoryEngine
 
 
-@lru_cache()
-def get_vlm_config() -> Dict[str, Any]:
-    """Get VLM configuration with low-VRAM defaults"""
-    config = get_config()
-    vlm_config = config.get("vlm", {})
+# Lazy singletons — keep all globals in one place
 
-    # Set sensible defaults for low-VRAM environments
-    defaults = {
-        "default_model": "blip2",
-        "device": "auto",
-        "low_vram": True,
-        "models": {
-            "blip2": "Salesforce/blip2-opt-2.7b",  # Smaller BLIP2 model
-            "llava": "liuhaotian/llava-v1.6-mistral-7b",
-        },
-        "wd14": {"model": "SmilingWolf/wd-v1-4-convnext-tagger-v2", "threshold": 0.35},
-        "consistency": {
-            "embed_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            "semantic_threshold": 0.6,
-        },
+_settings = None  # App settings (Pydantic)
+_cache = None  # Shared cache handle
+
+_t2i = None  # Text-to-image engine (exposes txt2img(); has .lora and .control)
+_llm = None  # Chat LLM engine       (exposes chat(messages))
+_vlm = None  # VLM engine            (exposes caption(path), vqa(path, q))
+_rag = None  # RAG engine            (exposes ask(query))
+_game = None  # Story/game engine     (exposes new(seed?), step(state, choice))
+_safety = None
+_license_mgr = None
+_attr = None
+_compliance = None
+_story_engine = None
+_persona_mgr = None
+
+
+# Settings & Cache (never re-define env or paths here)
+def get_settings():
+    """App-wide settings (single source of truth)."""
+    global _settings
+    if _settings is None:
+        _settings = get_config()
+    return _settings
+
+
+def get_cache():
+    """Shared cache directories; ensure bootstrap has been run at least once."""
+    global _cache
+    if _cache is None:
+        # Safe to call multiple times; bootstrap is idempotent
+        bootstrap_cache()
+        _cache = get_shared_cache()
+    return _cache
+
+
+# Factory helpers — try real engines first, otherwise fall back to stubs
+def _new_t2i():
+    try:
+        # return RealT2IEngine()
+        return _MinimalT2I()
+    except Exception as e:
+        raise RuntimeError(f"T2I engine init failed: {e}") from e
+
+
+def _new_llm():
+    try:
+
+        # return RealLLM()
+        return _MinimalLLM()
+    except Exception as e:
+        raise RuntimeError(f"LLM engine init failed: {e}") from e
+
+
+def _new_vlm():
+    try:
+
+        # return RealVLM()
+        return _MinimalVLM()
+    except Exception as e:
+        raise RuntimeError(f"VLM engine init failed: {e}") from e
+
+
+def _new_rag():
+    try:
+
+        # return RealRAG()
+        return _MinimalRAG()
+    except Exception as e:
+        raise RuntimeError(f"RAG engine init failed: {e}") from e
+
+
+def _new_game():
+    try:
+
+        # return RealStoryEngine()
+        return _MinimalStory()
+    except Exception as e:
+        raise RuntimeError(f"Game engine init failed: {e}") from e
+
+
+# Public dependency getters (use these in routers; do NOT `new` engines in routers)
+# ---------------------------------------------------------------------
+def get_registry() -> Dict[str, Any]:
+    """
+    Optional: expose a dict-like registry for advanced cases.
+    Most routers should just call get_t2i/get_llm/... directly.
+    """
+    return {
+        "settings": get_settings(),
+        "cache": get_cache(),
+        "t2i": get_t2i(),
+        "lora": get_lora(),
+        "controlnet": get_controlnet(),
+        "llm": get_llm(),
+        "vlm": get_vlm(),
+        "rag": get_rag(),
+        "game": get_game(),
+        "health": {"gpu_available": gpu_available()},
     }
 
-    # Merge with defaults
-    for key, value in defaults.items():
-        if key not in vlm_config:
-            vlm_config[key] = value
-        elif isinstance(value, dict) and isinstance(vlm_config[key], dict):
-            for sub_key, sub_value in value.items():
-                if sub_key not in vlm_config[key]:
-                    vlm_config[key][sub_key] = sub_value
 
-    return vlm_config
-
-
-def get_vlm_captioner() -> VLMCaptioner:
-    """Get shared VLM captioner instance"""
-    global _vlm_captioner
-
-    if _vlm_captioner is None:
+def get_t2i():
+    """Shared T2I engine singleton."""
+    global _t2i
+    if _t2i is None:
         try:
-            config = get_vlm_config()
-            _vlm_captioner = VLMCaptioner(config)
+            _t2i = _new_t2i()
         except Exception as e:
-            raise HTTPException(
-                status_code=503, detail=f"Failed to initialize VLM captioner: {str(e)}"
-            )
-
-    return _vlm_captioner
+            raise HTTPException(status_code=503, detail=str(e))
+    return _t2i
 
 
-def get_wd14_tagger() -> Optional[WD14Tagger]:
-    """Get shared WD14 tagger instance"""
-    global _wd14_tagger
+def get_lora():
+    """LoRA manager derived from the T2I engine."""
+    t2i = get_t2i()
+    if not hasattr(t2i, "lora"):
+        raise HTTPException(status_code=501, detail="LoRA manager not available")
+    return t2i.lora
 
-    if _wd14_tagger is None:
+
+def get_controlnet():
+    """ControlNet processor derived from the T2I engine."""
+    t2i = get_t2i()
+    if not hasattr(t2i, "control"):
+        raise HTTPException(status_code=501, detail="ControlNet not available")
+    return t2i.control
+
+
+def get_llm():
+    """Shared LLM chat engine singleton."""
+    global _llm
+    if _llm is None:
         try:
-            config = get_vlm_config()
-            wd14_config = config.get("wd14", {})
-
-            _wd14_tagger = WD14Tagger(
-                model_name=wd14_config.get(
-                    "model", "SmilingWolf/wd-v1-4-convnext-tagger-v2"
-                ),
-                device=config.get("device", "auto"),
-                threshold=wd14_config.get("threshold", 0.35),
-            )
+            _llm = _new_llm()
         except Exception as e:
-            # WD14 is optional, don't fail the entire service
-            print(f"Warning: Failed to initialize WD14 tagger: {e}")
-            return None
-
-    return _wd14_tagger
+            raise HTTPException(status_code=503, detail=str(e))
+    return _llm
 
 
-async def cleanup_vlm_services():
-    """Cleanup VLM services on shutdown"""
-    global _vlm_captioner, _wd14_tagger
-
-    if _vlm_captioner:
-        _vlm_captioner.unload_all()
-        _vlm_captioner = None
-
-    if _wd14_tagger:
-        _wd14_tagger.unload()
-        _wd14_tagger = None
+def get_vlm():
+    """Shared VLM engine singleton (caption & VQA)."""
+    global _vlm
+    if _vlm is None:
+        try:
+            _vlm = _new_vlm()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=str(e))
+    return _vlm
 
 
-def get_cache_root() -> str:
-    return AI_CACHE_ROOT
+def get_rag():
+    """Shared RAG engine singleton."""
+    global _rag
+    if _rag is None:
+        try:
+            _rag = _new_rag()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=str(e))
+    return _rag
 
 
-def get_app_dir() -> Dict:
-    return APP_DIRS
+def get_game():
+    """Shared game/story engine singleton."""
+    global _game
+    if _game is None:
+        try:
+            _game = _new_game()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=str(e))
+    return _game
 
 
-# Dependency functions for FastAPI
-def vlm_captioner_dependency() -> Optional[VLMCaptioner]:
-    """FastAPI dependency for VLM captioner"""
-    return get_vlm_captioner()
+def get_safety_engine():
+    global _safety
+    if _safety is None:
+        _safety = SafetyEngine()
+    return _safety
 
 
-def wd14_tagger_dependency() -> Optional[WD14Tagger]:
-    """FastAPI dependency for WD14 tagger"""
-    return get_wd14_tagger()
+def get_license_manager():
+    global _license_mgr
+    if _license_mgr is None:
+        cache = get_shared_cache()
+        _license_mgr = LicenseManager(cache.cache_root)
+    return _license_mgr
 
 
-def get_rag_engine():
-    # Initialize RAG engine
-    return ChineseRAGEngine(APP_DIRS["RAG_INDEX"])
+def get_attribution_manager():
+    global _attr
+    if _attr is None:
+        cache = get_shared_cache()
+        _attr = AttributionManager(cache.cache_root)
+    return _attr
+
+
+def get_compliance_logger():
+    global _compliance
+    if _compliance is None:
+        cache = get_shared_cache()
+        _compliance = ComplianceLogger(cache.cache_root)
+    return _compliance
+
+
+def get_story_engine(llm=None):
+    # If llm DI is needed, import here to avoid circulars
+    from .dependencies import get_llm  # local import to prevent cycle
+
+    global _story_engine
+    if _story_engine is None:
+        _story_engine = StoryEngine(get_llm())
+    return _story_engine
+
+
+def get_persona_manager():
+    global _persona_mgr
+    if _persona_mgr is None:
+        _persona_mgr = PersonaManager()
+    return _persona_mgr
+
+
+# Optional: settings slices
+@lru_cache
+def get_vlm_settings():
+    """Expose VLM-specific settings slice if you keep one in AppConfig."""
+    cfg = get_settings()
+    # adapt to your actual config structure
+    return getattr(cfg, "vlm", None)

@@ -1,9 +1,11 @@
+# api/middleware.py
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import time, logging, os
 
 logger = logging.getLogger("saga")
 logging.basicConfig(level=logging.INFO)
+
 
 def setup_middleware(app: FastAPI):
     origins = os.getenv("API_CORS_ORIGINS", "*").split(",")
@@ -19,5 +21,11 @@ def setup_middleware(app: FastAPI):
     async def log_timing(request: Request, call_next):
         start = time.time()
         resp = await call_next(request)
-        logger.info("%s %s -> %s in %.1fms", request.method, request.url.path, resp.status_code, (time.time()-start)*1000)
+        logger.info(
+            "%s %s -> %s in %.1fms",
+            request.method,
+            request.url.path,
+            resp.status_code,
+            (time.time() - start) * 1000,
+        )
         return resp

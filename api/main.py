@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import torch
 from pathlib import Path
 import sys
 
@@ -21,10 +22,22 @@ sys.path.append(str(ROOT_DIR))
 from core.shared_cache import bootstrap_cache
 from core.config import get_config
 
-cache = bootstrap_cache()
-
 # Import routers (will be implemented in later stages)
-from api.routers import health, llm, rag, story, t2i
+from api.routers import (
+    admin,
+    batch,
+    export,
+    finetune,
+    health,
+    llm,
+    monitoring,
+    rag,
+    safety,
+    story,
+    t2i,
+    vlm,
+)
+
 
 # Setup logging
 logging.basicConfig(
@@ -87,37 +100,6 @@ def create_app() -> FastAPI:
             content={"detail": "Internal server error", "type": type(exc).__name__},
         )
 
-    # Health check
-    @app.get("/healthz")
-    async def health_check():
-        """Global health check"""
-        try:
-            # Basic health indicators
-            import torch
-
-            gpu_available = torch.cuda.is_available()
-
-            health_status = {
-                "status": "healthy",
-                "version": "0.5.0",
-                "stage": "Stage 5 - T2I Pipeline",
-                "gpu_available": gpu_available,
-                "cache_root": os.getenv("AI_CACHE_ROOT", "default"),
-            }
-
-            # GPU memory info if available
-            if gpu_available:
-                health_status["gpu_memory_mb"] = (
-                    torch.cuda.memory_allocated(0) / 1024**2
-                )
-
-            return health_status
-
-        except Exception as e:
-            raise HTTPException(
-                status_code=500, detail=f"Health check failed: {str(e)}"
-            )
-
     # Root endpoint
     @app.get("/")
     async def root():
@@ -132,14 +114,13 @@ def create_app() -> FastAPI:
 
     # Include routers
     app.include_router(health.router, prefix="/api/v1", tags=["health"])
-
     # Future routers (placeholders)
     app.include_router(llm.router, prefix="/api/v1", tags=["llm"])
     app.include_router(rag.router, prefix="/api/v1", tags=["rag"])
     app.include_router(t2i.router, prefix="/api/v1", tags=["t2i"])
-    # app.include_router(vlm.router, prefix="/api/v1", tags=["vlm"])
-    # app.include_router(finetune.router, prefix="/api/v1", tags=["finetune"])
-    # app.include_router(batch.router, prefix="/api/v1", tags=["batch"])
+    app.include_router(vlm.router, prefix="/api/v1", tags=["vlm"])
+    app.include_router(finetune.router, prefix="/api/v1", tags=["finetune"])
+    app.include_router(batch.router, prefix="/api/v1", tags=["batch"])
 
     return app
 
