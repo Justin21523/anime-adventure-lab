@@ -42,6 +42,29 @@ def update_job_progress(job_id: str, step: int, total_steps: int, loss: float):
     job_tracker.update_job(job_id, {"status": "running", "progress": progress})
 
 
+@celery_app.task(bind=True)
+def train_lora_async(self, config_data: dict):
+    """Async LoRA training task"""
+    try:
+        # Update progress
+        self.update_state(state="PROGRESS", meta={"step": 0, "total_steps": 1000})
+
+        # Placeholder for actual training
+        import time
+
+        for step in range(0, 1000, 100):
+            time.sleep(0.1)  # Simulate training
+            self.update_state(
+                state="PROGRESS", meta={"step": step, "total_steps": 1000}
+            )
+
+        return {"status": "completed", "model_path": "/path/to/trained/model"}
+
+    except Exception as e:
+        self.update_state(state="FAILURE", meta={"error": str(e)})
+        raise
+
+
 @celery_app.task(bind=True, name="train_lora_task")
 def train_lora_task(self, job_data: dict):
     """
