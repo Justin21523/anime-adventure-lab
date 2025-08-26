@@ -1,37 +1,20 @@
 # core/rag/__init__.py
-# Shared Cache Bootstrap
-import os, pathlib, torch, json, hashlib
-from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass, asdict
-from datetime import datetime
-import warnings
+"""
+Retrieval-Augmented Generation components
+"""
+from .parsers import DocumentParser
+from .embedders import EmbeddingModel
+from .retrievers import VectorRetriever
+from .rerankers import SimpleReranker
+from .memory import DocumentMemory
 
-warnings.filterwarnings("ignore")
-
-# Shared cache setup
-AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "../ai_warehouse/cache")
-for k, v in {
-    "HF_HOME": f"{AI_CACHE_ROOT}/hf",
-    "TRANSFORMERS_CACHE": f"{AI_CACHE_ROOT}/hf/transformers",
-    "HF_DATASETS_CACHE": f"{AI_CACHE_ROOT}/hf/datasets",
-    "HUGGINGFACE_HUB_CACHE": f"{AI_CACHE_ROOT}/hf/hub",
-    "TORCH_HOME": f"{AI_CACHE_ROOT}/torch",
-}.items():
-    os.environ[k] = v
-    pathlib.Path(v).mkdir(parents=True, exist_ok=True)
-
-# App directories
-APP_DIRS = {
-    "RAG_INDEX": f"{AI_CACHE_ROOT}/rag/indexes",
-    "RAG_DOCS": f"{AI_CACHE_ROOT}/rag/documents",
-    "RAG_EMBEDDINGS": f"{AI_CACHE_ROOT}/rag/embeddings",
-    "WORLDPACKS": f"{AI_CACHE_ROOT}/worldpacks",
-}
-for p in APP_DIRS.values():
-    pathlib.Path(p).mkdir(parents=True, exist_ok=True)
-
-print(f"[cache] {AI_CACHE_ROOT} | GPU: {torch.cuda.is_available()}")
-print(f"[rag] Indexes: {APP_DIRS['RAG_INDEX']}")
+__all__ = [
+    "DocumentParser",
+    "EmbeddingModel",
+    "VectorRetriever",
+    "SimpleReranker",
+    "DocumentMemory",
+]
 
 # Cell 2: Dependencies & Model Setup
 
