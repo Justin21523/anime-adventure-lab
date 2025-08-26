@@ -3,12 +3,14 @@ import cv2
 import numpy as np
 from PIL import Image
 from transformers import pipeline as hf_pipeline
+from ..shared_cache import get_shared_cache
 
 
 class ControlNetManager:
     """Manage ControlNet preprocessing and loading"""
 
     def __init__(self):
+        self.cache = get_shared_cache()
         self._processors = {}
 
     def preprocess_image(self, image: Image.Image, control_type: str) -> Image.Image:

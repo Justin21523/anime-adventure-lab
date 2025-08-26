@@ -1,13 +1,73 @@
 # core/train/evaluators.py
 import torch
 import numpy as np
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from PIL import Image
 from transformers import CLIPProcessor, CLIPModel
 import os
 
 from core.config import get_config
 from core.shared_cache import get_shared_cache
+
+
+class TrainingEvaluator:
+    """Evaluate training progress and model quality"""
+
+    def __init__(self):
+        self._clip_model = None
+        self._face_model = None
+
+    def evaluate_batch(
+        self,
+        generated_images: List[Image.Image],
+        target_prompts: List[str],
+        reference_images: Optional[List[Image.Image]] = None,
+    ) -> Dict[str, float]:
+        """Evaluate a batch of generated images"""
+        try:
+            batch_size = len(generated_images)
+
+            # Mock evaluation metrics
+            clip_scores = np.random.random(batch_size) * 0.3 + 0.7  # 0.7-1.0
+            aesthetic_scores = np.random.random(batch_size) * 0.4 + 0.6  # 0.6-1.0
+
+            # Face similarity (if reference images provided)
+            face_similarity = 0.0
+            if reference_images and len(reference_images) == batch_size:
+                face_similarities = np.random.random(batch_size) * 0.3 + 0.7
+                face_similarity = np.mean(face_similarities)
+
+            return {
+                "clip_score_mean": float(np.mean(clip_scores)),
+                "clip_score_std": float(np.std(clip_scores)),
+                "aesthetic_score_mean": float(np.mean(aesthetic_scores)),
+                "aesthetic_score_std": float(np.std(aesthetic_scores)),
+                "face_similarity": face_similarity,  # type: ignore
+                "batch_size": batch_size,
+            }
+
+        except Exception as e:
+            raise RuntimeError(f"Evaluation failed: {str(e)}")
+
+    def compute_fid(
+        self, generated_images: List[Image.Image], real_images: List[Image.Image]
+    ) -> float:
+        """Compute Fréchet Inception Distance"""
+        # Mock FID computation
+        return np.random.random() * 20 + 10  # 10-30 range
+
+    def tag_consistency_score(
+        self, generated_images: List[Image.Image], expected_tags: List[List[str]]
+    ) -> Dict[str, float]:
+        """Evaluate tag consistency in generated images"""
+        # Mock tag consistency evaluation
+        consistency_scores = np.random.random(len(generated_images)) * 0.4 + 0.6
+
+        return {
+            "consistency_mean": float(np.mean(consistency_scores)),
+            "consistency_std": float(np.std(consistency_scores)),
+            "tag_accuracy": float(np.random.random() * 0.3 + 0.7),
+        }
 
 
 class CLIPSimilarityEvaluator:

@@ -2,19 +2,77 @@
 import os
 from pathlib import Path
 from typing import List, Dict, Tuple, Any, Optional
-
+import json
 from .parsers import get_parser
 from .embedders import EmbeddingModel
 from .retrievers import VectorRetriever
 from .rerankers import SimpleReranker
+from ..shared_cache import get_shared_cache
 
-AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/mnt/ai_warehouse/cache")
+
+class RAGMemory:
+    """Simple memory storage for RAG contexts"""
+
+    def __init__(self):
+        self.cache = get_shared_cache()
+        self.memory_dir = Path(self.cache.get_path("RAG_DOCS")) / "memory"
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
+
+    def write_memory(
+        self,
+        *,
+        world_id: str,
+        scope: str,
+        content: str,
+        doc_id: str,
+        metadata: Optional[Dict] = None,
+    ):
+        """Write memory entry"""
+        try:
+            memory_file = self.memory_dir / f"{world_id}_{scope}.json"
+
+            # Load existing memories
+            if memory_file.exists():
+                with open(memory_file, "r") as f:
+                    memories = json.load(f)
+            else:
+                memories = []
+
+            # Add new memory
+            memory_entry = {
+                "doc_id": doc_id,
+                "content": content,
+                "metadata": metadata or {},
+                "timestamp": "2024-01-01T00:00:00",  # Mock timestamp
+            }
+            memories.append(memory_entry)
+
+            # Save memories
+            with open(memory_file, "w") as f:
+                json.dump(memories, f, indent=2)
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to write memory: {str(e)}")
+
+    def read_memories(self, world_id: str, scope: str) -> List[Dict]:
+        """Read memory entries"""
+        try:
+            memory_file = self.memory_dir / f"{world_id}_{scope}.json"
+
+            if memory_file.exists():
+                with open(memory_file, "r") as f:
+                    return json.load(f)
+            return []
+
+        except Exception as e:
+            return []
 
 
 class DocumentMemory:
     """Manage document storage and retrieval pipeline"""
 
     def __init__(self, collection_name: str = "default"):
+        self.cache = get_shared_cache()
         self.collection_name = collection_name
         self.embedding_model = EmbeddingModel()
         self.retriever = VectorRetriever(self.embedding_model, collection_name)

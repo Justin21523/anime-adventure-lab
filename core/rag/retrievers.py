@@ -1,23 +1,79 @@
 # core/rag/retrievers.py
-import os
+"""Document retrieval utilities"""
 import json
-import pickle
-from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
 import numpy as np
+from pathlib import Path
+from typing import List, Optional
+from .schemas import RetrievalItem
+from .embedders import SimpleEmbedder
+from ..shared_cache import get_shared_cache
 
-try:
-    import faiss
 
-    FAISS_AVAILABLE = True
-except ImportError:
-    FAISS_AVAILABLE = False
-    print("FAISS not available, using simple cosine similarity")
+class SimpleRetriever:
+    """Simple cosine similarity retriever"""
 
-from .embedders import EmbeddingModel
+    def __init__(self):
+        self.cache = get_shared_cache()
+        self.embedder = SimpleEmbedder()
+        self._index = {}
+        self._documents = {}
 
-AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/mnt/ai_warehouse/cache")
-INDEX_DIR = f"{AI_CACHE_ROOT}/rag_indices"
+    def add_documents(self, texts: List[str], doc_ids: List[str], chunk_ids: List[str]):
+        """Add documents to retrieval index"""
+        try:
+            embeddings = self.embedder.embed_texts(texts)
+
+            for i, (text, doc_id, chunk_id) in enumerate(
+                zip(texts, doc_ids, chunk_ids)
+            ):
+                self._documents[chunk_id] = {
+                    "text": text,
+                    "doc_id": doc_id,
+                    "embedding": embeddings[i],
+                }
+
+                if doc_id not in self._index:
+                    self._index[doc_id] = []
+                self._index[doc_id].append(chunk_id)
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to add documents: {str(e)}")
+
+    def retrieve(
+        self, query: str, world_id: Optional[str] = None, top_k: int = 8
+    ) -> List[RetrievalItem]:
+        """Retrieve relevant documents"""
+        try:
+            if not self._documents:
+                return []
+
+            query_embedding = self.embedder.embed_query(query)
+
+            # Calculate similarities
+            similarities = []
+            for chunk_id, doc_data in self._documents.items():
+                similarity = np.dot(query_embedding, doc_data["embedding"])
+                similarities.append((chunk_id, similarity))
+
+            # Sort by similarity and return top_k
+            similarities.sort(key=lambda x: x[1], reverse=True)
+
+            results = []
+            for chunk_id, score in similarities[:top_k]:
+                doc_data = self._documents[chunk_id]
+                item = RetrievalItem(
+                    chunk_id=chunk_id,
+                    doc_id=doc_data["doc_id"],
+                    text=doc_data["text"],
+                    score=float(score),
+                    metadata={"world_id": world_id} if world_id else {},
+                )
+                results.append(item)
+
+            return results
+
+        except Exception as e:
+            raise RuntimeError(f"Retrieval failed: {str(e)}")
 
 
 class VectorRetriever:

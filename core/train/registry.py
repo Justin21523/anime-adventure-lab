@@ -57,6 +57,17 @@ class ModelRegistry:
 
         print(f"Registered model: {model_id}")
 
+    def add(self, model_id: str, info: Dict[str, Any]) -> None:
+        """Add model to registry"""
+        try:
+            self._registry[model_id] = {
+                **info,
+                "registered_at": "2024-01-01T00:00:00",  # Mock timestamp
+            }
+            self._save_registry()
+        except Exception as e:
+            raise RuntimeError(f"Failed to add model {model_id}: {str(e)}")
+
     def get_model(self, model_id: str) -> Optional[Dict[str, Any]]:
         """Get model information"""
         return self.registry["models"].get(model_id)
@@ -69,3 +80,27 @@ class ModelRegistry:
             models = [m for m in models if m.get("model_type") == model_type]
 
         return models
+
+    def update(self, model_id: str, patch: Dict[str, Any]) -> None:
+        """Update model information"""
+        try:
+            if model_id not in self._registry:
+                raise KeyError(f"Model {model_id} not found in registry")
+
+            self._registry[model_id].update(patch)
+            self._save_registry()
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to update model {model_id}: {str(e)}")
+
+    def remove(self, model_id: str) -> bool:
+        """Remove model from registry"""
+        try:
+            if model_id in self._registry:
+                del self._registry[model_id]
+                self._save_registry()
+                return True
+            return False
+        except Exception as e:
+            print(f"Failed to remove model {model_id}: {e}")
+            return False

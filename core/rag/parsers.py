@@ -14,6 +14,55 @@ class DocumentParser(ABC):
         pass
 
 
+class SimpleParser:
+    """Simple text document parser"""
+
+    def parse_text(
+        self, text: str, chunk_size: int = 500, overlap: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Parse text into chunks"""
+        chunks = []
+
+        # Simple sentence-based chunking
+        sentences = text.split(". ")
+        current_chunk = ""
+        chunk_id = 0
+
+        for sentence in sentences:
+            if len(current_chunk + sentence) > chunk_size and current_chunk:
+                chunks.append(
+                    {
+                        "chunk_id": f"chunk_{chunk_id}",
+                        "text": current_chunk.strip(),
+                        "start_pos": len(text)
+                        - len(". ".join(sentences[len(chunks) :])),
+                        "end_pos": len(text) - len(". ".join(sentences[len(chunks) :])),
+                    }
+                )
+
+                # Add overlap
+                if overlap > 0:
+                    current_chunk = sentence[-overlap:] + ". "
+                else:
+                    current_chunk = ""
+                chunk_id += 1
+
+            current_chunk += sentence + ". "
+
+        # Add final chunk
+        if current_chunk.strip():
+            chunks.append(
+                {
+                    "chunk_id": f"chunk_{chunk_id}",
+                    "text": current_chunk.strip(),
+                    "start_pos": 0,
+                    "end_pos": len(text),
+                }
+            )
+
+        return chunks
+
+
 class TextParser(DocumentParser):
     """Plain text parser"""
 
