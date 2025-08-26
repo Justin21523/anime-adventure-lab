@@ -6,24 +6,99 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 import torch
-from diffusers import (
+
+from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import (
     StableDiffusionXLPipeline,
+)
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import (
     StableDiffusionPipeline,
+)
+from diffusers.schedulers.scheduling_dpmsolver_multistep import (
     DPMSolverMultistepScheduler,
+)
+from diffusers.schedulers.scheduling_euler_ancestral_discrete import (
     EulerAncestralDiscreteScheduler,
 )
+
 from PIL import Image
 import yaml
-from core.shared_cache import bootstrap_cache
 
-# setup cache
-cache = bootstrap_cache()
+from pathlib import Path
+import sys
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT_DIR))
+
+from core.shared_cache import get_shared_cache
+
+# Global pipeline cache
+_pipelines = {}
+
+
+def get_t2i_pipeline(model_id: str = "runwayml/stable-diffusion-v1-5"):
+    """Get T2I pipeline with caching"""
+    if model_id not in _pipelines:
+        print(f"Loading T2I pipeline: {model_id}")
+
+        if "xl" in model_id.lower():
+            pipeline_cls = StableDiffusionXLPipeline
+        else:
+            pipeline_cls = StableDiffusionPipeline
+
+        pipeline = pipeline_cls.from_pretrained(
+            model_id,
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            device_map="auto" if torch.cuda.is_available() else None,
+            cache_dir=f"{get_shared_cache().cache_root}/models",
+        )
+
+        if torch.cuda.is_available():
+            pipeline.enable_attention_slicing("auto")
+            pipeline.enable_vae_slicing()
+
+        _pipelines[model_id] = pipeline
+
+    return _pipelines[model_id]
+
+
+def save_image_to_cache(
+    image: Image.Image, metadata: dict, prefix: str = "t2i"
+) -> tuple:
+    """Save image and metadata to cache with timestamped naming"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Create dated folder
+    date_folder = Path(
+        get_shared_cache().get_path("OUTPUT_DIR")
+    ) / datetime.now().strftime("%Y-%m-%d")
+    date_folder.mkdir(parents=True, exist_ok=True)
+
+    # Generate unique filename
+    counter = 1
+    while True:
+        base_name = f"{prefix}_{timestamp}_{counter:04d}"
+        image_path = date_folder / f"{base_name}.png"
+        metadata_path = date_folder / f"{base_name}.json"
+
+        if not image_path.exists():
+            break
+        counter += 1
+
+    # Save image
+    image.save(image_path, "PNG")
+
+    # Save metadata
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+    return str(image_path), str(metadata_path)
 
 
 class T2IPipeline:
     """Text-to-Image pipeline manager with VRAM optimization"""
 
     def __init__(self, low_vram: bool = True):
+        self.cache = get_shared_cache()
         self.low_vram = low_vram
         self.current_model = None
         self.pipeline = None
@@ -199,13 +274,13 @@ class T2IPipeline:
         start_time = datetime.now()
 
         try:
-            result = self.pipeline(**gen_kwargs)
-            image = result.images[0]
+            result = self.pipeline(**gen_kwargs)  # type: ignore
+            image = result.images[0]  # type: ignore
 
             # Save image
-            output_dir = Path(cache.app_dirs["OUTPUT_DIR"]) / datetime.now().strftime(
-                "%Y-%m-%d"
-            )
+            output_dir = Path(
+                self.cache.get_path("OUTPUT_DIR")
+            ) / datetime.now().strftime("%Y-%m-%d")
             output_dir.mkdir(parents=True, exist_ok=True)
 
             filename = self.generate_filename(scene_id, image_type, seed)
