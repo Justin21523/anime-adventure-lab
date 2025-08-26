@@ -1,25 +1,24 @@
 # api/routers/safety.py
+from __future__ import annotations
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 import os
+import json
 from pathlib import Path
 import tempfile
 import shutil
 from PIL import Image
 
-import sys
-from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
-sys.path.append("../..")
-
-from core.safety.detector import SafetyEngine
-from core.safety.license import LicenseManager, LicenseInfo
-from core.safety.watermark import AttributionManager, ComplianceLogger
-from core.shared_cache import get_cache_root
+from ..dependencies import (
+    get_safety_engine,
+    get_license_manager,
+    get_attribution_manager,
+    get_compliance_logger,
+    get_cache,  # if you need raw paths
+)
 
 router = APIRouter(prefix="/safety", tags=["safety"])
 
@@ -70,162 +69,109 @@ class UploadResponse(BaseModel):
     metadata_path: str
 
 
-# Dependency injection
-def get_safety_engine() -> SafetyEngine:
-    """Get SafetyEngine instance"""
-    return SafetyEngine()
-
-
-def get_license_manager() -> LicenseManager:
-    """Get LicenseManager instance"""
-    cache_root = get_cache_root()
-    return LicenseManager(cache_root)
-
-
-def get_attribution_manager() -> AttributionManager:
-    """Get AttributionManager instance"""
-    cache_root = get_cache_root()
-    return AttributionManager(cache_root)
-
-
-def get_compliance_logger() -> ComplianceLogger:
-    """Get ComplianceLogger instance"""
-    cache_root = get_cache_root()
-    return ComplianceLogger(cache_root)
-
-
 @router.post("/check/prompt", response_model=SafetyCheckResponse)
 async def check_prompt_safety(
-    request: SafetyCheckRequest,
-    safety_engine: SafetyEngine = Depends(get_safety_engine),
+    request: SafetyCheckRequest, safety=Depends(get_safety_engine)
 ):
-    """Check prompt safety for injection and harmful content"""
-
+    """Check prompt safety for injection and harmful content."""
     try:
-        # Check prompt safety
-        prompt_result = safety_engine.check_prompt_safety(request.prompt)
-
-        is_safe = prompt_result.get("is_safe", True)
-        actions_taken = []
+        prompt_result = safety.check_prompt_safety(request.prompt)
+        is_safe = bool(prompt_result.get("is_safe", True))
         warnings = prompt_result.get("warnings", [])
-
-        if not is_safe:
-            actions_taken.append("prompt_blocked")
-
+        actions = ["prompt_blocked"] if not is_safe else []
         return SafetyCheckResponse(
             is_safe=is_safe,
             prompt_check=prompt_result,
-            actions_taken=actions_taken,
+            actions_taken=actions,
             warnings=warnings,
         )
-
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Safety check failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Safety check failed: {e}")
 
 
 @router.post("/upload", response_model=UploadResponse)
 async def upload_with_safety_check(
     file: UploadFile = File(...),
     license_info: str = Form(..., description="JSON string of license information"),
-    uploader_id: str = Form(..., description="Uploader identifier"),
-    auto_blur_faces: bool = Form(
-        False, description="Automatically blur detected faces"
-    ),
-    license_manager: LicenseManager = Depends(get_license_manager),
-    safety_engine: SafetyEngine = Depends(get_safety_engine),
-    compliance_logger: ComplianceLogger = Depends(get_compliance_logger),
+    uploader_id: str = Form(...),
+    auto_blur_faces: bool = Form(False),
+    license_manager=Depends(get_license_manager),
+    safety=Depends(get_safety_engine),
+    compliance=Depends(get_compliance_logger),
+    cache=Depends(get_cache),
 ):
-    """Upload file with comprehensive safety and license checks"""
-
-    import json
+    """Upload file with safety and license checks."""
+    try:
+        license_data = json.loads(license_info)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid license information JSON")
 
     try:
-        # Parse license information
-        license_data = json.loads(license_info)
-        license_obj = LicenseInfo(**license_data)
+        cache_root = cache.cache_root
+        temp_dir = Path(cache_root) / "uploads" / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        temp_file = temp_dir / f"temp_{file.filename}"
 
-        # Create temporary file
-        cache_root = get_cache_root()
-        upload_dir = Path(cache_root) / "uploads" / "temp"
-        upload_dir.mkdir(parents=True, exist_ok=True)
+        with open(temp_file, "wb") as buf:
+            shutil.copyfileobj(file.file, buf)
 
-        temp_file_path = upload_dir / f"temp_{file.filename}"
-
-        # Save uploaded file
-        with open(temp_file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        # Perform safety checks for images
+        # Image safety checks
         safety_result = {"is_safe": True}
         if file.content_type and file.content_type.startswith("image/"):
             try:
-                image = Image.open(temp_file_path)
-                safety_result = safety_engine.check_image_safety(image)
-
-                # Handle face blurring if requested and faces detected
+                image = Image.open(temp_file)
+                safety_result = safety.check_image_safety(image)
                 if auto_blur_faces and "processed_image" in safety_result:
-                    processed_image = safety_result["processed_image"]
-                    processed_image.save(temp_file_path)
-
+                    processed = safety_result["processed_image"]
+                    processed.save(temp_file)
             except Exception as e:
                 safety_result = {
                     "is_safe": False,
-                    "error": f"Image processing failed: {str(e)}",
+                    "error": f"Image processing failed: {e}",
                 }
 
-        # Register upload with license manager
-        upload_metadata = license_manager.register_upload(
-            str(temp_file_path), license_obj, uploader_id, safety_result
+        # Register upload & move if safe
+        upload_meta = license_manager.register_upload(
+            str(temp_file), license_data, uploader_id, safety_result
         )
-
-        # Move file to permanent location if safe
         if safety_result.get("is_safe", False):
-            permanent_dir = Path(cache_root) / "datasets" / "raw"
-            permanent_dir.mkdir(parents=True, exist_ok=True)
-            permanent_path = (
-                permanent_dir / f"{upload_metadata.file_id}_{file.filename}"
-            )
-            shutil.move(str(temp_file_path), str(permanent_path))
+            final_dir = Path(cache_root) / "datasets" / "raw"
+            final_dir.mkdir(parents=True, exist_ok=True)
+            final_path = final_dir / f"{upload_meta.file_id}_{file.filename}"
+            shutil.move(str(temp_file), str(final_path))
         else:
-            # Remove unsafe file
-            temp_file_path.unlink(missing_ok=True)
-
-            # Log safety violation
-            compliance_logger.log_safety_violation(
+            temp_file.unlink(missing_ok=True)
+            compliance.log_safety_violation(
                 "unsafe_upload",
                 {"filename": file.filename, "content_type": file.content_type},
                 "file_rejected",
             )
-
             raise HTTPException(
-                status_code=400,
-                detail=f"Upload rejected due to safety concerns: {safety_result}",
+                status_code=400, detail=f"Upload rejected: {safety_result}"
             )
 
-        # Validate license
-        validation_result = license_manager.validator.validate_license(license_obj)
-
-        # Log upload
-        compliance_logger.log_upload(
-            upload_metadata.file_id,
-            {"license_info": license_data, "uploader_id": uploader_id},
+        validation = license_manager.validator.validate_license(license_data)
+        compliance.log_upload(
+            upload_meta.file_id,
+            {"uploader_id": uploader_id, "license_info": license_data},
             safety_result,
         )
 
         return UploadResponse(
-            file_id=upload_metadata.file_id,
+            file_id=upload_meta.file_id,
             safety_check=safety_result,
-            license_check=validation_result,
-            metadata_path=str(permanent_path.with_suffix(".json")),
+            license_check=validation,
+            metadata_path=str(final_path.with_suffix(".json")),
         )
-
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid license information JSON")
+    except HTTPException:
+        raise
     except Exception as e:
-        # Clean up temp file if it exists
-        if "temp_file_path" in locals():
-            Path(temp_file_path).unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        # best-effort temp cleanup
+        try:
+            temp_file.unlink(missing_ok=True)  # type: ignore
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
 
 
 @router.get("/license/{file_id}")
@@ -370,19 +316,14 @@ async def add_watermark_to_image(
 
 
 @router.get("/health")
-async def safety_health_check():
-    """Health check for safety systems"""
-
+async def safety_health(
+    safety=Depends(get_safety_engine),
+    license_manager=Depends(get_license_manager),
+    attribution=Depends(get_attribution_manager),
+    compliance=Depends(get_compliance_logger),
+):
+    """Check status of safety components."""
     try:
-        # Test safety engine initialization
-        safety_engine = get_safety_engine()
-
-        # Test license manager
-        license_manager = get_license_manager()
-
-        # Test attribution manager
-        attribution_manager = get_attribution_manager()
-
         return {
             "status": "healthy",
             "components": {
@@ -391,12 +332,7 @@ async def safety_health_check():
                 "attribution_manager": "operational",
                 "compliance_logger": "operational",
             },
-            "models_loaded": {
-                "nsfw_detector": hasattr(safety_engine.nsfw_detector, "model"),
-                "face_detector": hasattr(safety_engine.face_blurrer, "face_cascade"),
-            },
         }
-
     except Exception as e:
         return JSONResponse(
             status_code=503, content={"status": "unhealthy", "error": str(e)}

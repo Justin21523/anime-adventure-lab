@@ -1,4 +1,5 @@
 # api/routers/story.py
+from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any
@@ -6,24 +7,11 @@ import json
 import logging
 from datetime import datetime
 
-import sys
-from pathlib import Path
-
-ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
-sys.path.append("../..")
-
-from core.shared_cache import bootstrap_cache
-from core.story.engine import StoryEngine, TurnRequest
-from core.story.game_state import GameState, RelationType
-from core.story.persona import PersonaManager
-from core.rag.engine import ChineseRAGEngine
-from core.llm.adapter import LLMAdapter
+from ..dependencies import get_story_engine, get_persona_manager
+from core.story.game_state import GameState
 
 logger = logging.getLogger(__name__)
 
-# Setup cache on module import
-cache = bootstrap_cache()
 
 router = APIRouter(prefix="/story", tags=["story"])
 
@@ -80,18 +68,6 @@ class PersonaCreateRequest(BaseModel):
     appearance: Optional[str] = ""
 
 
-# Dependencies
-async def get_story_engine() -> StoryEngine:
-    # This would be injected from the main app
-    # For now, placeholder
-    pass
-
-
-async def get_persona_manager() -> PersonaManager:
-    # This would be injected from the main app
-    pass
-
-
 # In-memory storage for demo (in production, use Redis/DB)
 game_sessions: Dict[str, GameState] = {}
 save_files: Dict[str, Dict[str, GameState]] = {}
@@ -99,32 +75,24 @@ save_files: Dict[str, Dict[str, GameState]] = {}
 
 @router.post("/turn", response_model=StoryResponseModel)
 async def process_turn(
-    request: TurnRequestModel, story_engine: StoryEngine = Depends(get_story_engine)
+    request: TurnRequestModel, story_engine=Depends(get_story_engine)
 ):
-    """處理一個故事回合"""
+    """Process a story turn using DI-injected engine."""
     try:
-        # Get or create game state
-        if request.session_id not in game_sessions:
-            game_state = GameState(
-                session_id=request.session_id, world_id=request.world_id
-            )
-            game_sessions[request.session_id] = game_state
-        else:
-            game_state = game_sessions[request.session_id]
+        # get or create state
+        game_state = game_sessions.get(request.session_id) or GameState(
+            session_id=request.session_id, world_id=request.world_id
+        )
+        game_sessions[request.session_id] = game_state
 
-        # Create turn request
-        turn_req = TurnRequest(
+        # Build and process
+        turn_req = story_engine.build_turn_request(
             player_input=request.player_input,
             choice_id=request.choice_id,
             world_id=request.world_id,
             session_id=request.session_id,
         )
-
-        # Process the turn
         response = await story_engine.process_turn(turn_req, game_state)
-
-        # Update stored game state
-        game_sessions[request.session_id] = game_state
 
         return StoryResponseModel(
             narration=response.narration,
@@ -134,134 +102,106 @@ async def process_turn(
             game_state_changes=response.game_state_changes,
             metadata=response.metadata,
         )
-
     except Exception as e:
-        logger.error(f"Error processing turn: {e}")
-        raise HTTPException(status_code=500, detail=f"Story processing error: {str(e)}")
+        logger.exception("Error processing turn")
+        raise HTTPException(status_code=500, detail=f"Story processing error: {e}")
 
 
 @router.get("/state/{session_id}", response_model=GameStateResponse)
 async def get_game_state(session_id: str):
-    """取得遊戲狀態"""
+    """Get current game state."""
     if session_id not in game_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
+    gs = game_sessions[session_id]
 
-    game_state = game_sessions[session_id]
-
-    # Get recent events (last 5)
-    recent_events = []
-    for event in game_state.timeline[-5:]:
-        recent_events.append(
-            {
-                "event_id": event.event_id,
-                "type": event.event_type.value,
-                "description": event.description,
-                "timestamp": event.timestamp.isoformat(),
-                "characters": event.characters_involved,
-            }
-        )
-
+    recent_events = [
+        {
+            "event_id": ev.event_id,
+            "type": ev.event_type.value,
+            "description": ev.description,
+            "timestamp": ev.timestamp.isoformat(),
+            "characters": ev.characters_involved,
+        }
+        for ev in gs.timeline[-5:]
+    ]
     return GameStateResponse(
-        session_id=game_state.session_id,
-        world_id=game_state.world_id,
-        current_scene=game_state.current_scene,
-        current_location=game_state.current_location,
-        turn_count=game_state.turn_count,
-        player_name=game_state.player_name,
-        player_health=game_state.player_health,
-        player_energy=game_state.player_energy,
+        session_id=gs.session_id,
+        world_id=gs.world_id,
+        current_scene=gs.current_scene,
+        current_location=gs.current_location,
+        turn_count=gs.turn_count,
+        player_name=gs.player_name,
+        player_health=gs.player_health,
+        player_energy=gs.player_energy,
         relationships={
-            k: f"{v.relation_type.value} (親密:{v.affinity}, 信任:{v.trust})"
-            for k, v in game_state.relationships.items()
+            k: f"{v.relation_type.value} (aff:{v.affinity}, trust:{v.trust})"
+            for k, v in gs.relationships.items()
         },
-        inventory={
-            k: f"{v.name} x{v.quantity}" for k, v in game_state.inventory.items()
-        },
-        world_flags={k: v.value for k, v in game_state.world_flags.items()},
+        inventory={k: f"{v.name} x{v.quantity}" for k, v in gs.inventory.items()},
+        world_flags={k: v.value for k, v in gs.world_flags.items()},
         recent_events=recent_events,
     )
 
 
 @router.post("/save")
 async def save_game(request: SaveGameRequest):
-    """儲存遊戲"""
+    """Save current session state."""
     if request.session_id not in game_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    if request.session_id not in save_files:
-        save_files[request.session_id] = {}
-
-    # Deep copy the game state
-    game_state = game_sessions[request.session_id]
-    save_files[request.session_id][request.save_name] = game_state
-
-    logger.info(f"Saved game {request.save_name} for session {request.session_id}")
-
+    save_files.setdefault(request.session_id, {})[request.save_name] = game_sessions[
+        request.session_id
+    ]
     return {
         "success": True,
         "save_name": request.save_name,
         "timestamp": datetime.now().isoformat(),
-        "turn_count": game_state.turn_count,
     }
 
 
 @router.post("/load")
 async def load_game(request: LoadGameRequest):
-    """讀取遊戲"""
+    """Load a saved session or list saves."""
     if request.session_id not in save_files:
-        raise HTTPException(status_code=404, detail="No saves found for this session")
-
+        raise HTTPException(status_code=404, detail="No saves for this session")
     saves = save_files[request.session_id]
-
     if request.save_name:
         if request.save_name not in saves:
             raise HTTPException(status_code=404, detail="Save file not found")
-
-        # Load specific save
         game_sessions[request.session_id] = saves[request.save_name]
-
         return {
             "success": True,
             "loaded_save": request.save_name,
             "turn_count": saves[request.save_name].turn_count,
         }
-    else:
-        # List available saves
-        save_list = []
-        for save_name, save_state in saves.items():
-            save_list.append(
-                {
-                    "save_name": save_name,
-                    "turn_count": save_state.turn_count,
-                    "last_updated": save_state.last_updated.isoformat(),
-                    "world_id": save_state.world_id,
-                    "current_scene": save_state.current_scene,
-                }
-            )
-
-        return {"saves": save_list}
+    return {
+        "saves": [
+            {
+                "save_name": name,
+                "turn_count": state.turn_count,
+                "last_updated": state.last_updated.isoformat(),
+                "world_id": state.world_id,
+                "current_scene": state.current_scene,
+            }
+            for name, state in saves.items()
+        ]
+    }
 
 
 @router.post("/new_session")
 async def create_new_session(
-    world_id: str, player_name: str = "玩家", starting_scene: str = "opening"
+    world_id: str, player_name: str = "player", starting_scene: str = "opening"
 ):
-    """建立新的遊戲會話"""
+    """Create a new game session."""
     import uuid
 
     session_id = str(uuid.uuid4())
-
-    game_state = GameState(
+    gs = GameState(
         session_id=session_id,
         world_id=world_id,
         player_name=player_name,
         current_scene=starting_scene,
     )
-
-    game_sessions[session_id] = game_state
-
-    logger.info(f"Created new session {session_id} for world {world_id}")
-
+    game_sessions[session_id] = gs
     return {
         "session_id": session_id,
         "world_id": world_id,
@@ -272,58 +212,41 @@ async def create_new_session(
 
 @router.delete("/session/{session_id}")
 async def delete_session(session_id: str):
-    """刪除遊戲會話"""
-    if session_id in game_sessions:
-        del game_sessions[session_id]
-
-    if session_id in save_files:
-        del save_files[session_id]
-
+    """Delete a game session and its saves."""
+    game_sessions.pop(session_id, None)
+    save_files.pop(session_id, None)
     return {"success": True, "deleted_session": session_id}
 
 
 # Persona management endpoints
 @router.post("/persona")
-async def create_persona(
-    request: PersonaCreateRequest,
-    persona_manager: PersonaManager = Depends(get_persona_manager),
-):
-    """創建角色人設"""
+async def create_persona(req: PersonaCreateRequest, pm=Depends(get_persona_manager)):
+    """Create a persona."""
     try:
-        persona = persona_manager.create_persona_from_data(
+        persona = pm.create_persona_from_data(
             {
-                "id": request.character_id,
-                "name": request.name,
-                "description": request.description,
-                "background": request.background,
-                "personality": request.personality,
-                "speech_style": request.speech_style,
-                "appearance": request.appearance,
+                "id": req.character_id,
+                "name": req.name,
+                "description": req.description,
+                "background": req.background,
+                "personality": req.personality,
+                "speech_style": req.speech_style,
+                "appearance": req.appearance,
             }
         )
-
-        persona_manager.add_persona(persona)
-
-        return {
-            "success": True,
-            "character_id": request.character_id,
-            "message": f"角色 {request.name} 已創建",
-        }
-
+        pm.add_persona(persona)
+        return {"success": True, "character_id": req.character_id}
     except Exception as e:
-        logger.error(f"Error creating persona: {e}")
-        raise HTTPException(status_code=500, detail=f"Error creating persona: {str(e)}")
+        logger.exception("create_persona failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/persona/{character_id}")
-async def get_persona(
-    character_id: str, persona_manager: PersonaManager = Depends(get_persona_manager)
-):
-    """取得角色人設"""
-    persona = persona_manager.get_persona(character_id)
+async def get_persona(character_id: str, pm=Depends(get_persona_manager)):
+    """Get persona data."""
+    persona = pm.get_persona(character_id)
     if not persona:
         raise HTTPException(status_code=404, detail="Character not found")
-
     return persona.to_dict()
 
 
@@ -334,25 +257,23 @@ async def add_persona_memory(
     importance: int = 5,
     emotional_impact: int = 0,
     related_characters: List[str] = [],
-    persona_manager: PersonaManager = Depends(get_persona_manager),
+    pm=Depends(get_persona_manager),
 ):
-    """為角色添加記憶"""
-    persona = persona_manager.get_persona(character_id)
+    """Append persona memory entry."""
+    persona = pm.get_persona(character_id)
     if not persona:
         raise HTTPException(status_code=404, detail="Character not found")
-
-    persona_manager.update_persona_memory(
+    pm.update_persona_memory(
         character_id=character_id,
         event_description=content,
         importance=importance,
         emotional_impact=emotional_impact,
         related_characters=related_characters,
     )
-
     return {
         "success": True,
         "character_id": character_id,
-        "memory_added": content[:50] + "..." if len(content) > 50 else content,
+        "memory_added": content[:50] + ("..." if len(content) > 50 else ""),
     }
 
 
@@ -371,29 +292,31 @@ async def analyze_relationship(
 
 @router.get("/choices/{session_id}")
 async def get_available_choices(session_id: str):
-    """取得當前可用的選擇"""
+    """Return available choices (placeholder)."""
     if session_id not in game_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    game_state = game_sessions[session_id]
-
-    # This would use the choice resolver to get available choices
-    # For now, return basic choices
     choices = [
-        {"id": "explore", "text": "探索周圍", "description": "仔細查看當前環境"},
-        {"id": "rest", "text": "休息", "description": "恢復體力和精神"},
-        {"id": "continue", "text": "繼續", "description": "繼續當前情節"},
+        {
+            "id": "explore",
+            "text": "Explore surroundings",
+            "description": "Look around carefully",
+        },
+        {"id": "rest", "text": "Rest", "description": "Recover stamina"},
+        {
+            "id": "continue",
+            "text": "Continue",
+            "description": "Proceed with the current plot",
+        },
     ]
-
     return {"choices": choices}
 
 
 @router.get("/health")
 async def health_check():
-    """health check"""
+    """Basic health info for story router."""
     return {
         "status": "healthy",
         "active_sessions": len(game_sessions),
-        "total_saves": sum(len(saves) for saves in save_files.values()),
+        "total_saves": sum(len(s) for s in save_files.values()),
         "timestamp": datetime.now().isoformat(),
     }
