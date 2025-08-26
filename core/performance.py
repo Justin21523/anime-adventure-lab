@@ -9,8 +9,10 @@ from dataclasses import dataclass
 import torch
 import redis
 from sentence_transformers import SentenceTransformer
+from transformers import AutoTokenizer, AutoModel
 
-from core.config import get_settings
+from core.config import get_config
+from core.shared_cache import get_shared_cache
 
 
 @dataclass
@@ -29,8 +31,8 @@ class PerformanceOptimizer:
     """Centralized performance optimization and caching"""
 
     def __init__(self):
-        self.settings = get_settings()
-        self.redis_client = redis.from_url(self.settings.redis_url)
+        self.settings = get_config()
+        self.redis_client = redis.from_url(self.settings.cache.redis_url)
         self.embedding_cache = {}
         self.model_cache = {}
         self.stats = {
@@ -64,7 +66,7 @@ class PerformanceOptimizer:
             # Try Redis cache
             cached_data = self.redis_client.get(cache_key)
             if cached_data:
-                embedding = torch.tensor(json.loads(cached_data))
+                embedding = torch.tensor(json.loads(cached_data))  # type: ignore
                 # Store in memory cache (LRU will handle size)
                 if len(self.embedding_cache) < 1000:
                     self.embedding_cache[cache_key] = embedding
@@ -113,8 +115,6 @@ class PerformanceOptimizer:
                     model = model.half()  # Use fp16 for better performance
             else:
                 # Generic model loading
-                from transformers import AutoModel
-
                 model = AutoModel.from_pretrained(
                     model_name,
                     torch_dtype=torch.float16 if device == "cuda" else torch.float32,
@@ -161,8 +161,6 @@ class PerformanceOptimizer:
                     )
                 else:
                     # Generic transformer model
-                    from transformers import AutoTokenizer
-
                     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
                     all_embeddings = []
