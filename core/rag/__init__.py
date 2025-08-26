@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 import faiss
-from rank_bm25 import BM25Okapi
+import torch
 import opencc
 import re
 from pathlib import Path
