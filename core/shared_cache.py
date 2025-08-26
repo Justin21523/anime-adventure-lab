@@ -41,6 +41,8 @@ class SharedCache:
     def _create_directories(self) -> None:
         """Create application-specific directories"""
         self.app_dirs = {
+            # Model Registry file
+            "TRAIN_REGISTRY": f"{self.cache_root}/train/model_registry.json",
             # Models
             "MODELS_SD": f"{self.cache_root}/models/sd",
             "MODELS_SDXL": f"{self.cache_root}/models/sdxl",
@@ -50,6 +52,7 @@ class SharedCache:
             "MODELS_LLM": f"{self.cache_root}/models/llm",
             "MODELS_VLM": f"{self.cache_root}/models/vlm",
             "MODELS_EMBEDDING": f"{self.cache_root}/models/embedding",
+            "MODELS_CLIP": f"{self.cache_root}/models/clip",
             # Datasets
             "DATASETS_RAW": f"{self.cache_root}/datasets/raw",
             "DATASETS_PROCESSED": f"{self.cache_root}/datasets/processed",
