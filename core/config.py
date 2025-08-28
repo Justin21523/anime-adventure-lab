@@ -6,10 +6,16 @@ Loads YAML configs with environment variable overrides
 
 import os
 import yaml
+import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, NamedTuple
+from dataclasses import dataclass
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict, BaseSettings
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class APIConfig(BaseSettings):
@@ -19,6 +25,7 @@ class APIConfig(BaseSettings):
 
     host: str = Field(default="0.0.0.0", description="API host")
     port: int = Field(default=8000, description="API port")
+    prefix: str = Field(default="/api/v1", description="API PREFIX")
     cors_origins: str = Field(
         default="http://localhost:7860", description="CORS origins"
     )
@@ -38,6 +45,9 @@ class ModelConfig(BaseSettings):
     cuda_visible_devices: str = Field(default="0", env="CUDA_VISIBLE_DEVICES")  # type: ignore
     device_map: str = Field(default="auto", description="Model device mapping")
     torch_dtype: str = Field(default="float16", description="Default torch dtype")
+
+    # Extended multi-modal settings (from core_config_module.py)
+    log_level: str = Field(default="INFO", description="LOG_LEVEL")
 
     # Memory optimization
     use_4bit_loading: bool = Field(default=True, description="Use 4-bit quantization")
@@ -61,6 +71,23 @@ class ModelConfig(BaseSettings):
     default_vlm_model: str = Field(
         default="runwayml/stable-diffusion-v1-5", description="Default VLM model"
     )
+
+    # Safety settings
+    enable_safety_checker: bool = Field(
+        default=True, description="ENABLE_SAFETY_CHECKER"
+    )
+    enable_nsfw_filter: bool = Field(default=True, description="ENABLE_NSFW_FILTER")
+    max_image_size: int = Field(default=2048, description="MAX_IMAGE_SIZE")
+
+    # Game settings
+    game_save_path: str = Field(default="outputs/games", description="GAME_SAVE_PATH")
+    max_game_sessions: int = Field(default=10, description="MAX_GAME_SESSIONS")
+
+    # Training settings
+    training_output_path: str = Field(
+        default="outputs/training", description="TRAINING_OUTPUT_PATH"
+    )
+    max_training_jobs: int = Field(default=2, description="MAX_TRAINING_JOBS")
 
 
 class RAGConfig(BaseSettings):
@@ -106,6 +133,12 @@ class CacheConfig(BaseSettings):
 
     root: str = Field(default="../ai_warehouse/cache", env="AI_CACHE_ROOT")  # type: ignore
     redis_url: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")  # type: ignore
+    celery_broker_url: str = Field(
+        default="redis://localhost:6379/0", description="CELERY_BROKER_URL"
+    )
+    celery_result_backend: str = Field(
+        default="redis://localhost:6379/0", description="CELERY_RESULT_BACKEND"
+    )
 
 
 class AppConfig:
@@ -113,6 +146,7 @@ class AppConfig:
 
     def __init__(self, config_path: Optional[str] = None):
         self.config_path = config_path or "configs/app.yaml"
+        self.config_dir = "configs"
         self.yaml_config = self._load_yaml_config()
 
         # Initialize component configs
@@ -121,6 +155,7 @@ class AppConfig:
         self.rag = RAGConfig()
         self.database = DatabaseConfig()
         self.cache = CacheConfig()
+        self._cache = {}
 
     def _load_yaml_config(self) -> Dict[str, Any]:
         """Load YAML configuration file"""
@@ -131,6 +166,52 @@ class AppConfig:
 
         with open(config_file, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
+
+    def load_yaml(self, filename: str) -> Dict[str, Any]:
+        """Load YAML config file with caching"""
+        if filename in self._cache:
+            return self._cache[filename]
+
+        file_path = Path(self.config_dir) / filename
+        if not file_path.exists():
+            logger.warning(f"Config file not found: {file_path}")
+            return {}
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+        except Exception as e:
+            logger.error(f"Error loading config file {file_path}: {e}")
+            return {}
+
+        self._cache[filename] = config or {}
+        return self._cache[filename]
+
+    def get_model_config(self, model_name: str) -> Dict[str, Any]:
+        """Get model configuration"""
+        models_config = self.load_yaml("models.yaml")
+        if model_name not in models_config:
+            logger.warning(f"Model config not found: {model_name}")
+            return {}
+        return models_config[model_name]
+
+    def get_train_config(self, config_name: str) -> Dict[str, Any]:
+        """Get training configuration"""
+        config_path = f"train/{config_name}"
+        return self.load_yaml(config_path)
+
+    def get_preset_config(self, preset_name: str) -> Dict[str, Any]:
+        """Get style preset configuration"""
+        config_path = f"presets/{preset_name}"
+        return self.load_yaml(config_path)
+
+    def get_agent_config(self) -> Dict[str, Any]:
+        """Get agent configuration"""
+        return self.load_yaml("agent.yaml")
+
+    def get_game_persona_config(self) -> Dict[str, Any]:
+        """Get game persona configuration"""
+        return self.load_yaml("game_persona.json")
 
     def _create_default_config(self, config_file: Path) -> None:
         """Create default configuration file"""
