@@ -1,0 +1,108 @@
+# configs/agent.yaml
+# Agent Tools Registry Configuration
+
+agent:
+  name: "Multi-Modal Lab Agent"
+  description: "AI agent with vision, text, and tool capabilities"
+  version: "0.1.0"
+
+  # Tool registry
+  tools:
+    calculator:
+      name: "Calculator"
+      description: "Perform mathematical calculations"
+      enabled: true
+      endpoint: "http://localhost:8000/api/v1/tools/calculator"
+      timeout: 10
+      parameters:
+        expression:
+          type: "string"
+          description: "Mathematical expression to evaluate"
+          required: true
+          example: "2 + 3 * 4"
+
+    web_search:
+      name: "Web Search"
+      description: "Search the web for information"
+      enabled: false # Disabled by default - implement as needed
+      endpoint: "http://localhost:8000/api/v1/tools/web_search"
+      timeout: 30
+      parameters:
+        query:
+          type: "string"
+          description: "Search query"
+          required: true
+          max_length: 200
+        num_results:
+          type: "integer"
+          description: "Number of results to return"
+          default: 5
+          min: 1
+          max: 10
+
+    image_analysis:
+      name: "Image Analysis"
+      description: "Analyze uploaded images using VLM"
+      enabled: true
+      endpoint: "http://localhost:8000/api/v1/tools/image_analysis"
+      timeout: 60
+      parameters:
+        image:
+          type: "file"
+          description: "Image file to analyze"
+          required: true
+          formats: ["jpg", "jpeg", "png", "webp"]
+        analysis_type:
+          type: "string"
+          description: "Type of analysis"
+          enum: ["caption", "objects", "text", "scene"]
+          default: "caption"
+
+  # Agent behavior configuration
+  behavior:
+    max_iterations: 5
+    max_tool_calls_per_iteration: 2
+    enable_chain_of_thought: true
+    enable_self_correction: true
+
+    # Response formatting
+    response_format: "structured" # structured, natural, json
+    include_reasoning: true
+    include_tool_traces: false # For debugging
+
+    # Safety
+    validate_tool_outputs: true
+    sanitize_responses: true
+    max_response_length: 2000
+
+  # Tool calling strategy
+  strategy:
+    tool_selection: "best_match" # best_match, parallel, sequential
+    error_handling: "graceful" # graceful, strict, retry
+    retry_attempts: 2
+    fallback_to_llm: true
+
+    # Context management
+    preserve_context: true
+    max_context_length: 4000
+    context_compression: "summarize" # summarize, truncate, sliding_window
+
+# Tool-specific configurations
+tools_config:
+  calculator:
+    safe_mode: true # Restrict dangerous operations
+    precision: 10
+    max_expression_length: 200
+
+  web_search:
+    user_agent: "Multi-Modal Lab Agent/0.1.0"
+    max_page_size: 10000
+    respect_robots_txt: true
+    cache_results: true
+    cache_ttl_hours: 24
+
+  image_analysis:
+    max_file_size_mb: 10
+    supported_formats: ["jpg", "jpeg", "png", "webp", "bmp"]
+    auto_resize: true
+    max_resolution: 1024
