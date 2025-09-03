@@ -10,6 +10,7 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 import torch
 from pathlib import Path
@@ -21,6 +22,10 @@ sys.path.append(str(ROOT_DIR))
 # Import core modules
 from core.shared_cache import bootstrap_cache
 from core.config import get_config
+from core.shared_cache import bootstrap_cache
+from core.exceptions import MultiModalLabError
+from core.llm.adapter import get_llm_adapter
+from core.vlm.engine import get_vlm_engine
 
 # Import routers (will be implemented in later stages)
 from api.routers import (
@@ -36,6 +41,7 @@ from api.routers import (
     story,
     t2i,
     vlm,
+    game,
 )
 
 
@@ -61,11 +67,29 @@ async def lifespan(app: FastAPI):
     app.state.config = config
 
     logger.info(f"✅ SagaForge API ready at http://{config.api.host}:{config.api.port}")
+    # Pre-load critical models if configured
+    if config.get_feature_flag("preload_models"):
+        try:
+            vlm_engine = get_vlm_engine()
+            vlm_engine.load_caption_model()
+            logger.info("Caption model pre-loaded")
+        except Exception as e:
+            logger.warning(f"Failed to pre-load models: {e}")
 
     yield
 
     # Shutdown
-    logger.info("🛑 Shutting down SagaForge API...")
+    logger.info("Multi-Modal Lab API shutting down...")
+    try:
+        llm_adapter = get_llm_adapter()
+        llm_adapter.unload_all()
+
+        vlm_engine = get_vlm_engine()
+        vlm_engine.unload_models()
+
+        logger.info("Models unloaded successfully")
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}")
 
 
 # Create FastAPI app
@@ -89,6 +113,11 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=["localhost", "127.0.0.1", "*"],  # Configure for production
     )
 
     # Global exception handler
@@ -120,6 +149,7 @@ def create_app() -> FastAPI:
     app.include_router(t2i.router, prefix="/api/v1", tags=["t2i"])
     app.include_router(vlm.router, prefix="/api/v1", tags=["vlm"])
     app.include_router(finetune.router, prefix="/api/v1", tags=["finetune"])
+    app.include_router(game.router, prefix="/api/v1", tags=["Game"])
     app.include_router(batch.router, prefix="/api/v1", tags=["batch"])
 
     return app
