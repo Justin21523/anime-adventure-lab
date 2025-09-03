@@ -1,35 +1,29 @@
 # core/story/engine.py
+"""
+Text Adventure Game Engine
+Manages game state, narrative generation, and player interactions
+"""
+
 import json
-from typing import Dict, List, Optional, Any, Tuple
+import uuid
 import logging
-from dataclasses import dataclass
-from datetime import datetime
-
-import sys
+import pathlib
 from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, asdict
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
-sys.path.append("../..")
-
-from core.llm.adapter import LLMAdapter
-from core.llm.prompt_templates import PromptTemplates
-from .game_state import GameState, EventType, RelationType
-from .choice_resolver import ChoiceResolver
-from .persona import PersonaManager
-from core.rag.engine import ChineseRAGEngine
-from .data_structures import (
-    Persona,
-    GameState,
-    TurnRequest,
-    TurnResponse,
-    DialogueEntry,
-    Choice,
-    Relationship,
-    RelationType,
+from ..llm.adapter import get_llm_adapter, ChatMessage
+from ..exceptions import (
+    GameError,
+    SessionNotFoundError,
+    InvalidChoiceError,
+    ValidationError,
 )
-from ..llm.base import MinimalLLM
+from ..config import get_config
 from ..shared_cache import get_shared_cache
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,396 +31,505 @@ class GameState:
     """Game state data structure"""
 
     session_id: str
-    world_id: str
     player_name: str
     current_scene: str
     inventory: List[str]
-    stats: Dict[str, int]
-    flags: Dict[str, bool]
+    stats: Dict[str, int]  # health, energy, etc.
+    flags: Dict[str, bool]  # story flags
+    relationships: Dict[str, int]  # NPC relationship levels
     turn_count: int
     last_action: Optional[str] = None
+    created_at: Optional[datetime] = None
 
-    def to_dict(self) -> dict:
-        return asdict(self)
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to serializable dict"""
+        data = asdict(self)
+        if self.created_at:
+            data["created_at"] = self.created_at.isoformat()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "GameState":
+        """Create from dict"""
+        if "created_at" in data and isinstance(data["created_at"], str):
+            data["created_at"] = datetime.fromisoformat(data["created_at"])
+        return cls(**data)
 
 
 @dataclass
-class TurnRequest:
-    """Turn processing request"""
+class Choice:
+    """Player choice option"""
 
-    session_id: str
-    player_input: str
-    choice_id: Optional[str] = None
-    metadata: Dict[str, Any] = None
+    id: str
+    text: str
+    description: str
+    requirements: Optional[Dict[str, Any]] = None  # stat/item requirements
+    consequences: Optional[Dict[str, Any]] = None  # stat/flag changes
+
+
+@dataclass
+class TurnResponse:
+    """Game turn response"""
+
+    narration: str
+    dialogues: List[
+        Dict[str, str]
+    ]  # [{"speaker": "NPC", "text": "...", "emotion": "happy"}]
+    choices: List[Choice]
+    scene_change: bool = False
+    state_updates: Optional[Dict[str, Any]] = None
+
+
+class Persona:
+    """Game persona/character definition"""
+
+    def __init__(self, config: Dict[str, Any]):
+        self.name = config.get("name", "Game Master")
+        self.description = config.get("description", "A helpful game master")
+        self.personality = config.get("personality", [])
+        self.speech_style = config.get("speech_style", "friendly")
+        self.world_knowledge = config.get("world_knowledge", {})
+        self.safety_rules = config.get("safety_rules", [])
+
+    def get_system_prompt(self, game_state: GameState) -> str:
+        """Generate system prompt for current game state"""
+        prompt_parts = [
+            f"你是 {self.name}，{self.description}",
+            "",
+            "角色設定：",
+            f"- 個性：{', '.join(self.personality)}",
+            f"- 說話風格：{self.speech_style}",
+            "",
+            f"當前遊戲狀態：",
+            f"- 玩家：{game_state.player_name}",
+            f"- 場景：{game_state.current_scene}",
+            f"- 回合數：{game_state.turn_count}",
+            f"- 道具：{', '.join(game_state.inventory) if game_state.inventory else '無'}",
+        ]
+
+        if game_state.stats:
+            prompt_parts.append(
+                f"- 狀態：{', '.join(f'{k}={v}' for k, v in game_state.stats.items())}"
+            )
+
+        prompt_parts.extend(
+            [
+                "",
+                "遊戲規則：",
+                "1. 每個回合提供 2-4 個選擇",
+                "2. 保持故事連貫性和沉浸感",
+                "3. 根據玩家選擇動態調整劇情",
+                "4. 回應必須是有效的 JSON 格式",
+            ]
+        )
+
+        if self.safety_rules:
+            prompt_parts.extend(
+                ["", "安全規則：", *[f"- {rule}" for rule in self.safety_rules]]
+            )
+
+        return "\n".join(prompt_parts)
 
 
 class StoryEngine:
-    """Core story engine that manages narrative flow and game state"""
+    """Core story engine that manages narrative flow"""
 
-    def __init__(self, llm_adapter: LLMAdapter):
+    def __init__(self):
+        self.config = get_config()
         self.cache = get_shared_cache()
-        self.sessions = {}  # In-memory session storage
-        self._personas = self._load_personas()
-        self.llm = llm_adapter
-        self.templates = PromptTemplates()
+        self.llm_adapter = get_llm_adapter()
 
-    def _load_personas(self) -> dict:
-        """Load persona configurations"""
-        # Mock personas - in real implementation, load from configs/game_persona.json
-        return {
-            "friendly_guide": {
-                "name": "Friendly Guide",
-                "personality": "Helpful, encouraging, patient",
-                "speaking_style": "Warm and supportive",
-                "knowledge_areas": ["general", "adventure", "problem_solving"],
-                "safety_rules": ["no_violence", "no_adult_content"],
-                "memory_slots": 10,
-            },
-            "mysterious_narrator": {
-                "name": "Mysterious Narrator",
-                "personality": "Enigmatic, wise, slightly cryptic",
-                "speaking_style": "Poetic and atmospheric",
-                "knowledge_areas": ["fantasy", "mystery", "lore"],
-                "safety_rules": ["no_violence", "no_adult_content"],
-                "memory_slots": 15,
-            },
-        }
+        # Session storage (in-memory for MVP)
+        self.sessions: Dict[str, GameState] = {}
+        self.personas: Dict[str, Persona] = {}
 
-    def _load_game_templates(self) -> dict:
-        """Load game scenario templates"""
-        return {
-            "fantasy_adventure": {
-                "title": "Fantasy Adventure",
-                "description": "A magical world of quests and discovery",
-                "starting_scene": "village_entrance",
-                "available_actions": ["explore", "talk", "inventory", "help"],
-            },
-            "mystery_investigation": {
-                "title": "Mystery Investigation",
-                "description": "Solve puzzles and uncover secrets",
-                "starting_scene": "investigation_start",
-                "available_actions": ["investigate", "question", "analyze", "notes"],
-            },
-        }
+        # Load personas
+        self._load_personas()
 
-    def build_persona(self, persona_id: str = "friendly_guide", **kwargs) -> dict:
-        """Build persona configuration"""
-        if persona_id not in self._personas:
-            persona_id = "friendly_guide"
-
-        persona = self._personas[persona_id].copy()
-        persona.update(kwargs)
-        return persona
-
-    def build_game_state(
-        self, world_id: str = "fantasy_adventure", player_name: str = "Player", **kwargs
-    ) -> GameState:
-        """Build initial game state"""
-        session_id = str(uuid.uuid4())
-        template = self._game_templates.get(
-            world_id, self._game_templates["fantasy_adventure"]
-        )
-
-        return GameState(
-            session_id=session_id,
-            world_id=world_id,
-            player_name=player_name,
-            current_scene=template["starting_scene"],
-            inventory=[],
-            stats={"health": 100, "energy": 100, "knowledge": 0},
-            flags={"game_started": True},
-            turn_count=0,
-        )
-
-    def build_turn_request(
-        self,
-        *,
-        player_input: str,
-        persona=None,
-        game_state=None,
-        choice_id: Optional[str] = None,
-        **kw,
-    ) -> TurnRequest:
-        """Build turn processing request"""
-        session_id = game_state.session_id if game_state else str(uuid.uuid4())
-
-        return TurnRequest(
-            session_id=session_id,
-            player_input=player_input,
-            choice_id=choice_id,
-            metadata=kw,
-        )
-
-    async def process_turn(
-        self, turn_req: TurnRequest, game_state: GameState
-    ) -> Dict[str, Any]:
-        """Process a game turn"""
+    def _load_personas(self) -> None:
+        """Load game personas from configuration"""
         try:
-            # Update turn count
-            game_state.turn_count += 1
-            game_state.last_action = turn_req.player_input
+            persona_config_path = Path("configs/game_persona.json")
+            if persona_config_path.exists():
+                with open(persona_config_path, "r", encoding="utf-8") as f:
+                    personas_data = json.load(f)
 
-            # Build context for LLM
-            context = self._build_context(game_state, turn_req)
+                for persona_id, persona_config in personas_data.items():
+                    self.personas[persona_id] = Persona(persona_config)
 
-            # Generate LLM response
-            messages = [
-                {"role": "system", "content": self._build_system_prompt(game_state)},
-                {"role": "user", "content": context},
-            ]
+                logger.info(f"Loaded {len(self.personas)} personas")
+            else:
+                # Create default persona
+                default_persona = {
+                    "default": {
+                        "name": "智慧導師",
+                        "description": "一位博學且友善的遊戲引導者",
+                        "personality": ["智慧", "耐心", "創意", "幽默"],
+                        "speech_style": "溫和且富有啟發性",
+                        "safety_rules": [
+                            "避免暴力或成人內容",
+                            "保持正面且教育性的互動",
+                            "尊重玩家的選擇但引導向善",
+                        ],
+                    }
+                }
 
-            llm_response = self.llm.chat(messages)
+                persona_config_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(persona_config_path, "w", encoding="utf-8") as f:
+                    json.dump(default_persona, f, indent=2, ensure_ascii=False)
 
-            # Parse response into structured format
-            result = self._parse_llm_response(llm_response, game_state)
-
-            # Update game state based on response
-            self._update_game_state(game_state, result)
-
-            # Store session
-            self.sessions[game_state.session_id] = game_state
-
-            return result
+                self.personas["default"] = Persona(default_persona["default"])
+                logger.info("Created default persona configuration")
 
         except Exception as e:
-            raise RuntimeError(f"Turn processing failed: {str(e)}")
+            logger.error(f"Failed to load personas: {e}")
+            # Fallback persona
+            self.personas["default"] = Persona(
+                {"name": "遊戲大師", "description": "友善的遊戲引導者"}
+            )
 
-    def _build_context(self, game_state: GameState, turn_req: TurnRequest) -> str:
-        """Build context string for LLM"""
-        context = f"""
-Current Scene: {game_state.current_scene}
-Player: {game_state.player_name}
-Turn: {game_state.turn_count}
-Player Action: {turn_req.player_input}
-Inventory: {', '.join(game_state.inventory) if game_state.inventory else 'empty'}
-Stats: {game_state.stats}
+    def create_session(
+        self,
+        player_name: str,
+        persona_id: str = "default",
+        setting: str = "fantasy",
+        difficulty: str = "normal",
+    ) -> GameState:
+        """Create new game session"""
+
+        if not player_name.strip():
+            raise ValidationError(
+                "player_name", player_name, "Player name cannot be empty"
+            )
+
+        session_id = str(uuid.uuid4())
+
+        # Initialize game state
+        game_state = GameState(
+            session_id=session_id,
+            player_name=player_name.strip(),
+            current_scene="開始",
+            inventory=[],
+            stats={"health": 100, "energy": 100, "experience": 0},
+            flags={"game_started": True},
+            relationships={},
+            turn_count=0,
+            created_at=datetime.now(),
+        )
+
+        self.sessions[session_id] = game_state
+
+        logger.info(f"Created game session {session_id} for player {player_name}")
+        return game_state
+
+    def get_session(self, session_id: str) -> GameState:
+        """Get game session by ID"""
+        if session_id not in self.sessions:
+            raise SessionNotFoundError(session_id)
+        return self.sessions[session_id]
+
+    def process_turn(
+        self, session_id: str, player_input: str, choice_id: Optional[str] = None
+    ) -> TurnResponse:
+        """Process player input and generate next turn"""
+
+        game_state = self.get_session(session_id)
+
+        try:
+            # Get persona
+            persona = self.personas.get("default")  # Simplified for MVP
+            if not persona:
+                raise GameError("No persona available", session_id)
+
+            # Build prompt for LLM
+            system_prompt = persona.get_system_prompt(game_state)
+
+            # Format player action
+            if choice_id:
+                user_prompt = f"玩家選擇：{choice_id} - {player_input}"
+            else:
+                user_prompt = f"玩家行動：{player_input}"
+
+            # Add context about expected response format
+            response_format_prompt = """
+請以 JSON 格式回應，包含以下欄位：
+{
+    "narration": "場景描述和事件敘述",
+    "dialogues": [{"speaker": "角色名", "text": "對話內容", "emotion": "情緒"}],
+    "choices": [{"id": "choice1", "text": "選項文字", "description": "選項說明"}],
+    "scene_change": false,
+    "state_updates": {"stats": {"health": 95}, "flags": {"met_wizard": true}}
+}
 """
-        return context.strip()
 
-    def _build_system_prompt(self, game_state: GameState) -> str:
-        """Build system prompt for LLM"""
-        return f"""You are a text adventure game narrator for a {game_state.world_id} setting.
-Respond with engaging narrative and provide 2-3 action choices.
-Keep responses family-friendly and encourage exploration.
-Format your response as narrative followed by numbered choices."""
+            full_user_prompt = f"{user_prompt}\n\n{response_format_prompt}"
 
-    def _parse_llm_response(self, response: str, game_state: GameState) -> dict:
-        """Parse LLM response into structured format"""
-        # Simple parsing - in real implementation, could use more sophisticated parsing
-        lines = response.split("\n")
-        narration = []
-        choices = []
-
-        in_choices = False
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-
-            if any(
-                choice_indicator in line.lower()
-                for choice_indicator in ["1.", "2.", "3.", "choice", "option"]
-            ):
-                in_choices = True
-                choices.append(line)
-            elif not in_choices:
-                narration.append(line)
-
-        # Default choices if none parsed
-        if not choices:
-            choices = [
-                "1. Look around carefully",
-                "2. Continue forward",
-                "3. Check inventory",
+            # Generate response using LLM
+            messages = [
+                ChatMessage(role="system", content=system_prompt),
+                ChatMessage(role="user", content=full_user_prompt),
             ]
 
-        return {
-            "narration": (
-                " ".join(narration) if narration else "You continue your adventure..."
-            ),
-            "dialogues": [],  # Could extract dialogue from narration
-            "choices": choices,
-            "scene_change": game_state.current_scene,  # Default to same scene
-            "inventory_changes": [],
-            "stat_changes": {},
-            "flags_changed": {},
-        }
-
-    def _update_game_state(self, game_state: GameState, result: dict):
-        """Update game state based on turn result"""
-        # Update scene if changed
-        if (
-            result.get("scene_change")
-            and result["scene_change"] != game_state.current_scene
-        ):
-            game_state.current_scene = result["scene_change"]
-
-        # Update inventory
-        for item in result.get("inventory_changes", []):
-            if item.startswith("+"):
-                game_state.inventory.append(item[1:])
-            elif item.startswith("-"):
-                if item[1:] in game_state.inventory:
-                    game_state.inventory.remove(item[1:])
-
-        # Update stats
-        for stat, change in result.get("stat_changes", {}).items():
-            if stat in game_state.stats:
-                game_state.stats[stat] += change
-
-        # Update flags
-        game_state.flags.update(result.get("flags_changed", {}))
-
-    def get_session(self, session_id: str) -> Optional[GameState]:
-        """Get game session by ID"""
-        return self.sessions.get(session_id)
-
-    def save_session(self, game_state: GameState):
-        """Save game session"""
-        self.sessions[game_state.session_id] = game_state
-
-    def process_turn(self, request: TurnRequest) -> TurnResponse:
-        """Process a single story turn"""
-        try:
-            # Build prompt with context
-            system_prompt = self.templates.SYSTEM_PROMPT
-            user_prompt = self.templates.build_user_prompt(
-                request.player_input,
-                request.persona,
-                request.game_state,
-                request.choice_id,  # type: ignore
+            response = self.llm_adapter.chat(
+                messages=messages, max_length=800, temperature=0.8  # type: ignore
             )
 
-            # Format messages for LLM
-            messages = self.llm.format_messages(system_prompt, user_prompt)
-
-            # Generate response
-            raw_response = self.llm.generate(messages, max_tokens=1024, temperature=0.8)
-
-            # Parse JSON response
-            response_data = self.llm.extract_json_response(raw_response)
-
-            # Create structured response
-            turn_response = self._create_turn_response(
-                response_data, request.game_state
-            )
+            # Parse LLM response as JSON
+            try:
+                response_data = self._parse_game_response(response.content)
+            except Exception as e:
+                logger.warning(f"Failed to parse LLM response as JSON: {e}")
+                # Fallback response
+                response_data = {
+                    "narration": response.content,
+                    "dialogues": [],
+                    "choices": [
+                        {"id": "continue", "text": "繼續", "description": "繼續故事"}
+                    ],
+                    "scene_change": False,
+                }
 
             # Update game state
-            updated_state = self._update_game_state(request, turn_response)
-            turn_response.updated_state = updated_state
+            self._update_game_state(game_state, player_input, response_data)
 
+            # Build turn response
+            choices = [
+                Choice(
+                    id=choice["id"],
+                    text=choice["text"],
+                    description=choice.get("description", ""),
+                )
+                for choice in response_data.get("choices", [])
+            ]
+
+            turn_response = TurnResponse(
+                narration=response_data.get("narration", ""),
+                dialogues=response_data.get("dialogues", []),
+                choices=choices,
+                scene_change=response_data.get("scene_change", False),
+                state_updates=response_data.get("state_updates"),
+            )
+
+            logger.info(
+                f"Turn processed for session {session_id}, turn {game_state.turn_count}"
+            )
             return turn_response
 
         except Exception as e:
-            print(f"Story engine error: {e}")
-            # Return fallback response
-            return TurnResponse(
-                narration=f"故事引擎遇到錯誤，但冒險仍在繼續... 錯誤: {str(e)}",
-                choices=[
-                    Choice(id="continue", text="繼續", description="嘗試繼續故事")
-                ],
-            )
+            logger.error(f"Turn processing failed for session {session_id}: {e}")
+            raise GameError(f"Turn processing failed: {str(e)}", session_id)
 
-    def _create_turn_response(
-        self, data: Dict[str, Any], game_state: GameState
-    ) -> TurnResponse:
-        """Create TurnResponse from parsed JSON data"""
-        # Extract narration
-        narration = data.get("narration", "故事繼續進行...")
-
-        # Extract dialogues
-        dialogues = []
-        for d in data.get("dialogues", []):
-            if isinstance(d, dict) and "speaker" in d and "text" in d:
-                dialogues.append(
-                    DialogueEntry(
-                        speaker=d["speaker"], text=d["text"], emotion=d.get("emotion")
-                    )
-                )
-
-        # Extract choices
-        choices = []
-        for c in data.get("choices", []):
-            if isinstance(c, dict) and "id" in c and "text" in c:
-                choices.append(
-                    Choice(
-                        id=c["id"], text=c["text"], description=c.get("description", "")
-                    )
-                )
-
-        # Default choice if none provided
-        if not choices:
-            choices.append(Choice(id="continue", text="繼續", description="繼續故事"))
-
-        return TurnResponse(
-            narration=narration,
-            dialogues=dialogues,
-            choices=choices,
-            scene_change=data.get("scene_change"),
+    def _parse_game_response(self, response_text: str) -> Dict[str, Any]:
+        """Parse LLM response as game JSON"""
+        # Use the JSON extraction from LLM adapter
+        llm = (
+            list(self.llm_adapter._models.values())[0]
+            if self.llm_adapter._models
+            else None
         )
+        if llm:
+            return llm.extract_json_response(response_text)
+
+        # Fallback parsing
+        import json
+
+        response_text = response_text.strip()
+
+        # Remove markdown code blocks
+        if response_text.startswith("```json"):
+            response_text = response_text[7:]
+        elif response_text.startswith("```"):
+            response_text = response_text[3:]
+        if response_text.endswith("```"):
+            response_text = response_text[:-3]
+
+        return json.loads(response_text)
 
     def _update_game_state(
-        self, request: TurnRequest, response: TurnResponse
-    ) -> GameState:
+        self, game_state: GameState, player_input: str, response_data: Dict[str, Any]
+    ) -> None:
         """Update game state based on turn results"""
-        state = request.game_state
 
-        # Increment turn count
-        state.turn_count += 1
+        # Update basic state
+        game_state.last_action = player_input
+        game_state.turn_count += 1
 
-        # Record choice if made
-        if request.choice_id:
-            state.choice_history.append(
-                {
-                    "turn": state.turn_count - 1,
-                    "choice_id": request.choice_id,
-                    "text": request.player_input,
-                }
+        # Apply state updates from LLM response
+        state_updates = response_data.get("state_updates", {})
+
+        if "stats" in state_updates:
+            game_state.stats.update(state_updates["stats"])
+
+        if "flags" in state_updates:
+            game_state.flags.update(state_updates["flags"])
+
+        if "inventory_add" in state_updates:
+            for item in state_updates["inventory_add"]:
+                if item not in game_state.inventory:
+                    game_state.inventory.append(item)
+
+        if "inventory_remove" in state_updates:
+            for item in state_updates["inventory_remove"]:
+                if item in game_state.inventory:
+                    game_state.inventory.remove(item)
+
+        if "scene" in state_updates:
+            game_state.current_scene = state_updates["scene"]
+
+        # Apply relationships updates
+        if "relationships" in state_updates:
+            game_state.relationships.update(state_updates["relationships"])
+
+    def get_session_summary(self, session_id: str) -> Dict[str, Any]:  # type: ignore
+        """Get comprehensive session summary"""
+        game_state = self.get_session(session_id)
+
+    def get_session_summary(self, session_id: str) -> Dict[str, Any]:
+        """Get comprehensive session summary"""
+        game_state = self.get_session(session_id)
+
+        return {
+            "session_id": session_id,
+            "player_name": game_state.player_name,
+            "current_scene": game_state.current_scene,
+            "turn_count": game_state.turn_count,
+            "inventory_count": len(game_state.inventory),
+            "stats": game_state.stats.copy(),
+            "active_flags": [k for k, v in game_state.flags.items() if v],
+            "relationships": game_state.relationships.copy(),
+            "created_at": (
+                game_state.created_at.isoformat() if game_state.created_at else None
+            ),
+            "last_action": game_state.last_action,
+        }
+
+    def save_session(self, session_id: str) -> bool:
+        """Save session to persistent storage"""
+        try:
+            game_state = self.get_session(session_id)
+
+            # Save to cache directory
+            session_dir = self.cache.get_output_path("game_sessions")
+            session_file = session_dir / f"{session_id}.json"
+
+            with open(session_file, "w", encoding="utf-8") as f:
+                json.dump(game_state.to_dict(), f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Session {session_id} saved to {session_file}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save session {session_id}: {e}")
+            return False
+
+    def load_session(self, session_id: str) -> bool:
+        """Load session from persistent storage"""
+        try:
+            session_dir = self.cache.get_output_path("game_sessions")
+            session_file = session_dir / f"{session_id}.json"
+
+            if not session_file.exists():
+                return False
+
+            with open(session_file, "r", encoding="utf-8") as f:
+                session_data = json.load(f)
+
+            game_state = GameState.from_dict(session_data)
+            self.sessions[session_id] = game_state
+
+            logger.info(f"Session {session_id} loaded from storage")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load session {session_id}: {e}")
+            return False
+
+    def list_sessions(self) -> List[Dict[str, Any]]:
+        """List all active and saved sessions"""
+        sessions = []
+
+        # Add active sessions
+        for session_id, game_state in self.sessions.items():
+            sessions.append(
+                {**self.get_session_summary(session_id), "status": "active"}
             )
 
-        # Update scene if changed
-        if response.scene_change:
-            state.scene_id = response.scene_change
+        # Add saved sessions not in memory
+        try:
+            session_dir = self.cache.get_output_path("game_sessions")
+            if session_dir.exists():
+                for session_file in session_dir.glob("*.json"):
+                    session_id = session_file.stem
+                    if session_id not in self.sessions:
+                        try:
+                            with open(session_file, "r", encoding="utf-8") as f:
+                                session_data = json.load(f)
 
-        # Add timeline note
-        if response.narration:
-            # Simple summary of the turn
-            summary = (
-                response.narration[:100] + "..."
-                if len(response.narration) > 100
-                else response.narration
-            )
-            state.timeline_notes.append(f"回合 {state.turn_count}: {summary}")
+                            sessions.append(
+                                {
+                                    "session_id": session_id,
+                                    "player_name": session_data.get(
+                                        "player_name", "Unknown"
+                                    ),
+                                    "current_scene": session_data.get(
+                                        "current_scene", "Unknown"
+                                    ),
+                                    "turn_count": session_data.get("turn_count", 0),
+                                    "created_at": session_data.get("created_at"),
+                                    "status": "saved",
+                                }
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to read session file {session_file}: {e}"
+                            )
 
-        # Keep only recent history to prevent memory bloat
-        if len(state.choice_history) > 10:
-            state.choice_history = state.choice_history[-10:]
-        if len(state.timeline_notes) > 15:
-            state.timeline_notes = state.timeline_notes[-15:]
+        except Exception as e:
+            logger.warning(f"Failed to list saved sessions: {e}")
 
-        return state
+        return sorted(sessions, key=lambda x: x.get("created_at", ""), reverse=True)
 
-    def create_sample_persona(self) -> Persona:
-        """Create a sample persona for testing"""
-        return Persona(
-            name="艾莉絲",
-            age=22,
-            personality=["好奇", "勇敢", "善良", "有些衝動"],
-            background="來自小鎮的冒險家，夢想探索古老的遺跡和發現失落的魔法",
-            speaking_style="活潑直接，偶爾會用一些現代用語，但在嚴肅時刻會變得深思熟慮",
-            appearance="棕色長髮，綠色眼眸，身穿實用的冒險裝備",
-            goals=["尋找失落的魔法神器", "保護無辜的人", "證明自己的勇氣"],
-            secrets=["擁有微弱的魔法感知能力", "害怕黑暗"],
-            memory_preferences={"adventure": 0.9, "magic": 0.8, "friendship": 0.7},
-        )
+    def delete_session(self, session_id: str) -> bool:
+        """Delete session from memory and storage"""
+        try:
+            # Remove from memory
+            if session_id in self.sessions:
+                del self.sessions[session_id]
 
-    def create_sample_game_state(self) -> GameState:
-        """Create a sample game state for testing"""
-        return GameState(
-            scene_id="古老圖書館",
-            turn_count=0,
-            current_location="神秘圖書館的入口大廳",
-            flags={"first_visit": True, "has_torch": True, "library_key": False},
-            inventory=["冒險家背包", "小型手電筒", "地圖"],
-            timeline_notes=["進入了傳說中的古老圖書館"],
-        )
+            # Remove from storage
+            session_dir = self.cache.get_output_path("game_sessions")
+            session_file = session_dir / f"{session_id}.json"
+
+            if session_file.exists():
+                session_file.unlink()
+
+            logger.info(f"Session {session_id} deleted")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete session {session_id}: {e}")
+            return False
+
+    def get_personas(self) -> Dict[str, Dict[str, Any]]:
+        """Get available personas"""
+        return {
+            persona_id: {
+                "name": persona.name,
+                "description": persona.description,
+                "personality": persona.personality,
+                "speech_style": persona.speech_style,
+            }
+            for persona_id, persona in self.personas.items()
+        }
+
+
+# Global story engine instance
+_story_engine: Optional[StoryEngine] = None
+
+
+def get_story_engine() -> StoryEngine:
+    """Get global story engine instance"""
+    global _story_engine
+    if _story_engine is None:
+        _story_engine = StoryEngine()
+    return _story_engine
