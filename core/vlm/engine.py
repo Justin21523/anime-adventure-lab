@@ -1,132 +1,303 @@
 # core/vlm/engine.py
-"""Vision-Language Model engine"""
+"""
+Vision-Language Model Engine
+Handles caption generation and visual question answering
+"""
+
 import base64
 import io
+import torch
+import logging
 from PIL import Image
-from typing import Union, Optional, Dict, Any
-from ..shared_cache import get_shared_cache
+from typing import Union, Optional, Dict, Any, List
+from transformers import (
+    BlipProcessor,
+    BlipForConditionalGeneration,
+    Blip2Processor,
+    Blip2ForConditionalGeneration,
+    LlavaNextProcessor,
+    LlavaNextForConditionalGeneration,
+    AutoProcessor,
+    AutoModelForVision2Seq,
+)
+
+from ..exceptions import (
+    VLMError,
+    ImageProcessingError,
+    ModelLoadError,
+    handle_cuda_oom,
+    handle_model_error,
+)
 from ..config import get_config
+from ..shared_cache import get_shared_cache
+from ..utils.image import ImageProcessor
+
+logger = logging.getLogger(__name__)
 
 
 class VLMEngine:
     """Vision-Language Model engine for caption and VQA"""
 
     def __init__(self):
-        self.model_name = ""
-        self._models = {}
-        self.cache = get_shared_cache()
         self.config = get_config()
+        self.cache = get_shared_cache()
+        self.image_processor = ImageProcessor()
 
-    def _load_image(self, image: Union[str, bytes, Image.Image]) -> Image.Image:
-        """Load image from various formats"""
-        if isinstance(image, Image.Image):
-            return image
-        elif isinstance(image, str):
-            if image.startswith("data:image"):
-                # Base64 data URL
-                header, data = image.split(",", 1)
-                image_data = base64.b64decode(data)
-                return Image.open(io.BytesIO(image_data)).convert("RGB")
+        # Model instances
+        self._caption_model = None
+        self._caption_processor = None
+        self._vqa_model = None
+        self._vqa_processor = None
+
+        # Model states
+        self._caption_loaded = False
+        self._vqa_loaded = False
+
+    @handle_cuda_oom
+    @handle_model_error
+    def load_caption_model(self, model_name: Optional[str] = None) -> None:
+        """Load image captioning model (BLIP-2)"""
+        if self._caption_loaded:
+            return
+
+        model_name = model_name or self.config.model.caption_model  # type: ignore
+
+        try:
+            logger.info(f"Loading caption model: {model_name}")
+
+            # Setup low VRAM configuration
+            device_map = "auto" if torch.cuda.is_available() else "cpu"
+            torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
+            # Load processor and model
+            if "blip2" in model_name.lower():
+                self._caption_processor = Blip2Processor.from_pretrained(
+                    model_name, cache_dir=self.cache.cache_root / "hf"  # type: ignore
+                )
+                self._caption_model = Blip2ForConditionalGeneration.from_pretrained(
+                    model_name,
+                    device_map=device_map,
+                    torch_dtype=torch_dtype,
+                    cache_dir=self.cache.cache_root / "hf",  # type: ignore
+                    low_cpu_mem_usage=True,
+                )
             else:
-                # File path
-                return Image.open(image).convert("RGB")
-        elif isinstance(image, bytes):
-            return Image.open(io.BytesIO(image)).convert("RGB")
-        else:
-            raise ValueError("Unsupported image format")
+                # Fallback to BLIP
+                self._caption_processor = BlipProcessor.from_pretrained(
+                    model_name, cache_dir=self.cache.cache_root / "hf"  # type: ignore
+                )
+                self._caption_model = BlipForConditionalGeneration.from_pretrained(
+                    model_name,
+                    device_map=device_map,
+                    torch_dtype=torch_dtype,
+                    cache_dir=self.cache.cache_root / "hf",  # type: ignore
+                )
 
-    def _get_model(self, model_type: str):
-        """Get or load model by type"""
-        if model_type not in self._models:
-            # Mock model loading
-            self._models[model_type] = {
-                "name": f"{model_type}-model",
-                "loaded_at": "2024-01-01T00:00:00",
-            }
+            # Enable optimizations
+            if hasattr(self._caption_model, "enable_vae_slicing"):
+                self._caption_model.enable_vae_slicing()  # type: ignore
 
-            # In real implementation:
-            # if model_type == "blip2":
-            #     from transformers import Blip2Processor, Blip2ForConditionalGeneration
-            #     processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
-            #     model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-opt-2.7b")
-            #     self._models[model_type] = {"processor": processor, "model": model}
+            self._caption_loaded = True
+            logger.info("Caption model loaded successfully")
 
-        return self._models[model_type]
+        except Exception as e:
+            logger.error(f"Failed to load caption model: {e}")
+            raise ModelLoadError(model_name, str(e))
+
+    @handle_cuda_oom
+    @handle_model_error
+    def load_vqa_model(self, model_name: Optional[str] = None) -> None:
+        """Load Visual Question Answering model (LLaVA/Qwen-VL)"""
+        if self._vqa_loaded:
+            return
+
+        model_name = model_name or self.config.model.vqa_model  # type: ignore
+
+        try:
+            logger.info(f"Loading VQA model: {model_name}")
+
+            device_map = "auto" if torch.cuda.is_available() else "cpu"
+            torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
+            if "llava" in model_name.lower():
+                self._vqa_processor = LlavaNextProcessor.from_pretrained(
+                    model_name, cache_dir=self.cache.cache_root / "hf"  # type: ignore
+                )
+                self._vqa_model = LlavaNextForConditionalGeneration.from_pretrained(
+                    model_name,
+                    device_map=device_map,
+                    torch_dtype=torch_dtype,
+                    cache_dir=self.cache.cache_root / "hf",  # type: ignore
+                    low_cpu_mem_usage=True,
+                )
+            else:
+                # Generic vision-to-seq model
+                self._vqa_processor = AutoProcessor.from_pretrained(
+                    model_name, cache_dir=self.cache.cache_root / "hf"  # type: ignore
+                )
+                self._vqa_model = AutoModelForVision2Seq.from_pretrained(
+                    model_name,
+                    device_map=device_map,
+                    torch_dtype=torch_dtype,
+                    cache_dir=self.cache.cache_root / "hf",  # type: ignore
+                )
+
+            self._vqa_loaded = True
+            logger.info("VQA model loaded successfully")
+
+        except Exception as e:
+            logger.error(f"Failed to load VQA model: {e}")
+            raise ModelLoadError(model_name, str(e))
 
     def caption(
-        self, image=None, model_type: str = "blip2", prompt: Optional[str] = None
-    ) -> str:
+        self,
+        image: Union[str, bytes, Image.Image],
+        max_length: int = 50,
+        num_beams: int = 3,
+        **kwargs,
+    ) -> Dict[str, Any]:
         """Generate image caption"""
+        if not self._caption_loaded:
+            self.load_caption_model()
+
         try:
-            pil_image = self._load_image(image) if image else None
-            model = self._get_model(model_type)
+            # Process image
+            pil_image = self.image_processor.load_image(image)
 
-            # Mock caption generation
-            captions = [
-                "a young anime girl with blue hair wearing a school uniform",
-                "a beautiful landscape with mountains and cherry blossoms",
-                "a cute cat sitting on a windowsill",
-                "a futuristic city with tall buildings and flying cars",
-            ]
+            # Generate caption
+            inputs = self._caption_processor(pil_image, return_tensors="pt")  # type: ignore
 
-            import random
+            # Move to model device
+            device = next(self._caption_model.parameters()).device  # type: ignore
+            inputs = {k: v.to(device) for k, v in inputs.items()}
 
-            caption = random.choice(captions)
+            with torch.no_grad():
+                outputs = self._caption_model.generate(  # type: ignore
+                    **inputs,
+                    max_new_tokens=max_length,
+                    num_beams=num_beams,
+                    do_sample=False,
+                    **kwargs,
+                )
 
-            if prompt:
-                caption = f"{prompt} {caption}"
+            caption = self._caption_processor.decode(  # type: ignore
+                outputs[0], skip_special_tokens=True
+            )
 
-            self.model_name = f"{model_type}-caption"
-            return caption
+            # Clean up caption (remove prompt prefix if present)
+            if caption.startswith("a photo of"):
+                caption = caption[len("a photo of") :].strip()
 
-        except Exception as e:
-            raise RuntimeError(f"Caption generation failed: {str(e)}")
-
-    def analyze(self, image=None, model_type: str = "blip2") -> dict:
-        """Analyze image and return detailed information"""
-        try:
-            pil_image = self._load_image(image) if image else None
-            model = self._get_model(model_type)
-
-            # Mock analysis
-            analysis = {
-                "objects": ["person", "building", "sky"],
-                "colors": ["blue", "white", "gray"],
-                "mood": "peaceful",
-                "style": "anime",
-                "composition": "centered",
-                "lighting": "natural",
+            return {
+                "caption": caption,
+                "confidence": 0.9,  # Placeholder - real confidence needs additional computation
+                "model_used": self._caption_model.config.name_or_path,  # type: ignore
+                "parameters": {"max_length": max_length, "num_beams": num_beams},
             }
 
-            self.model_name = f"{model_type}-analyze"
-            return analysis
-
         except Exception as e:
-            raise RuntimeError(f"Image analysis failed: {str(e)}")
+            logger.error(f"Caption generation failed: {e}")
+            raise VLMError(f"Caption generation failed: {str(e)}")
 
-    def vqa(self, image=None, question: str = "") -> str:
+    def vqa(
+        self,
+        image: Union[str, bytes, Image.Image],
+        question: str,
+        max_length: int = 100,
+        **kwargs,
+    ) -> Dict[str, Any]:
         """Visual Question Answering"""
-        try:
-            pil_image = self._load_image(image) if image else None
-            model = self._get_model("llava")  # Default to LLaVA for VQA
+        if not self._vqa_loaded:
+            self.load_vqa_model()
 
-            # Mock VQA responses
-            responses = {
-                "what color": "The main colors are blue and white",
-                "who is": "This appears to be an anime character",
-                "where is": "This looks like a school or urban setting",
-                "what is": "I can see a person in what appears to be a Japanese anime style",
+        if not question.strip():
+            raise VLMError("Question cannot be empty")
+
+        try:
+            # Process image and question
+            pil_image = self.image_processor.load_image(image)
+
+            # Format prompt for LLaVA
+            if "llava" in self._vqa_model.config.name_or_path.lower():  # type: ignore
+                prompt = f"USER: <image>\n{question}\nASSISTANT:"
+            else:
+                prompt = question
+
+            inputs = self._vqa_processor(
+                text=prompt, images=pil_image, return_tensors="pt"  # type: ignore
+            )
+
+            # Move to model device
+            device = next(self._vqa_model.parameters()).device  # type: ignore
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+
+            with torch.no_grad():
+                outputs = self._vqa_model.generate(  # type: ignore
+                    **inputs,
+                    max_new_tokens=max_length,
+                    do_sample=True,
+                    temperature=0.7,
+                    **kwargs,
+                )
+
+            # Decode answer
+            answer = self._vqa_processor.decode(  # type: ignore
+                outputs[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True
+            ).strip()
+
+            return {
+                "question": question,
+                "answer": answer,
+                "confidence": 0.85,  # Placeholder
+                "model_used": self._vqa_model.config.name_or_path,  # type: ignore
+                "parameters": {"max_length": max_length},
             }
 
-            # Simple keyword matching for mock response
-            answer = "I can see an image, but I need more specific information to answer accurately."
-            for keyword, response in responses.items():
-                if keyword.lower() in question.lower():
-                    answer = response
-                    break
-
-            self.model_name = "llava-vqa"
-            return answer
-
         except Exception as e:
-            raise RuntimeError(f"VQA failed: {str(e)}")
+            logger.error(f"VQA failed: {e}")
+            raise VLMError(f"VQA failed: {str(e)}")
+
+    def unload_models(self) -> None:
+        """Unload all VLM models to free memory"""
+        if self._caption_model is not None:
+            del self._caption_model
+            del self._caption_processor
+            self._caption_model = None
+            self._caption_processor = None
+            self._caption_loaded = False
+
+        if self._vqa_model is not None:
+            del self._vqa_model
+            del self._vqa_processor
+            self._vqa_model = None
+            self._vqa_processor = None
+            self._vqa_loaded = False
+
+        # Clear GPU cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        logger.info("All VLM models unloaded")
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get VLM engine status"""
+        return {
+            "caption_model_loaded": self._caption_loaded,
+            "vqa_model_loaded": self._vqa_loaded,
+            "caption_model": (
+                self.config.model.caption_model if self._caption_loaded else None  # type: ignore
+            ),
+            "vqa_model": self.config.model.vqa_model if self._vqa_loaded else None,  # type: ignore
+        }
+
+
+# Global VLM engine instance
+_vlm_engine: Optional[VLMEngine] = None
+
+
+def get_vlm_engine() -> VLMEngine:
+    """Get global VLM engine instance"""
+    global _vlm_engine
+    if _vlm_engine is None:
+        _vlm_engine = VLMEngine()
+    return _vlm_engine
