@@ -13,12 +13,15 @@ class VQAParameters(BaseParameters):
     """VQA-specific parameters"""
 
     max_length: int = Field(100, ge=20, le=300, description="Maximum answer length")
-    language: str = Field("auto", description="Answer language (auto/en/zh)")
+    temperature: float = Field(
+        0.7, ge=0.1, le=2.0, description="Generation temperature"
+    )
+    language: str = Field("auto", description="Response language")
 
-    @field_validator("language", mode="after")
+    @field_validator("language")
     def validate_language(cls, v):
-        if v not in ["auto", "en", "zh"]:
-            raise ValueError("Language must be 'auto', 'en', or 'zh'")
+        if v not in ["auto", "en", "zh", "zh-TW", "zh-CN"]:
+            raise ValueError("Language must be auto/en/zh/zh-TW/zh-CN")
         return v
 
 
@@ -29,15 +32,6 @@ class VQARequest(BaseRequest):
         ..., min_length=3, max_length=500, description="Question about the image"
     )
     parameters: Optional[VQAParameters] = Field(default_factory=VQAParameters)  # type: ignore
-    context: Optional[str] = Field(
-        None, description="Additional context for the question"
-    )
-
-    @field_validator("question", mode="after")
-    def validate_question(cls, v):
-        if not v.strip():
-            raise ValueError("Question cannot be empty or whitespace only")
-        return v.strip()
 
 
 class VQAResponse(BaseResponse):
@@ -45,20 +39,22 @@ class VQAResponse(BaseResponse):
 
     question: str = Field(..., description="Original question")
     answer: str = Field(..., description="Generated answer")
-    confidence: float = Field(
-        ..., ge=0.0, le=1.0, description="Answer confidence score"
-    )
-    model_used: str = Field(..., description="Model used for VQA")
-    language: str = Field(..., description="Detected answer language")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Answer confidence")
+    model_used: str = Field(..., description="Model used for generation")
+    language_detected: str = Field(..., description="Detected language")
+    parameters: VQAParameters = Field(..., description="Parameters used")
+    image_info: Dict[str, Any] = Field(..., description="Image metadata")
 
-    # Unified parameters field
-    parameters: VQAParameters = Field(..., description="Parameters used for generation")
 
-    # Optional analysis
-    usage: Optional[UsageInfo] = Field(None, description="Resource usage")
-    question_analysis: Optional[Dict[str, Any]] = Field(
-        None, description="Question complexity analysis"
-    )
+class BatchVQAResponse(BaseResponse):
+    """Batch VQA response"""
+
+    results: List[Dict[str, Any]] = Field(..., description="VQA results")
+    total_items: int = Field(..., description="Total items processed")
+    successful_items: int = Field(..., description="Successfully processed items")
+    failed_items: int = Field(..., description="Failed items")
+    success_rate: float = Field(..., ge=0.0, le=1.0, description="Success rate")
+    parameters: VQAParameters = Field(..., description="Parameters used")
 
 
 class ConversationMessage(BaseModel):
