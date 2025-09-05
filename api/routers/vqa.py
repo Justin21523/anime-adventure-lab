@@ -6,11 +6,11 @@ LLaVA/Qwen-VL based image Q&A
 
 import logging
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
-from typing import Optional
+from typing import List, Dict, Any, Optional
 
 from core.vlm.engine import get_vlm_engine
 from core.exceptions import VLMError, ValidationError
-from schemas.vqa import VQAResponse, VQAParameters
+from schemas.vqa import VQARequest, VQAResponse, VQAParameters, BatchVQAResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -18,85 +18,192 @@ router = APIRouter()
 
 @router.post("/vqa", response_model=VQAResponse)
 async def visual_question_answering(
-    image: UploadFile = File(..., description="Image file for questioning"),
+    image: UploadFile = File(..., description="Image file"),
     question: str = Form(..., description="Question about the image"),
     max_length: int = Form(100, description="Maximum answer length"),
-    language: str = Form("auto", description="Answer language (auto/en/zh)"),
+    temperature: float = Form(0.7, description="Generation temperature"),
+    language: str = Form("auto", description="Response language (auto/en/zh)"),
 ):
-    """
-    Visual Question Answering using LLaVA/Qwen-VL
-
-    - **image**: Image file (JPG, PNG, WebP)
-    - **question**: Question about the image content
-    - **max_length**: Maximum answer length (20-300)
-    - **language**: Answer language (auto detect or specify)
-    """
-
-    # Validate inputs
-    if not image.content_type or not image.content_type.startswith("image/"):
-        raise HTTPException(400, "Invalid file type. Must be an image.")
-
-    if not question or len(question.strip()) < 3:
-        raise HTTPException(400, "Question must be at least 3 characters long")
-
-    if not (20 <= max_length <= 300):
-        raise HTTPException(400, "max_length must be between 20 and 300")
-
+    """Answer a question about an image"""
     try:
+        # Validate image
+        if not image.content_type or not image.content_type.startswith("image/"):
+            raise HTTPException(400, "Invalid image file type")
+
+        # Validate question
+        if not question.strip():
+            raise HTTPException(400, "Question cannot be empty")
+
         # Read image data
         image_data = await image.read()
 
-        # Process question for Chinese context
-        processed_question = question.strip()
-        if language == "zh" or (language == "auto" and _contains_chinese(question)):
-            # Add Chinese context to improve Chinese response quality
-            if not processed_question.endswith(("？", "?", "。", ".")):
-                processed_question += "？"
-
-        # Get VLM engine and generate answer
+        # Get VLM engine and process
         vlm_engine = get_vlm_engine()
         result = vlm_engine.vqa(
-            image=image_data, question=processed_question, max_length=max_length
+            image=image_data,
+            question=question,
+            max_length=max_length,
+            temperature=temperature,
         )
 
-        # Post-process answer based on language
-        answer_text = result["answer"]
-        detected_language = _detect_language(answer_text)
-
-        if language == "zh" and detected_language == "en":
-            # Simple translation hint for English answers
-            answer_text = f"{answer_text}（英文回答）"
-
-        # Create parameters object
-        parameters = VQAParameters(max_length=max_length, language=language)  # type: ignore
+        # Format response
+        parameters = VQAParameters(  # type: ignore
+            max_length=max_length, temperature=temperature, language=language
+        )
 
         return VQAResponse(  # type: ignore
-            question=question,
-            answer=answer_text,
+            question=result["question"],
+            answer=result["answer"],
             confidence=result["confidence"],
             model_used=result["model_used"],
-            language=detected_language,
+            language_detected=result["language_detected"],
             parameters=parameters,
-            metadata={
-                "original_filename": image.filename,
-                "file_size_kb": len(image_data) // 1024,
-                "question_length": len(question),
-                "answer_length": len(answer_text),
-                "inference_parameters": result["parameters"],
-            },
+            image_info=result["image_info"],
         )
 
-    except VLMError as e:
-        logger.error(f"VQA error: {e}")
-        raise HTTPException(500, f"VQA failed: {e.message}")
+    except Exception as e:
+        logger.error(f"VQA failed: {e}")
+        raise HTTPException(500, f"Visual question answering failed: {str(e)}")
 
-    except ValidationError as e:
-        logger.warning(f"VQA validation error: {e}")
-        raise HTTPException(400, f"Validation failed: {e.message}")
+
+@router.post("/vqa/batch", response_model=BatchVQAResponse)
+async def batch_visual_question_answering(
+    files: List[UploadFile] = File(..., description="Image files"),
+    questions: List[str] = Form(..., description="Questions for each image"),
+    max_length: int = Form(100),
+    temperature: float = Form(0.7),
+    language: str = Form("auto"),
+):
+    """Answer questions about multiple images in batch"""
+    try:
+        # Validate inputs
+        if len(files) != len(questions):
+            raise HTTPException(400, "Number of images must match number of questions")
+
+        if len(files) > 10:
+            raise HTTPException(400, "Maximum 10 image-question pairs per batch")
+
+        if not files:
+            raise HTTPException(400, "At least one image-question pair required")
+
+        # Process each pair
+        results = []
+        vlm_engine = get_vlm_engine()
+        successful_count = 0
+        failed_count = 0
+
+        for i, (image_file, question) in enumerate(zip(files, questions)):
+            try:
+                # Validate file type
+                if (
+                    not image_file.content_type
+                    or not image_file.content_type.startswith("image/")
+                ):
+                    results.append(
+                        {
+                            "batch_index": i,
+                            "question": question,
+                            "answer": f"Error: Invalid file type for image {i+1}",
+                            "confidence": 0.0,
+                            "error": "invalid_file_type",
+                        }
+                    )
+                    failed_count += 1
+                    continue
+
+                # Validate question
+                if not question.strip():
+                    results.append(
+                        {
+                            "batch_index": i,
+                            "question": question,
+                            "answer": f"Error: Empty question for image {i+1}",
+                            "confidence": 0.0,
+                            "error": "empty_question",
+                        }
+                    )
+                    failed_count += 1
+                    continue
+
+                # Process image
+                image_data = await image_file.read()
+                result = vlm_engine.vqa(
+                    image=image_data,
+                    question=question,
+                    max_length=max_length,
+                    temperature=temperature,
+                )
+
+                # Format result
+                parameters = VQAParameters(  # type: ignore
+                    max_length=max_length, temperature=temperature, language=language
+                )
+
+                formatted_result = VQAResponse(  # type: ignore
+                    question=result["question"],
+                    answer=result["answer"],
+                    confidence=result["confidence"],
+                    model_used=result["model_used"],
+                    language_detected=result["language_detected"],
+                    parameters=parameters,
+                    image_info=result["image_info"],
+                )
+
+                # Add batch index
+                result_dict = formatted_result.dict()
+                result_dict["batch_index"] = i
+                results.append(result_dict)
+                successful_count += 1
+
+            except Exception as e:
+                logger.error(f"VQA failed for image {i}: {e}")
+                results.append(
+                    {
+                        "batch_index": i,
+                        "question": question,
+                        "answer": f"Error processing image {i+1}: {str(e)}",
+                        "confidence": 0.0,
+                        "error": str(e),
+                    }
+                )
+                failed_count += 1
+
+        return BatchVQAResponse(  # type: ignore
+            results=results,
+            total_items=len(results),
+            successful_items=successful_count,
+            failed_items=failed_count,
+            success_rate=successful_count / len(results) if results else 0,
+            parameters=VQAParameters(  # type: ignore
+                max_length=max_length, temperature=temperature, language=language
+            ),
+        )
 
     except Exception as e:
-        logger.error(f"Unexpected error in VQA endpoint: {e}", exc_info=True)
-        raise HTTPException(500, "Internal server error occurred")
+        logger.error(f"Batch VQA failed: {e}")
+        raise HTTPException(500, f"Batch visual question answering failed: {str(e)}")
+
+
+@router.get("/vqa/models")
+async def get_available_vqa_models():
+    """Get list of available VQA models"""
+    try:
+        vlm_engine = get_vlm_engine()
+        status = vlm_engine.get_status()
+
+        return {
+            "current_model": status.get("vqa_model"),
+            "model_loaded": status.get("vqa_model_loaded", False),
+            "available_models": [
+                "llava-hf/llava-1.5-7b-hf",
+                "llava-hf/llava-1.5-13b-hf",
+                "Qwen/Qwen-VL-Chat",
+                "Salesforce/blip2-opt-2.7b",
+            ],
+            "recommended": "llava-hf/llava-1.5-7b-hf",
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get VQA models: {str(e)}")
 
 
 @router.post("/vqa/conversation")
