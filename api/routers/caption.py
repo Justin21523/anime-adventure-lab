@@ -5,12 +5,18 @@ BLIP-2 based image description generation
 """
 
 import logging
+from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from fastapi.responses import JSONResponse
 
 from core.vlm.engine import get_vlm_engine
 from core.exceptions import VLMError, ImageProcessingError
-from schemas.caption import CaptionResponse, CaptionParameters
+from schemas.caption import (
+    CaptionRequest,
+    CaptionResponse,
+    CaptionParameters,
+    BatchCaptionResponse,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -18,48 +24,42 @@ router = APIRouter()
 
 @router.post("/caption", response_model=CaptionResponse)
 async def generate_caption(
-    image: UploadFile = File(..., description="Image file to caption"),
+    image: UploadFile = File(..., description="Image file"),
     max_length: int = Form(50, description="Maximum caption length"),
     num_beams: int = Form(3, description="Number of beams for generation"),
+    temperature: float = Form(0.7, description="Generation temperature"),
     language: str = Form("en", description="Caption language (en/zh)"),
 ):
-    """
-    Generate image caption using BLIP-2
-
-    - **image**: Image file (JPG, PNG, WebP)
-    - **max_length**: Maximum caption length (10-200)
-    - **num_beams**: Beam search size (1-5)
-    - **language**: Output language (en/zh)
-    """
-
-    # Validate inputs
-    if not image.content_type or not image.content_type.startswith("image/"):
-        raise HTTPException(400, "Invalid file type. Must be an image.")
-
-    if not (10 <= max_length <= 200):
-        raise HTTPException(400, "max_length must be between 10 and 200")
-
-    if not (1 <= num_beams <= 5):
-        raise HTTPException(400, "num_beams must be between 1 and 5")
-
+    """Generate caption for an image"""
     try:
+        # Validate image
+        if not image.content_type or not image.content_type.startswith("image/"):
+            raise HTTPException(400, "Invalid image file type")
+
         # Read image data
         image_data = await image.read()
 
-        # Get VLM engine and generate caption
+        # Get VLM engine and process
         vlm_engine = get_vlm_engine()
         result = vlm_engine.caption(
-            image=image_data, max_length=max_length, num_beams=num_beams
+            image=image_data,
+            max_length=max_length,
+            num_beams=num_beams,
+            temperature=temperature,
         )
 
-        # Translate to Chinese if requested
+        # Apply language formatting
         caption_text = result["caption"]
         if language == "zh":
-            caption_text = f"這張圖片顯示：{caption_text}"
+            if not any(char for char in caption_text if "\u4e00" <= char <= "\u9fff"):
+                caption_text = f"這張圖片顯示：{caption_text}"
 
-        # Create parameters object
+        # Format response
         parameters = CaptionParameters(  # type: ignore
-            max_length=max_length, num_beams=num_beams, language=language
+            max_length=max_length,
+            num_beams=num_beams,
+            temperature=temperature,
+            language=language,
         )
 
         return CaptionResponse(  # type: ignore
@@ -68,130 +68,142 @@ async def generate_caption(
             model_used=result["model_used"],
             language=language,
             parameters=parameters,
-            metadata={
-                "original_filename": image.filename,
-                "file_size_kb": len(image_data) // 1024,
-                "inference_parameters": result["parameters"],
-            },
+            image_info=result["image_info"],
         )
 
-    except ImageProcessingError as e:
-        logger.warning(f"Image processing error: {e}")
-        raise HTTPException(400, f"Image processing failed: {e.message}")
-
-    except VLMError as e:
-        logger.error(f"Caption generation error: {e}")
-        raise HTTPException(500, f"Caption generation failed: {e.message}")
-
     except Exception as e:
-        logger.error(f"Unexpected error in caption endpoint: {e}", exc_info=True)
-        raise HTTPException(500, "Internal server error occurred")
+        logger.error(f"Caption generation failed: {e}")
+        raise HTTPException(500, f"Caption generation failed: {str(e)}")
 
 
-@router.post("/caption/batch")
-async def batch_caption(
-    images: list[UploadFile] = File(..., description="Multiple image files"),
+@router.post("/caption/batch", response_model=BatchCaptionResponse)
+async def batch_generate_captions(
+    images: List[UploadFile] = File(..., description="Multiple image files"),
     max_length: int = Form(50),
     num_beams: int = Form(3),
+    temperature: float = Form(0.7),
     language: str = Form("en"),
 ):
     """Generate captions for multiple images in batch"""
+    try:
+        # Validate batch size
+        if len(images) > 10:
+            raise HTTPException(400, "Maximum 10 images per batch")
 
-    # Validate batch size
-    if len(images) > 10:
-        raise HTTPException(400, "Maximum 10 images per batch")
+        if not images:
+            raise HTTPException(400, "At least one image required")
 
-    if not images:
-        raise HTTPException(400, "At least one image required")
+        # Process each image
+        results = []
+        vlm_engine = get_vlm_engine()
+        successful_count = 0
+        failed_count = 0
 
-    results = []
-    vlm_engine = get_vlm_engine()
-
-    for i, image in enumerate(images):
-        try:
-            # Validate file type
-            if not image.content_type or not image.content_type.startswith("image/"):
-                parameters = CaptionParameters(  # type: ignore
-                    max_length=max_length, num_beams=num_beams, language=language
-                )
-                results.append(
-                    CaptionResponse(  # type: ignore
-                        caption=f"Error: Invalid file type for image {i+1}",
-                        confidence=0.0,
-                        model_used="",
-                        language=language,
-                        parameters=parameters,
-                        metadata={"error": "invalid_file_type", "index": i},
+        for i, image in enumerate(images):
+            try:
+                # Validate file type
+                if not image.content_type or not image.content_type.startswith(
+                    "image/"
+                ):
+                    results.append(
+                        {
+                            "batch_index": i,
+                            "caption": f"Error: Invalid file type for image {i+1}",
+                            "confidence": 0.0,
+                            "error": "invalid_file_type",
+                        }
                     )
+                    failed_count += 1
+                    continue
+
+                # Process image
+                image_data = await image.read()
+                result = vlm_engine.caption(
+                    image=image_data,
+                    max_length=max_length,
+                    num_beams=num_beams,
+                    temperature=temperature,
                 )
-                continue
 
-            # Process image
-            image_data = await image.read()
-            result = vlm_engine.caption(
-                image=image_data, max_length=max_length, num_beams=num_beams
-            )
+                # Apply language formatting
+                caption_text = result["caption"]
+                if language == "zh":
+                    if not any(
+                        char for char in caption_text if "\u4e00" <= char <= "\u9fff"
+                    ):
+                        caption_text = f"這張圖片顯示：{caption_text}"
 
-            # Format response
-            caption_text = result["caption"]
-            if language == "zh":
-                caption_text = f"這張圖片顯示：{caption_text}"
+                # Format result
+                parameters = CaptionParameters(  # type: ignore
+                    max_length=max_length,
+                    num_beams=num_beams,
+                    temperature=temperature,
+                    language=language,
+                )
 
-            parameters = CaptionParameters(  # type: ignore
-                max_length=max_length, num_beams=num_beams, language=language
-            )
-
-            results.append(
-                CaptionResponse(  # type: ignore
+                formatted_result = CaptionResponse(  # type: ignore
                     caption=caption_text,
                     confidence=result["confidence"],
                     model_used=result["model_used"],
                     language=language,
                     parameters=parameters,
-                    metadata={
-                        "index": i,
-                        "original_filename": image.filename,
-                        "file_size_kb": len(image_data) // 1024,
-                    },
+                    image_info=result["image_info"],
                 )
-            )
 
-        except Exception as e:
-            logger.error(f"Error processing image {i+1}: {e}")
-            parameters = CaptionParameters(  # type: ignore
-                max_length=max_length, num_beams=num_beams, language=language
-            )
-            results.append(
-                CaptionResponse(  # type: ignore
-                    caption=f"Error processing image {i+1}: {str(e)}",
-                    confidence=0.0,
-                    model_used="",
-                    language=language,
-                    parameters=parameters,
-                    metadata={"error": str(e), "index": i},
+                # Add batch index
+                result_dict = formatted_result.dict()
+                result_dict["batch_index"] = i
+                results.append(result_dict)
+                successful_count += 1
+
+            except Exception as e:
+                logger.error(f"Caption generation failed for image {i}: {e}")
+                results.append(
+                    {
+                        "batch_index": i,
+                        "caption": f"Error processing image {i+1}: {str(e)}",
+                        "confidence": 0.0,
+                        "error": str(e),
+                    }
                 )
-            )
+                failed_count += 1
 
-    return results
+        return BatchCaptionResponse(  # type: ignore
+            results=results,
+            total_items=len(results),
+            successful_items=successful_count,
+            failed_items=failed_count,
+            success_rate=successful_count / len(results) if results else 0,
+            parameters=CaptionParameters(  # type: ignore
+                max_length=max_length,
+                num_beams=num_beams,
+                temperature=temperature,
+                language=language,
+            ),
+        )
+
+    except Exception as e:
+        logger.error(f"Batch caption generation failed: {e}")
+        raise HTTPException(500, f"Batch caption generation failed: {str(e)}")
 
 
 @router.get("/caption/models")
-async def list_caption_models():
-    """List available caption models"""
-    return {
-        "available_models": [
-            {
-                "name": "Salesforce/blip2-opt-2.7b",
-                "description": "BLIP-2 with OPT-2.7B language model",
-                "languages": ["en"],
-                "recommended": True,
-            },
-            {
-                "name": "Salesforce/blip2-flan-t5-xl",
-                "description": "BLIP-2 with Flan-T5-XL language model",
-                "languages": ["en", "zh"],
-                "recommended": False,
-            },
-        ],
-        "current_model": get_vlm_engine().config.model.caption_model,
-    }
+async def get_available_caption_models():
+    """Get list of available caption models"""
+    try:
+        vlm_engine = get_vlm_engine()
+        status = vlm_engine.get_status()
+
+        return {
+            "current_model": status.get("caption_model"),
+            "model_loaded": status.get("caption_model_loaded", False),
+            "available_models": [
+                "Salesforce/blip2-opt-2.7b",
+                "Salesforce/blip2-opt-6.7b",
+                "Salesforce/blip2-flan-t5-xl",
+                "Salesforce/blip-image-captioning-large",
+            ],
+            "recommended": "Salesforce/blip2-opt-2.7b",
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get caption models: {str(e)}")
