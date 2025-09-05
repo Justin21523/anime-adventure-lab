@@ -1,58 +1,92 @@
-# configs/models.yaml - Model configurations
-models:
-  t2i:
-    sd15:
-      model_id: "runwayml/stable-diffusion-v1-5"
-      resolution: 768
-      scheduler: "DPMSolverMultistepScheduler"
-      enable_xformers: true
-    sdxl:
-      model_id: "stabilityai/stable-diffusion-xl-base-1.0"
-      resolution: 1024
-      scheduler: "DPMSolverMultistepScheduler"
-      enable_xformers: true
+# configs/models.yaml
+# VLM Model Configurations
 
+vlm:
   caption:
-    blip2:
-      model_id: "Salesforce/blip2-opt-2.7b"
-      processor_id: "Salesforce/blip2-opt-2.7b"
-      max_length: 50
-      num_beams: 3
+    default_model: "Salesforce/blip2-opt-2.7b"
+    available_models:
+      - name: "Salesforce/blip2-opt-2.7b"
+        type: "blip2"
+        size_gb: 5.4
+        vram_gb: 6.0
+        description: "BLIP-2 with OPT-2.7B, good balance of quality and speed"
+        recommended: true
+      - name: "Salesforce/blip2-opt-6.7b"
+        type: "blip2"
+        size_gb: 12.6
+        vram_gb: 14.0
+        description: "BLIP-2 with OPT-6.7B, higher quality captions"
+      - name: "Salesforce/blip2-flan-t5-xl"
+        type: "blip2"
+        size_gb: 15.8
+        vram_gb: 16.0
+        description: "BLIP-2 with Flan-T5-XL, best quality but slower"
+      - name: "Salesforce/blip-image-captioning-large"
+        type: "blip"
+        size_gb: 2.3
+        vram_gb: 4.0
+        description: "Original BLIP, lightweight and fast"
 
   vqa:
-    llava:
-      model_id: "llava-hf/llava-1.5-7b-hf"
-      processor_id: "llava-hf/llava-1.5-7b-hf"
-      max_length: 200
-    qwen_vl:
-      model_id: "Qwen/Qwen-VL-Chat"
-      max_length: 200
+    default_model: "llava-hf/llava-1.5-7b-hf"
+    available_models:
+      - name: "llava-hf/llava-1.5-7b-hf"
+        type: "llava"
+        size_gb: 13.5
+        vram_gb: 14.0
+        description: "LLaVA 1.5 7B, excellent Chinese/English VQA"
+        recommended: true
+        supports_chinese: true
+      - name: "llava-hf/llava-1.5-13b-hf"
+        type: "llava"
+        size_gb: 26.0
+        vram_gb: 28.0
+        description: "LLaVA 1.5 13B, best quality VQA"
+        supports_chinese: true
+      - name: "Qwen/Qwen-VL-Chat"
+        type: "qwen"
+        size_gb: 9.6
+        vram_gb: 12.0
+        description: "Qwen-VL Chat, optimized for Chinese"
+        supports_chinese: true
+        chinese_optimized: true
+      - name: "Salesforce/blip2-opt-2.7b"
+        type: "blip2"
+        size_gb: 5.4
+        vram_gb: 6.0
+        description: "BLIP-2 for VQA, English only"
+        supports_chinese: false
 
-  chat:
-    qwen:
-      model_id: "Qwen/Qwen2-7B-Instruct"
-      max_length: 1024
-      temperature: 0.7
-      top_p: 0.9
-    llama3:
-      model_id: "meta-llama/Meta-Llama-3-8B-Instruct"
-      max_length: 1024
+# Generation defaults
+generation:
+  caption:
+    max_length: 50
+    num_beams: 3
+    temperature: 0.7
+    do_sample: false
 
-  embeddings:
-    sentence_transformer:
-      model_id: "BAAI/bge-base-en-v1.5"
-      max_seq_length: 512
-    multilingual:
-      model_id: "BAAI/bge-m3"
-      max_seq_length: 8192
+  vqa:
+    max_length: 100
+    temperature: 0.7
+    do_sample: false
+    num_beams: 1
 
-controlnet:
-  pose:
-    model_id: "lllyasviel/control_v11p_sd15_openpose"
-    preprocessor: "openpose"
-  depth:
-    model_id: "lllyasviel/control_v11f1p_sd15_depth"
-    preprocessor: "depth_midas"
-  canny:
-    model_id: "lllyasviel/control_v11p_sd15_canny"
-    preprocessor: "canny"
+# Performance settings
+performance:
+  low_vram_mode: true
+  use_8bit: false # Enable for <8GB VRAM
+  use_4bit: false # Enable for <6GB VRAM
+  enable_slicing: true
+  cpu_offload: true
+
+# Language settings
+language:
+  default_caption_language: "en"
+  default_vqa_language: "auto"
+  supported_languages: ["en", "zh", "zh-TW", "zh-CN"]
+
+# Batch processing limits
+batch:
+  max_caption_batch: 10
+  max_vqa_batch: 10
+  timeout_seconds: 300
