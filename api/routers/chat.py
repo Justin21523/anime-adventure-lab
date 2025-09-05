@@ -1,6 +1,6 @@
-# ===== api/routers/chat.py =====
+# api/routers/chat.py
 """
-Text Chat API
+Text Chat Router
 LLM-based conversation interface
 """
 
@@ -8,15 +8,9 @@ import logging
 from fastapi import APIRouter, HTTPException
 from typing import List, Optional
 
-from core.story.engine import get_story_engine
-from core.exceptions import GameError, SessionNotFoundError, InvalidChoiceError
-from schemas.game import (
-    NewGameRequest,
-    GameStepRequest,
-    GameResponse,
-    GameSessionSummary,
-    GamePersonaInfo,
-)
+from core.llm.adapter import get_llm_adapter
+from core.exceptions import ModelError, ValidationError
+from schemas.chat import ChatRequest, ChatResponse, ChatMessage, ChatParameters
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -28,19 +22,20 @@ async def chat_completion(request: ChatRequest):
     Text chat completion using LLM
 
     - **messages**: Conversation history with roles (system/user/assistant)
-    - **max_length**: Maximum response length (50-1000)
-    - **temperature**: Creativity level (0.1-2.0)
-    - **model**: Optional model override
+    - **parameters**: Chat parameters (max_length, temperature, etc.)
     """
+
+    # Extract parameters with defaults
+    params = request.parameters or ChatParameters()  # type: ignore
 
     # Validate request
     if not request.messages:
         raise HTTPException(400, "Messages cannot be empty")
 
-    if not (50 <= request.max_length <= 1000):
+    if not (50 <= params.max_length <= 1000):
         raise HTTPException(400, "max_length must be between 50 and 1000")
 
-    if not (0.1 <= request.temperature <= 2.0):
+    if not (0.1 <= params.temperature <= 2.0):
         raise HTTPException(400, "temperature must be between 0.1 and 2.0")
 
     try:
@@ -59,23 +54,21 @@ async def chat_completion(request: ChatRequest):
         # Generate response
         response = llm_adapter.chat(
             messages=formatted_messages,
-            model_name=request.model,
-            max_length=request.max_length,
-            temperature=request.temperature,
-            do_sample=request.temperature > 0.0,
+            model_name=params.model,
+            max_length=params.max_length,
+            temperature=params.temperature,
+            do_sample=params.temperature > 0.0,
         )
 
-        return ChatResponse(
+        return ChatResponse(  # type: ignore
             message=response.content,
             model_used=response.model_name,
+            parameters=params,
             usage=response.usage,
             metadata={
                 "conversation_length": len(request.messages),
                 "response_length": len(response.content),
-                "parameters": {
-                    "max_length": request.max_length,
-                    "temperature": request.temperature,
-                },
+                "inference_time_ms": response.usage.get("inference_time_ms", 0),
             },
         )
 
@@ -111,13 +104,15 @@ async def chat_stream(request: ChatRequest):
 
             llm_adapter = get_llm_adapter()
             response = llm_adapter.chat(
-                messages=[
+                messages=[  # type: ignore
                     msg.dict() if hasattr(msg, "dict") else msg
                     for msg in request.messages
                 ],
-                model_name=request.model,
-                max_length=request.max_length,
-                temperature=request.temperature,
+                model_name=request.parameters.model if request.parameters else None,
+                max_length=request.parameters.max_length if request.parameters else 512,
+                temperature=(
+                    request.parameters.temperature if request.parameters else 0.7
+                ),
             )
 
             # Simulate token-by-token streaming

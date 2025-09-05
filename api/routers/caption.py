@@ -1,38 +1,19 @@
 # api/routers/caption.py
-from typing import List, Dict, Any, Optional
+"""
+Image Caption Router
+BLIP-2 based image description generation
+"""
+
 import logging
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from fastapi.responses import JSONResponse
 
-from PIL import Image
-import base64, io, tempfile, os
-from PIL import Image
-
-from api.schemas import CaptionRequest, CaptionResponse
 from core.vlm.engine import get_vlm_engine
 from core.exceptions import VLMError, ImageProcessingError
-from schemas.caption import CaptionRequest, CaptionResponse
-
-from ..dependencies import get_vlm
-
-router = APIRouter(tags=["caption"])
+from schemas.caption import CaptionResponse, CaptionParameters
 
 logger = logging.getLogger(__name__)
-
-
-def _load_image_from_inputs(
-    image: Optional[UploadFile], image_base64: Optional[str]
-) -> Image.Image:
-    """Load a PIL image from either an uploaded file or base64 string."""
-    if image:
-        data = image.file.read()  # UploadFile.read() is sync-friendly here
-        return Image.open(io.BytesIO(data)).convert("RGB")
-    if image_base64:
-        data = base64.b64decode(image_base64)
-        return Image.open(io.BytesIO(data)).convert("RGB")
-    raise HTTPException(
-        status_code=400, detail="Either `image` or `image_base64` is required"
-    )
+router = APIRouter()
 
 
 @router.post("/caption", response_model=CaptionResponse)
@@ -74,19 +55,23 @@ async def generate_caption(
         # Translate to Chinese if requested
         caption_text = result["caption"]
         if language == "zh":
-            # Simple translation - in production, use proper translation service
-            # For now, prepend Chinese context
             caption_text = f"這張圖片顯示：{caption_text}"
 
-        return CaptionResponse(
+        # Create parameters object
+        parameters = CaptionParameters(  # type: ignore
+            max_length=max_length, num_beams=num_beams, language=language
+        )
+
+        return CaptionResponse(  # type: ignore
             caption=caption_text,
             confidence=result["confidence"],
             model_used=result["model_used"],
             language=language,
+            parameters=parameters,
             metadata={
                 "original_filename": image.filename,
                 "file_size_kb": len(image_data) // 1024,
-                "parameters": result["parameters"],
+                "inference_parameters": result["parameters"],
             },
         )
 
@@ -103,19 +88,14 @@ async def generate_caption(
         raise HTTPException(500, "Internal server error occurred")
 
 
-@router.post("/caption/batch", response_model=List[CaptionResponse])
+@router.post("/caption/batch")
 async def batch_caption(
-    images: List[UploadFile] = File(..., description="Multiple image files"),
+    images: list[UploadFile] = File(..., description="Multiple image files"),
     max_length: int = Form(50),
     num_beams: int = Form(3),
     language: str = Form("en"),
 ):
-    """
-    Generate captions for multiple images in batch
-
-    - **images**: List of image files (max 10 files)
-    - Other parameters same as single caption
-    """
+    """Generate captions for multiple images in batch"""
 
     # Validate batch size
     if len(images) > 10:
@@ -131,12 +111,16 @@ async def batch_caption(
         try:
             # Validate file type
             if not image.content_type or not image.content_type.startswith("image/"):
+                parameters = CaptionParameters(  # type: ignore
+                    max_length=max_length, num_beams=num_beams, language=language
+                )
                 results.append(
-                    CaptionResponse(
+                    CaptionResponse(  # type: ignore
                         caption=f"Error: Invalid file type for image {i+1}",
                         confidence=0.0,
                         model_used="",
                         language=language,
+                        parameters=parameters,
                         metadata={"error": "invalid_file_type", "index": i},
                     )
                 )
@@ -153,12 +137,17 @@ async def batch_caption(
             if language == "zh":
                 caption_text = f"這張圖片顯示：{caption_text}"
 
+            parameters = CaptionParameters(  # type: ignore
+                max_length=max_length, num_beams=num_beams, language=language
+            )
+
             results.append(
-                CaptionResponse(
+                CaptionResponse(  # type: ignore
                     caption=caption_text,
                     confidence=result["confidence"],
                     model_used=result["model_used"],
                     language=language,
+                    parameters=parameters,
                     metadata={
                         "index": i,
                         "original_filename": image.filename,
@@ -169,12 +158,16 @@ async def batch_caption(
 
         except Exception as e:
             logger.error(f"Error processing image {i+1}: {e}")
+            parameters = CaptionParameters(  # type: ignore
+                max_length=max_length, num_beams=num_beams, language=language
+            )
             results.append(
-                CaptionResponse(
+                CaptionResponse(  # type: ignore
                     caption=f"Error processing image {i+1}: {str(e)}",
                     confidence=0.0,
                     model_used="",
                     language=language,
+                    parameters=parameters,
                     metadata={"error": str(e), "index": i},
                 )
             )

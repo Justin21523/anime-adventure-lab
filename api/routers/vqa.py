@@ -1,34 +1,19 @@
 # api/routers/vqa.py
 """
-Visual Question Answering router (DI-based).
-Saves image to a temp file and calls vlm.vqa(path, question) if available.
+Visual Question Answering Router
+LLaVA/Qwen-VL based image Q&A
 """
-from __future__ import annotations
-import logging
-from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Depends
-from api.schemas import VQARequest, VQAResponse
-import base64, io, tempfile, os
-from PIL import Image
 
-from ..dependencies import get_vlm
+import logging
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form
+from typing import Optional
+
 from core.vlm.engine import get_vlm_engine
 from core.exceptions import VLMError, ValidationError
-from schemas.vqa import VQARequest, VQAResponse
+from schemas.vqa import VQAResponse, VQAParameters
 
 logger = logging.getLogger(__name__)
-router = APIRouter(tags=["vqa"])
-
-
-def _load_image_from_request(req: VQARequest) -> Image.Image:
-    if req.image_base64:
-        data = base64.b64decode(req.image_base64)
-        return Image.open(io.BytesIO(data)).convert("RGB")
-    if req.image_path:
-        return Image.open(req.image_path).convert("RGB")
-    raise HTTPException(
-        status_code=400, detail="Either image_path or image_base64 required"
-    )
+router = APIRouter()
 
 
 @router.post("/vqa", response_model=VQAResponse)
@@ -82,18 +67,22 @@ async def visual_question_answering(
             # Simple translation hint for English answers
             answer_text = f"{answer_text}（英文回答）"
 
-        return VQAResponse(
+        # Create parameters object
+        parameters = VQAParameters(max_length=max_length, language=language)  # type: ignore
+
+        return VQAResponse(  # type: ignore
             question=question,
             answer=answer_text,
             confidence=result["confidence"],
             model_used=result["model_used"],
             language=detected_language,
+            parameters=parameters,
             metadata={
                 "original_filename": image.filename,
                 "file_size_kb": len(image_data) // 1024,
                 "question_length": len(question),
                 "answer_length": len(answer_text),
-                "parameters": result["parameters"],
+                "inference_parameters": result["parameters"],
             },
         )
 
