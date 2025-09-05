@@ -72,6 +72,24 @@ class CUDAOutOfMemoryError(ModelError):
         super().__init__(message, model_name, "CUDA_OOM")
 
 
+class ContextLengthExceededError(MultiModalLabError):
+    """Context length exceeded error"""
+
+    def __init__(self, current_length: int, max_length: int, model_name: str = ""):
+        message = f"Context length exceeded: {current_length} > {max_length}"
+        if model_name:
+            message += f" for model {model_name}"
+        super().__init__(
+            message,
+            "CONTEXT_LENGTH_EXCEEDED",
+            {
+                "current_length": current_length,
+                "max_length": max_length,
+                "model_name": model_name,
+            },
+        )
+
+
 class VLMError(MultiModalLabError):
     """Vision-Language Model errors"""
 
@@ -223,16 +241,37 @@ class StorageError(ResourceError):
         super().__init__("Storage", message, "STORAGE_ERROR")
 
 
-# Error handler helpers
+# Error handler decorators
 def handle_cuda_oom(func):
     """Decorator to handle CUDA OOM with graceful fallback"""
 
+    @wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except RuntimeError as e:
             if "out of memory" in str(e).lower():
-                raise CUDAOutOfMemoryError("", 0) from e
+                # Try to determine model name from args
+                model_name = ""
+                if hasattr(args[0], "model_name"):
+                    model_name = args[0].model_name
+
+                # Clear GPU cache
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                raise CUDAOutOfMemoryError(model_name) from e
+            raise
+        except Exception as e:
+            if "out of memory" in str(e).lower() or "CUDA" in str(e):
+                model_name = ""
+                if hasattr(args[0], "model_name"):
+                    model_name = args[0].model_name
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                raise CUDAOutOfMemoryError(model_name) from e
             raise
 
     return wrapper
@@ -241,16 +280,46 @@ def handle_cuda_oom(func):
 def handle_model_error(func):
     """Decorator to standardize model error handling"""
 
+    @wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except FileNotFoundError as e:
-            raise ModelNotFoundError(str(e)) from e
+            model_name = ""
+            if hasattr(args[0], "model_name"):
+                model_name = args[0].model_name
+            raise ModelNotFoundError(model_name) from e
         except (ImportError, AttributeError) as e:
-            raise ModelLoadError("", str(e)) from e
+            model_name = ""
+            if hasattr(args[0], "model_name"):
+                model_name = args[0].model_name
+            raise ModelLoadError(model_name, str(e)) from e
         except Exception as e:
             if "out of memory" in str(e).lower():
-                raise CUDAOutOfMemoryError("") from e
-            raise ModelError(str(e)) from e
+                model_name = ""
+                if hasattr(args[0], "model_name"):
+                    model_name = args[0].model_name
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                raise CUDAOutOfMemoryError(model_name) from e
+            raise
+
+    return wrapper
+
+
+def handle_validation_error(func):
+    """Decorator to handle validation errors"""
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except ValueError as e:
+            # Convert ValueError to ValidationError for consistency
+            raise ValidationError("input", str(e), "Value error") from e
+        except TypeError as e:
+            raise ValidationError("type", str(e), "Type error") from e
 
     return wrapper
