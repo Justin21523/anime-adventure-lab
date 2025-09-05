@@ -1,229 +1,133 @@
 # api/routers/rag.py
 """
-RAG router (DI-based).
-- No import-time side effects
-- Engines injected from api/dependencies.py
-- Unified request/response models
+RAG (Retrieval Augmented Generation) Router
 """
-from __future__ import annotations
-from typing import Dict, List, Optional, Any
-import time
-from datetime import datetime
-from fastapi import (
-    FastAPI,
-    APIRouter,
-    UploadFile,
-    File,
-    HTTPException,
-    Form,
-    UploadFile,
-    Depends,
+
+import logging
+from fastapi import APIRouter, HTTPException, File, UploadFile
+from typing import List, Optional
+from core.rag.engine import get_rag_engine
+from core.exceptions import RAGError
+from schemas.rag import (
+    RAGAddDocumentRequest,
+    RAGAddDocumentResponse,
+    RAGSearchRequest,
+    RAGSearchResponse,
+    RAGQueryRequest,
+    RAGQueryResponse,
 )
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-import tempfile
-import uuid
-import fitz  # PyMuPDF for PDF parsing
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
 
 
-from api.schemas import RAGRequest, RAGResponse, RAGSource
-from ..dependencies import get_rag, get_llm  # shared singletons
-from api.schemas import RAGRequest, RAGResponse, RAGSource  # keep your existing schemas
-from core.rag.engine import DocumentMetadata
-
-
-router = APIRouter(prefix="/rag", tags=["rag"])
-
-
-#  ocal models for /retrieve -----
-class RetrieveRequest(BaseModel):
-    query: str
-    world_id: Optional[str] = None
-    top_k: int = Field(8, ge=1, le=50)
-    alpha: float = Field(0.7, ge=0.0, le=1.0)
-
-
-class RetrieveItem(BaseModel):
-    chunk_id: str
-    doc_id: str
-    text: str
-    score: float
-    section_title: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class RetrieveResponse(BaseModel):
-    query: str
-    results: List[RetrieveItem]
-    total_found: int
-    processing_time_ms: float
-
-
-# -Helpers
-def _parse_pdf_bytes(content: bytes) -> str:
-    """Best-effort PDF to text."""
-    if fitz is None:
-        raise HTTPException(
-            status_code=400,
-            detail="PDF support is not available (PyMuPDF not installed)",
+@router.post("/rag/add", response_model=RAGAddDocumentResponse)
+async def add_document(request: RAGAddDocumentRequest):
+    """Add document to RAG index"""
+    try:
+        rag_engine = get_rag_engine()
+        success = rag_engine.add_document(
+            doc_id=request.doc_id,
+            content=request.content,
+            metadata=request.metadata or {},
         )
+
+        return RAGAddDocumentResponse(  # type: ignore
+            doc_id=request.doc_id, added=success, parameters=request.parameters
+        )
+
+    except RAGError as e:
+        raise HTTPException(500, f"RAG operation failed: {e.message}")
+
+
+@router.post("/rag/search", response_model=RAGSearchResponse)
+async def search_documents(request: RAGSearchRequest):
+    """Search documents in RAG index"""
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(content)
-            tmp.flush()
-            doc = fitz.open(tmp.name)
-            text = "".join(page.get_text() for page in doc)
-            doc.close()
-            return text
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"PDF parsing failed: {e}")
-
-
-@router.get("/health")
-async def rag_health(rag=Depends(get_rag)):
-    """Lightweight health info for RAG engine."""
-    # Engine may expose stats attributes; keep best-effort
-    chunks = getattr(rag, "num_chunks", lambda: None)()
-    docs = getattr(rag, "num_documents", lambda: None)()
-    return {
-        "status": "ok",
-        "timestamp": datetime.now().isoformat(),
-        "rag_chunks": chunks,
-        "rag_documents": docs,
-    }
-
-
-@router.post("/upload")
-async def upload_document(
-    file: UploadFile = File(...),
-    world_id: str = Form(...),
-    title: Optional[str] = Form(None),
-    license: str = Form("unspecified"),
-    rag=Depends(get_rag),
-):
-    """Upload and index a document into RAG."""
-    try:
-        doc_id = f"{world_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        content = await file.read()
-
-        if file.filename.lower().endswith(".pdf"):
-            text_content = _parse_pdf_bytes(content)
-        elif file.filename.lower().endswith((".md", ".txt")):
-            text_content = content.decode("utf-8", errors="ignore")
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported file type")
-
-        meta_dict = {
-            "doc_id": doc_id,
-            "title": title or file.filename,
-            "source": file.filename,
-            "world_id": world_id,
-            "upload_time": datetime.now().isoformat(),
-            "license": license,
-        }
-        metadata = (
-            DocumentMetadata(**meta_dict) if DocumentMetadata else meta_dict
-        )  # tolerate absent class
-
-        result = rag.add_document(text_content, metadata)
-        return {
-            "success": True,
-            "doc_id": doc_id,
-            "chunks_added": (
-                result.get("chunks_added", 0) if isinstance(result, dict) else result
-            ),
-            "message": f"Document '{file.filename}' uploaded and indexed",
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
-
-
-@router.post("/retrieve", response_model=RetrieveResponse)
-async def retrieve_documents(request: RetrieveRequest, rag=Depends(get_rag)):
-    """Retrieve relevant chunks with simple formatting."""
-    start = time.time()
-    try:
-        results = rag.retrieve(
+        rag_engine = get_rag_engine()
+        results = rag_engine.search(
             query=request.query,
-            world_id=request.world_id,
-            top_k=request.top_k,
-            alpha=request.alpha,
+            top_k=request.parameters.top_k,  # type: ignore
+            min_score=request.parameters.min_score,  # type: ignore
         )
-        items: List[RetrieveItem] = []
-        for r in results:
-            items.append(
-                RetrieveItem(
-                    chunk_id=str(getattr(r, "chunk_id", "")),
-                    doc_id=str(getattr(r, "doc_id", "")),
-                    text=str(getattr(r, "text", "")),
-                    score=round(float(getattr(r, "score", 0.0)), 4),
-                    section_title=getattr(r, "section_title", None),
-                    metadata=getattr(r, "metadata", {}) or {},
-                )
-            )
-        return RetrieveResponse(
+
+        return RAGSearchResponse(  # type: ignore
             query=request.query,
-            results=items,
-            total_found=len(items),
-            processing_time_ms=round((time.time() - start) * 1000, 2),
+            results=[
+                {
+                    "doc_id": r.document.doc_id,
+                    "content": r.document.content,
+                    "score": r.score,
+                    "metadata": r.document.metadata,
+                }
+                for r in results
+            ],
+            total_found=len(results),
+            parameters=request.parameters,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Retrieval failed: {e}")
+
+    except RAGError as e:
+        raise HTTPException(500, f"RAG search failed: {e.message}")
 
 
-@router.post("/ask", response_model=RAGResponse)
-async def rag_ask(request: RAGRequest, rag=Depends(get_rag), llm=Depends(get_llm)):
-    """
-    Answer a question using retrieved context.
-    Keeps LLM call minimal so it works with your stub or real engine.
-    """
+@router.post("/rag/ask", response_model=RAGQueryResponse)
+async def rag_query(request: RAGQueryRequest):
+    """RAG-enhanced question answering"""
     try:
-        hits = rag.retrieve(
-            query=request.question, world_id=None, top_k=request.top_k, alpha=0.7
+        rag_engine = get_rag_engine()
+
+        # Generate context from RAG
+        context_data = rag_engine.generate_context(
+            query=request.query,
+            max_context_length=request.parameters.max_context_length,  # type: ignore
+            top_k=request.parameters.top_k,  # type: ignore
         )
-        sources: List[RAGSource] = []
-        context_snippets: List[str] = []
 
-        for r in hits:
-            text = str(getattr(r, "text", ""))
-            meta = getattr(r, "metadata", {}) or {}
-            sources.append(
-                RAGSource(
-                    content=text[:200] + ("..." if len(text) > 200 else ""),
-                    score=float(getattr(r, "score", 0.0)),
-                    metadata=meta,
-                )
+        if not context_data["context"]:
+            return RAGQueryResponse(  # type: ignore
+                query=request.query,
+                answer="抱歉，我在知識庫中沒有找到相關信息。",
+                context="",
+                sources=[],
+                parameters=request.parameters,
             )
-            context_snippets.append(text)
 
-        # Compose a very small prompt (works with MinimalLLM)
-        context = "\n\n".join(context_snippets[:5]) if context_snippets else ""
+        # Use LLM with RAG context
+        from core.llm.adapter import get_llm_adapter
+
+        llm_adapter = get_llm_adapter()
+
+        system_prompt = f"""你是一個知識助手。請基於以下提供的上下文信息回答問題。
+
+上下文信息：
+{context_data['context']}
+
+請基於上述信息回答問題。如果上下文中沒有相關信息，請明確說明。"""
+
         messages = [
-            {
-                "role": "system",
-                "content": "Answer concisely using the provided context. If unsure, say you don't know.",
-            },
-            {
-                "role": "user",
-                "content": f"Question: {request.question}\n\nContext:\n{context}",
-            },
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": request.query},
         ]
-        answer = llm.chat(messages)
 
-        return RAGResponse(
-            answer=answer, sources=sources, model_used=getattr(llm, "model_name", "llm")
+        response = llm_adapter.chat(
+            messages=messages,  # type: ignore
+            max_length=request.parameters.max_length,  # type: ignore
+            temperature=request.parameters.temperature,  # type: ignore
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"RAG ask failed: {e}")
 
+        return RAGQueryResponse(  # type: ignore
+            query=request.query,
+            answer=response.content,
+            context=context_data["context"],
+            sources=context_data["sources"],
+            parameters=request.parameters,
+            usage={
+                "prompt_tokens": response.usage.get("prompt_tokens", 0),
+                "completion_tokens": response.usage.get("completion_tokens", 0),
+                "total_tokens": response.usage.get("total_tokens", 0),
+            },
+        )
 
-@router.get("/stats")
-async def rag_stats(rag=Depends(get_rag)):
-    """Return internal stats if engine exposes them."""
-    try:
-        stats = getattr(rag, "get_stats", lambda: {})()
-        return stats or {"status": "ok", "timestamp": datetime.now().isoformat()}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"RAG query failed: {e}")
+        raise HTTPException(500, f"RAG query failed: {str(e)}")
