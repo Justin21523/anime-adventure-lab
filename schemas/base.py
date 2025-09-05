@@ -24,12 +24,26 @@ class BaseRequest(BaseModel):
         extra = "allow"
 
 
+class BaseParameters(BaseModel):
+    """Base parameters for model inference"""
+
+    max_length: int = Field(512, ge=10, le=2000, description="Maximum output length")
+    temperature: Optional[float] = Field(
+        0.7, ge=0.0, le=2.0, description="Sampling temperature"
+    )
+    top_p: Optional[float] = Field(0.9, ge=0.0, le=1.0, description="Top-p sampling")
+    seed: Optional[int] = Field(None, description="Random seed for reproducibility")
+
+
 class BaseResponse(BaseModel):
     """Base response model with common fields"""
 
     success: bool = Field(True, description="Request success status")
     timestamp: datetime = Field(
         default_factory=datetime.now, description="Response timestamp"
+    )
+    parameters: Optional[BaseParameters] = Field(
+        None, description="Inference parameters used"
     )
     metadata: Optional[Dict[str, Any]] = Field(
         default_factory=dict, description="Additional response metadata"
@@ -58,7 +72,9 @@ class ModelInfo(BaseModel):
     name: str = Field(..., description="Model name/identifier")
     description: Optional[str] = Field(None, description="Model description")
     version: Optional[str] = Field(None, description="Model version")
-    parameters: Optional[str] = Field(None, description="Parameter count (e.g., '7B')")
+    parameters_count: Optional[str] = Field(
+        None, description="Parameter count (e.g., '7B')"
+    )
     languages: List[str] = Field(
         default_factory=list, description="Supported languages"
     )

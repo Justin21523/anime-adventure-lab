@@ -5,11 +5,11 @@ Image Caption API Schemas
 
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any
-from .base import BaseRequest, BaseResponse, UsageInfo
+from .base import BaseRequest, BaseResponse, UsageInfo, BaseParameters
 
 
-class CaptionRequest(BaseRequest):
-    """Image caption generation request"""
+class CaptionParameters(BaseParameters):
+    """Caption-specific parameters"""
 
     max_length: int = Field(50, ge=10, le=200, description="Maximum caption length")
     num_beams: int = Field(3, ge=1, le=5, description="Number of beams for generation")
@@ -22,6 +22,13 @@ class CaptionRequest(BaseRequest):
         return v
 
 
+class CaptionRequest(BaseRequest):
+    """Image caption generation request"""
+
+    # Image will be uploaded as file, so not in schema
+    parameters: Optional[CaptionParameters] = Field(default_factory=CaptionParameters)  # type: ignore
+
+
 class CaptionResponse(BaseResponse):
     """Image caption generation response"""
 
@@ -31,6 +38,11 @@ class CaptionResponse(BaseResponse):
     )
     model_used: str = Field(..., description="Model used for generation")
     language: str = Field(..., description="Detected/requested language")
+
+    # Unified parameters field
+    parameters: CaptionParameters = Field(
+        ..., description="Parameters used for generation"
+    )
 
     # Optional detailed info
     usage: Optional[UsageInfo] = Field(None, description="Resource usage information")

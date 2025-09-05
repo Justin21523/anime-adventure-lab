@@ -6,7 +6,20 @@ Visual Question Answering API Schemas
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-from .base import BaseRequest, BaseResponse, UsageInfo
+from .base import BaseRequest, BaseResponse, UsageInfo, BaseParameters
+
+
+class VQAParameters(BaseParameters):
+    """VQA-specific parameters"""
+
+    max_length: int = Field(100, ge=20, le=300, description="Maximum answer length")
+    language: str = Field("auto", description="Answer language (auto/en/zh)")
+
+    @field_validator("language", mode="after")
+    def validate_language(cls, v):
+        if v not in ["auto", "en", "zh"]:
+            raise ValueError("Language must be 'auto', 'en', or 'zh'")
+        return v
 
 
 class VQARequest(BaseRequest):
@@ -15,19 +28,10 @@ class VQARequest(BaseRequest):
     question: str = Field(
         ..., min_length=3, max_length=500, description="Question about the image"
     )
-    max_length: int = Field(100, ge=20, le=300, description="Maximum answer length")
-    language: str = Field("auto", description="Answer language (auto/en/zh)")
-
-    # Optional context
+    parameters: Optional[VQAParameters] = Field(default_factory=VQAParameters)  # type: ignore
     context: Optional[str] = Field(
         None, description="Additional context for the question"
     )
-
-    @field_validator("language", mode="after")
-    def validate_language(cls, v):
-        if v not in ["auto", "en", "zh"]:
-            raise ValueError("Language must be 'auto', 'en', or 'zh'")
-        return v
 
     @field_validator("question", mode="after")
     def validate_question(cls, v):
@@ -46,6 +50,9 @@ class VQAResponse(BaseResponse):
     )
     model_used: str = Field(..., description="Model used for VQA")
     language: str = Field(..., description="Detected answer language")
+
+    # Unified parameters field
+    parameters: VQAParameters = Field(..., description="Parameters used for generation")
 
     # Optional analysis
     usage: Optional[UsageInfo] = Field(None, description="Resource usage")

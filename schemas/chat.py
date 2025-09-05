@@ -6,7 +6,7 @@ Text Chat API Schemas
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-from .base import BaseRequest, BaseResponse, UsageInfo
+from .base import BaseRequest, BaseResponse, UsageInfo, BaseParameters
 
 
 class ChatMessage(BaseModel):
@@ -28,23 +28,25 @@ class ChatMessage(BaseModel):
         return v.strip()
 
 
+class ChatParameters(BaseParameters):
+    """Chat-specific parameters"""
+
+    max_length: int = Field(512, ge=50, le=1000, description="Maximum response length")
+    temperature: float = Field(0.7, ge=0.1, le=2.0, description="Sampling temperature")
+    top_p: float = Field(0.9, ge=0.1, le=1.0, description="Nucleus sampling parameter")
+    repetition_penalty: float = Field(
+        1.0, ge=0.5, le=2.0, description="Repetition penalty"
+    )
+    model: Optional[str] = Field(None, description="Model name override")
+
+
 class ChatRequest(BaseRequest):
     """Text chat completion request"""
 
     messages: List[ChatMessage] = Field(
         ..., min_items=1, description="Conversation messages"  # type: ignore
     )
-    max_length: int = Field(512, ge=50, le=1000, description="Maximum response length")
-    temperature: float = Field(0.7, ge=0.1, le=2.0, description="Sampling temperature")
-    model: Optional[str] = Field(None, description="Optional model override")
-
-    # Advanced parameters
-    top_p: Optional[float] = Field(
-        0.9, ge=0.1, le=1.0, description="Nucleus sampling parameter"
-    )
-    repetition_penalty: Optional[float] = Field(
-        1.0, ge=0.5, le=2.0, description="Repetition penalty"
-    )
+    parameters: Optional[ChatParameters] = Field(default_factory=ChatParameters)  # type: ignore
 
     @field_validator("messages", mode="after")
     def validate_messages(cls, v):
@@ -64,6 +66,12 @@ class ChatResponse(BaseResponse):
 
     message: str = Field(..., description="Generated response message")
     model_used: str = Field(..., description="Model used for generation")
+
+    # Unified parameters field
+    parameters: ChatParameters = Field(
+        ..., description="Parameters used for generation"
+    )
+
     usage: UsageInfo = Field(..., description="Token usage information")
 
     # Analysis metadata
