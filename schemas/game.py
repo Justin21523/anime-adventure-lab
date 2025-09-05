@@ -6,24 +6,21 @@ Text Adventure Game API Schemas
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-from .base import BaseRequest, BaseResponse
+from .base import BaseRequest, BaseResponse, BaseParameters
 
 
-class NewGameRequest(BaseRequest):
-    """Create new game session request"""
+class GameParameters(BaseParameters):
+    """Game-specific parameters"""
 
-    player_name: str = Field(
-        ..., min_length=1, max_length=50, description="Player character name"
+    max_length: int = Field(
+        800, ge=100, le=1500, description="Maximum narrative length"
     )
-    persona_id: str = Field("default", description="Game master persona ID")
+    temperature: float = Field(
+        0.8, ge=0.1, le=1.5, description="Creativity level for story generation"
+    )
+    persona_id: str = Field("default", description="Game master persona")
     setting: str = Field("fantasy", description="Game world setting")
     difficulty: str = Field("normal", description="Game difficulty level")
-
-    @field_validator("player_name", mode="after")
-    def validate_player_name(cls, v):
-        if not v.strip():
-            raise ValueError("Player name cannot be empty")
-        return v.strip()
 
     @field_validator("setting", mode="after")
     def validate_setting(cls, v):
@@ -42,6 +39,21 @@ class NewGameRequest(BaseRequest):
         return v
 
 
+class NewGameRequest(BaseRequest):
+    """Create new game session request"""
+
+    player_name: str = Field(
+        ..., min_length=1, max_length=50, description="Player character name"
+    )
+    parameters: Optional[GameParameters] = Field(default_factory=GameParameters)  # type: ignore
+
+    @field_validator("player_name", mode="after")
+    def validate_player_name(cls, v):
+        if not v.strip():
+            raise ValueError("Player name cannot be empty")
+        return v.strip()
+
+
 class GameStepRequest(BaseRequest):
     """Game action/step request"""
 
@@ -51,6 +63,10 @@ class GameStepRequest(BaseRequest):
     )
     choice_id: Optional[str] = Field(
         None, description="Predefined choice ID if applicable"
+    )
+
+    parameters: Optional[GameParameters] = Field(
+        None, description="Optional parameter overrides"
     )
 
     @field_validator("action", mode="after")
@@ -90,6 +106,9 @@ class GameResponse(BaseResponse):
         default_factory=list, description="Character dialogues"
     )
     choices: List[GameChoice] = Field(..., description="Available player choices")
+
+    # Unified parameters field
+    parameters: GameParameters = Field(..., description="Game parameters used")
 
     # Game state
     game_state: Dict[str, Any] = Field(
