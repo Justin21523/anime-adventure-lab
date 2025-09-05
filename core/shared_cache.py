@@ -171,7 +171,7 @@ class SharedCache:
 
         # Calculate disk usage
         for subdir in ["models", "datasets", "outputs"]:
-            path = self.cache_root / subdir
+            path = Path(self.cache_root) / subdir
             if path.exists():
                 total_size = sum(
                     f.stat().st_size for f in path.rglob("*") if f.is_file()

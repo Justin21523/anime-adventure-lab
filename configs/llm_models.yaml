@@ -1,0 +1,127 @@
+# configs/llm_models.yaml
+# LLM Model Configurations for Enhanced Engine
+
+# Default model settings
+default_models:
+  chat_model: "Qwen/Qwen-7B-Chat"
+  embedding_model: "BAAI/bge-base-en-v1.5"
+  fallback_model: "microsoft/DialoGPT-medium"
+
+# Model-specific configurations
+model_configs:
+  # Qwen Models
+  "Qwen/Qwen-7B-Chat":
+    max_context_length: 8192
+    max_response_length: 2048
+    device_map: "auto"
+    torch_dtype: "float16"
+    use_quantization: true
+    quantization_bits: 4
+    chat_format: "qwen"
+    languages: ["zh", "en"]
+    description: "Qwen 7B Chat model with Chinese support"
+
+  "Qwen/Qwen-14B-Chat":
+    max_context_length: 8192
+    max_response_length: 2048
+    device_map: "auto"
+    torch_dtype: "float16"
+    use_quantization: true
+    quantization_bits: 4
+    chat_format: "qwen"
+    languages: ["zh", "en"]
+    description: "Qwen 14B Chat model with Chinese support"
+
+  # Llama Models
+  "meta-llama/Llama-2-7b-chat-hf":
+    max_context_length: 4096
+    max_response_length: 1024
+    device_map: "auto"
+    torch_dtype: "float16"
+    use_quantization: true
+    quantization_bits: 4
+    chat_format: "llama"
+    languages: ["en"]
+    description: "Llama 2 7B Chat model"
+
+  "meta-llama/Llama-2-13b-chat-hf":
+    max_context_length: 4096
+    max_response_length: 1024
+    device_map: "auto"
+    torch_dtype: "float16"
+    use_quantization: true
+    quantization_bits: 4
+    chat_format: "llama"
+    languages: ["en"]
+    description: "Llama 2 13B Chat model"
+
+  # Small models for testing
+  "microsoft/DialoGPT-small":
+    max_context_length: 1024
+    max_response_length: 256
+    device_map: "cpu"
+    torch_dtype: "float32"
+    use_quantization: false
+    chat_format: "generic"
+    languages: ["en"]
+    description: "Small DialoGPT for testing"
+
+  "microsoft/DialoGPT-medium":
+    max_context_length: 1024
+    max_response_length: 512
+    device_map: "auto"
+    torch_dtype: "float16"
+    use_quantization: false
+    chat_format: "generic"
+    languages: ["en"]
+    description: "Medium DialoGPT for testing"
+
+# Chat management settings
+chat:
+  default_max_history: 50
+  max_message_length: 10000
+  session_cleanup_hours: 24
+  auto_save_sessions: true
+  session_backup_interval: 3600 # seconds
+
+# Context management settings
+context:
+  truncation_strategy: "sliding_window" # sliding_window, compress, summarize
+  safety_margin: 100
+  compression_ratio: 0.7 # When using compress strategy
+  summary_max_length: 200 # When using summarize strategy
+
+# Performance settings
+performance:
+  low_vram_mode: true
+  mixed_precision: true
+  gradient_checkpointing: true
+  attention_slicing: "auto"
+  cpu_offload: true
+  max_concurrent_requests: 4
+  model_cache_size: 3 # Max models to keep in memory
+
+# Generation defaults
+generation:
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  repetition_penalty: 1.1
+  max_new_tokens: 512
+  do_sample: true
+  early_stopping: true
+
+# Safety and filtering
+safety:
+  enable_content_filter: true
+  max_output_tokens: 4096
+  timeout_seconds: 300
+  rate_limit_per_minute: 60
+
+# Logging configuration
+logging:
+  log_model_loading: true
+  log_token_usage: true
+  log_generation_params: true
+  log_session_activity: false # Privacy consideration
+  performance_metrics: true

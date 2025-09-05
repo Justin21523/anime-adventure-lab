@@ -8,10 +8,13 @@ import os
 import json
 import httpx
 import gradio as gr
+import requests
+import logging
+from PIL import Image
 from gradio.themes import Soft
 from gradio.themes import Soft
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Tuple
 
 # Import shared cache for consistent paths
 import sys
@@ -24,16 +27,12 @@ sys.path.append("../..")
 from core.shared_cache import bootstrap_cache
 from core.config import get_config
 
-# setup shared cache
-cache = bootstrap_cache()
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# frontend/gradio/app.py
-import gradio as gr
-import requests
-import json
-from typing import Dict, Any, List, Tuple
-
-API_BASE = "http://localhost:8000/api/v1"
+# API configuration
+API_BASE = os.getenv("API_BASE", "http://localhost:8000/api/v1")
 
 
 class StoryState:
