@@ -7,6 +7,8 @@ from __future__ import annotations
 import time
 import psutil
 import os
+import logging
+import torch
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
@@ -16,9 +18,13 @@ import sys
 import platform
 
 from ..dependencies import get_cache, get_settings
-from core.performance import gpu_available
+from core.config import get_config
+from core.shared_cache import get_shared_cache
+from core.llm.adapter import get_llm_adapter
+from core.vlm.engine import get_vlm_engine
 
-router = APIRouter(tags=["health"])  # no prefix; keep path clean via main.py
+logger = logging.getLogger(__name__)
+router = APIRouter()
 
 
 class HealthResponse(BaseModel):
@@ -68,7 +74,6 @@ async def health_check(cache=Depends(get_cache), settings=Depends(get_settings))
         "platform": platform.system(),
         "platform_release": platform.release(),
         "platform_machine": platform.machine(),
-        "gpu_available": gpu_available(),
     }
 
     # Cache summary (shared_cache provides a summary method)
@@ -104,6 +109,37 @@ async def health_check(cache=Depends(get_cache), settings=Depends(get_settings))
         cache=cache_info,
         config=config_info,
     )
+
+
+@router.get("/status")
+async def detailed_status():
+    """Detailed system status"""
+    config = get_config()
+    cache = get_shared_cache()
+    llm_adapter = get_llm_adapter()
+    vlm_engine = get_vlm_engine()
+
+    return {
+        "system": {
+            "gpu_available": torch.cuda.is_available(),
+            "cuda_device_count": (
+                torch.cuda.device_count() if torch.cuda.is_available() else 0
+            ),
+        },
+        "cache": cache.get_cache_stats(),
+        "models": {
+            "llm_loaded": llm_adapter.list_loaded_models(),
+            "vlm_status": vlm_engine.get_status(),
+        },
+        "config": {
+            "features": {
+                feature: config.get_feature_flag(feature)
+                for feature in ["caption", "vqa", "chat", "rag", "agent", "game", "t2i"]
+            },
+            "device": config.model.device,
+            "max_batch_size": config.model.max_batch_size,
+        },
+    }
 
 
 @router.get("/ready")
