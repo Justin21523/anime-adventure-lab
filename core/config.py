@@ -8,7 +8,7 @@ import os
 import yaml
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, NamedTuple
+from typing import List, Dict, Any, Optional, NamedTuple
 from dataclasses import dataclass
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict, BaseSettings
@@ -30,6 +30,8 @@ class APIConfig(BaseSettings):
         default="http://localhost:7860", description="CORS origins"
     )
     debug: bool = Field(default=False, description="Debug mode")
+    max_workers: int = Field(default=2, description="Max concurrent workers")
+    request_timeout: int = Field(default=300, description="Request timeout seconds")
 
     @property
     def cors_origins_list(self) -> list[str]:
@@ -43,8 +45,10 @@ class ModelConfig(BaseSettings):
 
     # GPU/Device settings
     cuda_visible_devices: str = Field(default="0", env="CUDA_VISIBLE_DEVICES")  # type: ignore
+    device: str = Field(default="auto", description="Device mapping strategy")
     device_map: str = Field(default="auto", description="Model device mapping")
     torch_dtype: str = Field(default="float16", description="Default torch dtype")
+    max_batch_size: int = Field(default=4, description="Max inference batch size")
 
     # Extended multi-modal settings (from core_config_module.py)
     log_level: str = Field(default="INFO", description="LOG_LEVEL")
@@ -57,6 +61,13 @@ class ModelConfig(BaseSettings):
     )
     use_xformers: bool = Field(default=False, description="Use xformers attention")
     max_memory_gb: float = Field(default=8.0, description="Max VRAM usage in GB")
+
+    # Performance settings
+    enable_attention_slicing: bool = Field(
+        default=True, description="Enable attention slicing"
+    )
+    enable_vae_slicing: bool = Field(default=True, description="Enable VAE slicing")
+    enable_cpu_offload: bool = Field(default=True, description="Enable CPU offload")
 
     # Default models
     default_llm: str = Field(
@@ -72,12 +83,15 @@ class ModelConfig(BaseSettings):
         default="runwayml/stable-diffusion-v1-5", description="Default VLM model"
     )
 
-    # Safety settings
-    enable_safety_checker: bool = Field(
-        default=True, description="ENABLE_SAFETY_CHECKER"
+    # Model specific settings
+    caption_model: str = Field(
+        default="Salesforce/blip2-opt-2.7b", description="Caption model"
     )
-    enable_nsfw_filter: bool = Field(default=True, description="ENABLE_NSFW_FILTER")
-    max_image_size: int = Field(default=2048, description="MAX_IMAGE_SIZE")
+    vqa_model: str = Field(default="llava-hf/llava-1.5-7b-hf", description="VQA model")
+    chat_model: str = Field(default="Qwen/Qwen-7B-Chat", description="Chat model")
+    embedding_model: str = Field(
+        default="BAAI/bge-base-en-v1.5", description="Embedding model"
+    )
 
     # Game settings
     game_save_path: str = Field(default="outputs/games", description="GAME_SAVE_PATH")
@@ -88,6 +102,25 @@ class ModelConfig(BaseSettings):
         default="outputs/training", description="TRAINING_OUTPUT_PATH"
     )
     max_training_jobs: int = Field(default=2, description="MAX_TRAINING_JOBS")
+    max_image_size: int = Field(default=2048, description="MAX_IMAGE_SIZE")
+
+
+class SafetyConfig(BaseSettings):
+    """Safety and Content Filtering Configuration"""
+
+    model_config = SettingsConfigDict(env_prefix="SAFETY_")
+
+    enable_nsfw_filter: bool = Field(default=True, description="ENABLE_NSFW_FILTER")
+    enable_nsfw_filter: bool = Field(default=True, description="Enable NSFW detection")
+    enable_face_blur: bool = Field(default=False, description="Enable face blurring")
+    enable_watermark: bool = Field(default=False, description="Enable watermarking")
+    blocked_terms: str = Field(default="", description="Comma-separated blocked terms")
+
+    @property
+    def blocked_terms_list(self) -> List[str]:
+        if not self.blocked_terms:
+            return []
+        return [term.strip().lower() for term in self.blocked_terms.split(",")]
 
 
 class RAGConfig(BaseSettings):
@@ -139,6 +172,9 @@ class CacheConfig(BaseSettings):
     celery_result_backend: str = Field(
         default="redis://localhost:6379/0", description="CELERY_RESULT_BACKEND"
     )
+    memory_ttl_minutes: int = Field(default=60, description="Memory cache TTL")
+    model_cache_size_gb: int = Field(default=10, description="Model cache size limit")
+    auto_cleanup: bool = Field(default=True, description="Auto cleanup old cache")
 
 
 class AppConfig:
@@ -152,6 +188,7 @@ class AppConfig:
         # Initialize component configs
         self.api = APIConfig()
         self.model = ModelConfig()
+        self.safety = SafetyConfig()
         self.rag = RAGConfig()
         self.database = DatabaseConfig()
         self.cache = CacheConfig()
@@ -228,16 +265,28 @@ class AppConfig:
                 "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             },
             "features": {
-                "enable_rag": True,
-                "enable_t2i": True,
+                "enable_caption": True,
+                "enable_vqa": True,
+                "enable_chat": True,
                 "enable_vlm": True,
-                "enable_training": True,
-                "enable_safety_filter": True,
+                "enable_rag": True,
+                "enable_agent": True,
+                "enable_game": True,
+                "enable_t2i": True,
+                "enable_safety": True,
+                "enable_export": True,
+                "enable_train": True,
+                "preload_models": False,
             },
             "limits": {
                 "max_upload_size_mb": 100,
                 "max_batch_size": 50,
                 "request_timeout_seconds": 300,
+            },
+            "performance": {
+                "low_vram_mode": True,
+                "mixed_precision": True,
+                "gradient_checkpointing": True,
             },
         }
 
@@ -256,6 +305,20 @@ class AppConfig:
                 return default
 
         return value
+
+    def get_feature_flag(self, feature: str) -> bool:
+        """Get feature flag value"""
+        return self.get(f"features.enable_{feature}", True)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Export full configuration as dict"""
+        return {
+            "api": self.api.dict(),
+            "model": self.model.dict(),
+            "safety": self.safety.dict(),
+            "cache": self.cache.dict(),
+            "yaml_config": self.yaml_config,
+        }
 
     def get_summary(self) -> Dict[str, Any]:
         """Get configuration summary"""
@@ -287,6 +350,25 @@ def get_config(config_path: Optional[str] = None) -> AppConfig:
     if _app_config is None:
         _app_config = AppConfig(config_path)
     return _app_config
+
+
+def setup_logging(config: Optional[AppConfig] = None) -> None:
+    """Setup logging based on configuration"""
+    if config is None:
+        config = get_config()
+
+    log_config = config.get("logging", {})
+
+    logging.basicConfig(
+        level=getattr(logging, log_config.get("level", "INFO")),
+        format=log_config.get(
+            "format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        ),
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_config.get("file", "/tmp/multi-modal-lab.log")),
+        ],
+    )
 
 
 if __name__ == "__main__":
