@@ -1,172 +1,68 @@
 # api/routers/llm.py
-from __future__ import annotations
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
-import json
+"""
+LLM Management Router
+"""
 
-from core.shared_cache import bootstrap_cache
-from core.llm.transformers_llm import TransformersLLM
-from core.story.engine import StoryEngine
-from core.story.data_structures import (
-    Persona,
-    GameState,
-    TurnRequest,
-    TurnResponse,
-    DialogueEntry,
-    Choice,
-    Relationship,
-    RelationType,
-)
+import logging
+from fastapi import APIRouter, HTTPException
+from core.llm.adapter import get_llm_adapter
+from schemas.chat import ChatModelsResponse, ChatModelInfo
 
-from ..dependencies import get_llm  # shared LLM singleton
-from core.story.engine import StoryEngine  # use core engine, no sys.path hacks
+logger = logging.getLogger(__name__)
+router = APIRouter()
 
 
-router = APIRouter(tags=["llm"])
-
-
-# Pydantic models for API
-class PersonaAPI(BaseModel):
-    name: str
-    age: Optional[int] = None
-    personality: List[str] = Field(default_factory=list)
-    background: str = ""
-    speaking_style: str = ""
-    appearance: str = ""
-    goals: List[str] = Field(default_factory=list)
-    secrets: List[str] = Field(default_factory=list)
-    memory_preferences: Dict[str, float] = Field(default_factory=dict)
-
-
-class GameStateAPI(BaseModel):
-    scene_id: str = "prologue"
-    turn_count: int = 0
-    flags: Dict[str, Any] = Field(default_factory=dict)
-    inventory: List[str] = Field(default_factory=list)
-    current_location: str = ""
-    timeline_notes: List[str] = Field(default_factory=list)
-
-
-class TurnRequestAPI(BaseModel):
-    player_input: str = Field(..., description="Player input or action")
-    persona: PersonaAPI
-    game_state: GameStateAPI
-    choice_id: Optional[str] = None
-
-
-class DialogueAPI(BaseModel):
-    speaker: str
-    text: str
-    emotion: Optional[str] = None
-
-
-class ChoiceAPI(BaseModel):
-    id: str
-    text: str
-    description: str = ""
-
-
-class TurnResponseAPI(BaseModel):
-    narration: str
-    dialogues: List[DialogueAPI] = Field(default_factory=list)
-    choices: List[ChoiceAPI] = Field(default_factory=list)
-    updated_state: Optional[GameStateAPI] = None
-    scene_change: Optional[str] = None
-
-
-# Global story engine (will be initialized on first use)
-_story_engine: Optional[StoryEngine] = None
-
-
-def get_story_engine(llm) -> StoryEngine:
-    """Get or create story engine instance"""
-    global _story_engine
-    if _story_engine is None:
-        _story_engine = StoryEngine(llm)
-    return _story_engine
-
-
-@router.get("/llm/health")
-async def llm_health(llm=Depends(get_llm)):
-    """Health check for LLM-backed story engine."""
-    eng = get_story_engine(llm)
-    is_available = getattr(eng.llm, "is_available", lambda: True)()
-    model_name = getattr(eng.llm, "model_name", "unknown")
-    return {"status": "ok", "llm_available": is_available, "model": model_name}
-
-
-@router.post("/llm/turn", response_model=TurnResponseAPI)
-async def process_turn(request: TurnRequestAPI, llm=Depends(get_llm)):
-    """Orchestrate a story turn with the shared LLM."""
+@router.get("/llm/models", response_model=ChatModelsResponse)
+async def list_llm_models():
+    """List available LLM models"""
     try:
-        eng = get_story_engine(llm)
-        if hasattr(eng.llm, "is_available") and not eng.llm.is_available():
-            raise HTTPException(status_code=503, detail="LLM model not available")
+        llm_adapter = get_llm_adapter()
 
-        # Build core objects using engine helpers to avoid tight coupling
-        persona = eng.build_persona(**request.persona.dict())
-        game_state = eng.build_game_state(**request.game_state.dict())
+        available_models = [
+            ChatModelInfo(
+                name="Qwen/Qwen-7B-Chat",
+                description="Qwen 7B Chat model with Chinese support",
+                languages=["en", "zh"],
+                parameters="7B",
+                context_length=8192,
+                recommended=True,
+                loaded="Qwen/Qwen-7B-Chat" in llm_adapter.list_loaded_models(),
+            ),
+            ChatModelInfo(
+                name="meta-llama/Llama-2-7b-chat-hf",
+                description="Llama 2 7B Chat model",
+                languages=["en"],
+                parameters="7B",
+                context_length=4096,
+                recommended=False,
+                loaded="meta-llama/Llama-2-7b-chat-hf"
+                in llm_adapter.list_loaded_models(),
+            ),
+        ]
 
-        turn_req = eng.build_turn_request(
-            player_input=request.player_input,
-            persona=persona,
-            game_state=game_state,
-            choice_id=request.choice_id,
+        return ChatModelsResponse(  # type: ignore
+            available_models=available_models,
+            loaded_models=llm_adapter.list_loaded_models(),
+            default_model="Qwen/Qwen-7B-Chat",
         )
-        resp = eng.process_turn(turn_req)
-
-        api_resp = TurnResponseAPI(
-            narration=resp.narration,
-            dialogues=[
-                DialogueAPI(speaker=d.speaker, text=d.text, emotion=d.emotion)
-                for d in resp.dialogues
-            ],
-            choices=[
-                ChoiceAPI(id=c.id, text=c.text, description=c.description)
-                for c in resp.choices
-            ],
-            scene_change=resp.scene_change,
-        )
-        if resp.updated_state:
-            api_resp.updated_state = GameStateAPI(**resp.updated_state.dict())
-        return api_resp
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Turn processing failed: {e}")
+        raise HTTPException(500, f"Failed to list LLM models: {str(e)}")
 
 
-@router.get("/llm/persona/sample", response_model=PersonaAPI)
-async def get_sample_persona(llm=Depends(get_llm)):
-    """Get a sample persona for testing"""
-    engine = get_story_engine(llm)
-    persona = engine.create_sample_persona()
+@router.post("/llm/unload/{model_name}")
+async def unload_llm_model(model_name: str):
+    """Unload specific LLM model"""
+    try:
+        llm_adapter = get_llm_adapter()
 
-    return PersonaAPI(
-        name=persona.name,
-        age=persona.age,
-        personality=persona.personality,
-        background=persona.background,
-        speaking_style=persona.speaking_style,
-        appearance=persona.appearance,
-        goals=persona.goals,
-        secrets=persona.secrets,
-        memory_preferences=persona.memory_preferences,
-    )
+        if model_name == "all":
+            llm_adapter.unload_all()
+            return {"message": "All LLM models unloaded"}
 
+        # Note: Current adapter doesn't support selective unloading
+        return {
+            "message": f"Unload request for {model_name} received (not implemented)"
+        }
 
-@router.get("/llm/gamestate/sample", response_model=GameStateAPI)
-async def get_sample_game_state(llm=Depends(get_llm)):
-    """Get a sample game state for testing"""
-    engine = get_story_engine(llm)
-    state = engine.create_sample_game_state()
-
-    return GameStateAPI(
-        scene_id=state.scene_id,
-        turn_count=state.turn_count,
-        flags=state.flags,
-        inventory=state.inventory,
-        current_location=state.current_location,
-        timeline_notes=state.timeline_notes,
-    )
+    except Exception as e:
+        raise HTTPException(500, f"Failed to unload model: {str(e)}")
