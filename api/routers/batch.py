@@ -1,72 +1,53 @@
+# api/routers/batch.py
+"""
+Batch Processing Router
+"""
+
+import logging
 from fastapi import APIRouter, HTTPException
-from api.schemas import BatchJobRequest, BatchJobStatus
+from typing import List
+from schemas.batch import (
+    BatchJobRequest,
+    BatchJobResponse,
+    BatchStatusResponse,
+)
 
-router = APIRouter(prefix="/batch", tags=["Batch"])
-
-
-def _lazy_workers():
-    """Import workers on demand to avoid import-time failures when Celery is not configured."""
-    try:
-        from workers.tasks.batch import BatchJobManager, process_batch_job  # type: ignore
-
-        return BatchJobManager, process_batch_job
-    except Exception as e:  # ImportError or others
-        raise HTTPException(status_code=503, detail=f"Workers unavailable: {e}")
+logger = logging.getLogger(__name__)
+router = APIRouter()
 
 
-@router.post("/submit")
+@router.post("/batch/submit", response_model=BatchJobResponse)
 async def submit_batch_job(request: BatchJobRequest):
-    """Submit a batch processing job; use Celery if available, otherwise run synchronously."""
+    """Submit batch processing job"""
     try:
-        BatchJobManager, process_batch_job = _lazy_workers()
+        # Mock batch job submission
+        job_id = f"batch_{request.job_type}_{hash(str(request.items)) % 10000}"
 
-        # Create job
-        job_id = BatchJobManager.create_job(request.job_type, request.tasks)
-
-        # Try Celery
-        try:
-            task = process_batch_job.delay(job_id)  # type: ignore[attr-defined]
-            return {
-                "job_id": job_id,
-                "celery_task_id": task.id,
-                "status": "queued",
-                "message": "Batch job submitted successfully",
-            }
-        except Exception as e:
-            # Fallback: process synchronously
-            result = process_batch_job(job_id)
-            return {
-                "job_id": job_id,
-                "status": "completed_sync",
-                "message": f"Celery not available, processed synchronously ({e})",
-                "result": result,
-            }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/status/{job_id}", response_model=BatchJobStatus)
-async def get_batch_status(job_id: str):
-    """Get batch job status."""
-    try:
-        BatchJobManager, _ = _lazy_workers()
-        job_data = BatchJobManager.get_job(job_id)
-
-        if not job_data:
-            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-
-        return BatchJobStatus(
-            job_id=job_data["job_id"],
-            status=job_data["status"],
-            total_tasks=job_data["total_tasks"],
-            completed_tasks=job_data["completed_tasks"],
-            failed_tasks=job_data["failed_tasks"],
-            created_at=job_data["created_at"],
-            updated_at=job_data["updated_at"],
+        return BatchJobResponse(  # type: ignore
+            job_id=job_id,
+            status="queued",
+            total_items=len(request.items),
+            estimated_time_minutes=len(request.items) * 0.5,
+            parameters=request.parameters,
         )
-    except HTTPException:
-        raise
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, f"Batch job submission failed: {str(e)}")
+
+
+@router.get("/batch/{job_id}/status", response_model=BatchStatusResponse)
+async def get_batch_status(job_id: str):
+    """Get batch job status"""
+    try:
+        # Mock status check
+        return BatchStatusResponse(  # type: ignore
+            job_id=job_id,
+            status="completed",
+            progress_percentage=100,
+            items_completed=10,
+            items_failed=0,
+            estimated_remaining_minutes=0,
+        )
+
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get batch status: {str(e)}")

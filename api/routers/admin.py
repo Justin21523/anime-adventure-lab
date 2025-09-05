@@ -1,46 +1,53 @@
 # api/routers/admin.py
-from fastapi import APIRouter, HTTPException
-from typing import Dict, Any
-import psutil
-import torch
+"""
+Admin Operations Router
+"""
 
-router = APIRouter(prefix="/admin", tags=["Admin"])
+import logging
+from fastapi import APIRouter, HTTPException, Depends
+from core.llm.adapter import get_llm_adapter
+from core.vlm.engine import get_vlm_engine
+from schemas.admin import AdminSystemInfoResponse, AdminModelControlRequest
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
 
 
-@router.get("/stats")
-async def get_system_stats() -> Dict[str, Any]:
-    """Return basic system and GPU stats. Each probe is isolated to avoid cascading failures."""
-    stats: Dict[str, Any] = {"system": {}, "gpu": {}}
-
-    # system metrics
+@router.get("/admin/system", response_model=AdminSystemInfoResponse)
+async def get_system_info():
+    """Get detailed system information"""
     try:
-        stats["system"] = {
-            "cpu_percent": psutil.cpu_percent(),
-            "memory_percent": psutil.virtual_memory().percent,
-            "disk_usage": psutil.disk_usage("/").percent,
-        }
-    except Exception as e:
-        stats["system"] = {
-            "status": "basic_check_ok",
-            "note": f"psutil unavailable: {e}",
-        }
+        from core.shared_cache import get_shared_cache
 
-    # gpu metrics
-    try:
-        gpu_avail = torch.cuda.is_available()
-        stats["gpu"]["available"] = gpu_avail
-        stats["gpu"]["count"] = torch.cuda.device_count() if gpu_avail else 0
-        if gpu_avail:
-            stats["gpu"]["memory_allocated_gb"] = round(
-                torch.cuda.memory_allocated() / 1024**3, 3
-            )
-            stats["gpu"]["memory_reserved_gb"] = round(
-                torch.cuda.memory_reserved() / 1024**3, 3
-            )
-    except Exception as e:
-        # Keep response shape stable even if torch isn't present
-        stats["gpu"].update(
-            {"available": False, "count": 0, "note": f"torch unavailable: {e}"}
+        cache = get_shared_cache()
+
+        return AdminSystemInfoResponse(  # type: ignore
+            cache_stats=cache.get_cache_stats(),
+            loaded_models={
+                "llm": get_llm_adapter().list_loaded_models(),
+                "vlm": get_vlm_engine().get_status(),
+            },
+            system_resources={
+                "gpu_memory_gb": 12.0,  # Mock data
+                "cpu_cores": 8,
+                "ram_gb": 32.0,
+            },
         )
 
-    return stats
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get system info: {str(e)}")
+
+
+@router.post("/admin/models/control")
+async def control_models(request: AdminModelControlRequest):
+    """Load/unload models"""
+    try:
+        if request.action == "unload_all":
+            get_llm_adapter().unload_all()
+            get_vlm_engine().unload_models()
+            return {"message": "All models unloaded"}
+        else:
+            return {"message": f"Action {request.action} not implemented"}
+
+    except Exception as e:
+        raise HTTPException(500, f"Model control failed: {str(e)}")
