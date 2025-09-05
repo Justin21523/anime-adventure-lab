@@ -4,7 +4,7 @@ Image Caption API Schemas
 """
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, Dict, Any
+from typing import Dict, Any, List, Optional
 from .base import BaseRequest, BaseResponse, UsageInfo, BaseParameters
 
 
@@ -12,13 +12,16 @@ class CaptionParameters(BaseParameters):
     """Caption-specific parameters"""
 
     max_length: int = Field(50, ge=10, le=200, description="Maximum caption length")
-    num_beams: int = Field(3, ge=1, le=5, description="Number of beams for generation")
-    language: str = Field("en", description="Caption language (en/zh)")
+    num_beams: int = Field(3, ge=1, le=10, description="Number of beams for generation")
+    temperature: float = Field(
+        0.7, ge=0.1, le=2.0, description="Generation temperature"
+    )
+    language: str = Field("en", description="Caption language")
 
-    @field_validator("language", mode="after")
+    @field_validator("language")
     def validate_language(cls, v):
-        if v not in ["en", "zh", "auto"]:
-            raise ValueError("Language must be 'en', 'zh', or 'auto'")
+        if v not in ["en", "zh", "zh-TW", "zh-CN"]:
+            raise ValueError("Language must be en/zh/zh-TW/zh-CN")
         return v
 
 
@@ -32,23 +35,12 @@ class CaptionRequest(BaseRequest):
 class CaptionResponse(BaseResponse):
     """Image caption generation response"""
 
-    caption: str = Field(..., description="Generated image caption")
-    confidence: float = Field(
-        ..., ge=0.0, le=1.0, description="Caption confidence score"
-    )
+    caption: str = Field(..., description="Generated caption")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Caption confidence")
     model_used: str = Field(..., description="Model used for generation")
-    language: str = Field(..., description="Detected/requested language")
-
-    # Unified parameters field
-    parameters: CaptionParameters = Field(
-        ..., description="Parameters used for generation"
-    )
-
-    # Optional detailed info
-    usage: Optional[UsageInfo] = Field(None, description="Resource usage information")
-    image_stats: Optional[Dict[str, Any]] = Field(
-        None, description="Image analysis statistics"
-    )
+    language: str = Field(..., description="Caption language")
+    parameters: CaptionParameters = Field(..., description="Parameters used")
+    image_info: Dict[str, Any] = Field(..., description="Image metadata")
 
 
 class BatchCaptionRequest(BaseRequest):
@@ -71,15 +63,9 @@ class BatchCaptionRequest(BaseRequest):
 class BatchCaptionResponse(BaseResponse):
     """Batch caption generation response"""
 
-    results: list[CaptionResponse] = Field(
-        ..., description="Caption results for each image"
-    )
-    total_processed: int = Field(..., description="Total images processed")
-    success_count: int = Field(..., description="Successfully processed images")
-    error_count: int = Field(..., description="Failed images")
-
-    # Batch performance
-    total_time_ms: Optional[float] = Field(None, description="Total processing time")
-    average_time_per_image_ms: Optional[float] = Field(
-        None, description="Average time per image"
-    )
+    results: List[Dict[str, Any]] = Field(..., description="Caption results")
+    total_items: int = Field(..., description="Total items processed")
+    successful_items: int = Field(..., description="Successfully processed items")
+    failed_items: int = Field(..., description="Failed items")
+    success_rate: float = Field(..., ge=0.0, le=1.0, description="Success rate")
+    parameters: CaptionParameters = Field(..., description="Parameters used")
