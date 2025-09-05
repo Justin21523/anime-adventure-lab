@@ -20,28 +20,33 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
 # Import core modules
-from core.shared_cache import bootstrap_cache
-from core.config import get_config
+from core.config import get_config, setup_logging
 from core.shared_cache import bootstrap_cache
 from core.exceptions import MultiModalLabError
 from core.llm.adapter import get_llm_adapter
 from core.vlm.engine import get_vlm_engine
 
-# Import routers (will be implemented in later stages)
+# Import all routers
 from api.routers import (
-    admin,
-    batch,
-    export,
-    finetune,
-    health,
-    llm,
-    monitoring,
-    rag,
-    safety,
-    story,
-    t2i,
-    vlm,
-    game,
+    health_router,
+    caption_router,
+    vqa_router,
+    chat_router,
+    rag_router,
+    agent_router,
+    game_router,
+    admin_router,
+    batch_router,
+    controlnet_router,
+    export_router,
+    finetune_router,
+    llm_router,
+    lora_router,
+    monitoring_router,
+    safety_router,
+    story_router,
+    t2i_router,
+    vlm_router,
 )
 
 
@@ -56,17 +61,21 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan management"""
     # Startup
-    logger.info("🚀 Starting SagaForge API...")
+    logger.info("🚀 Starting Multi-Modal Lab API...")
+
+    # Load configuration
+    config = get_config()
+    setup_logging(config)
+    app.state.config = config
 
     # Bootstrap shared cache
     cache = bootstrap_cache()
     app.state.cache = cache
 
-    # Load configuration
-    config = get_config()
-    app.state.config = config
+    logger.info(
+        f"✅ Multi-Modal Lab API ready at http://{config.api.host}:{config.api.port}"
+    )
 
-    logger.info(f"✅ SagaForge API ready at http://{config.api.host}:{config.api.port}")
     # Pre-load critical models if configured
     if config.get_feature_flag("preload_models"):
         try:
@@ -98,7 +107,7 @@ def create_app() -> FastAPI:
     config = get_config()
 
     app = FastAPI(
-        title="SagaForge API",
+        title="CharaForge Multi-Modal Lab API",
         description="LLM + RAG + T2I + VLM Adventure Game Engine",
         version="0.1.0",
         docs_url="/docs",
@@ -121,36 +130,74 @@ def create_app() -> FastAPI:
     )
 
     # Global exception handler
-    @app.exception_handler(Exception)
-    async def global_exception_handler(request, exc):
-        logger.error(f"Global exception: {str(exc)}", exc_info=True)
+    @app.exception_handler(MultiModalLabError)
+    async def handle_lab_error(request, exc: MultiModalLabError):
+        """Handle custom lab exceptions"""
         return JSONResponse(
-            status_code=500,
-            content={"detail": "Internal server error", "type": type(exc).__name__},
+            status_code=400,
+            content={
+                "error": exc.error_code,
+                "message": exc.message,
+                "details": exc.details,
+            },
         )
 
-    # Root endpoint
+    @app.exception_handler(Exception)
+    async def handle_general_error(request, exc: Exception):
+        """Handle general exceptions"""
+        logger = logging.getLogger(__name__)
+        logger.error(f"Unhandled exception: {exc}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "INTERNAL_ERROR",
+                "message": "Internal server error occurred",
+            },
+        )
+
+    # Include all routers with proper prefix
+    API_PREFIX = config.api.prefix
+
+    # Core functionality routers
+    app.include_router(health_router, prefix=API_PREFIX, tags=["Health"])
+    app.include_router(caption_router, prefix=API_PREFIX, tags=["Caption"])
+    app.include_router(vqa_router, prefix=API_PREFIX, tags=["VQA"])
+    app.include_router(chat_router, prefix=API_PREFIX, tags=["Chat"])
+    app.include_router(rag_router, prefix=API_PREFIX, tags=["RAG"])
+    app.include_router(agent_router, prefix=API_PREFIX, tags=["Agent"])
+    app.include_router(game_router, prefix=API_PREFIX, tags=["Game"])
+
+    # Advanced functionality routers
+    app.include_router(t2i_router, prefix=API_PREFIX, tags=["Text2Image"])
+    app.include_router(controlnet_router, prefix=API_PREFIX, tags=["ControlNet"])
+    app.include_router(lora_router, prefix=API_PREFIX, tags=["LoRA"])
+
+    # Management and ops routers
+    app.include_router(admin_router, prefix=API_PREFIX, tags=["Admin"])
+    app.include_router(batch_router, prefix=API_PREFIX, tags=["Batch"])
+    app.include_router(monitoring_router, prefix=API_PREFIX, tags=["Monitoring"])
+    app.include_router(safety_router, prefix=API_PREFIX, tags=["Safety"])
+
+    # Training and export routers
+    app.include_router(finetune_router, prefix=API_PREFIX, tags=["Finetune"])
+    app.include_router(export_router, prefix=API_PREFIX, tags=["Export"])
+
+    # Model-specific routers
+    app.include_router(llm_router, prefix=API_PREFIX, tags=["LLM"])
+    app.include_router(vlm_router, prefix=API_PREFIX, tags=["VLM"])
+    app.include_router(story_router, prefix=API_PREFIX, tags=["Story"])
+
+    # Root redirect
     @app.get("/")
     async def root():
+        """Root endpoint redirect to docs"""
         return {
-            "message": "SagaForge API - Stage 5: T2I Pipeline",
-            "docs": "/docs",
-            "health": "/healthz",
-            "endpoints": {
-                "t2i": "/api/v1/t2i",
-            },
+            "message": "CharaForge Multi-Modal Lab API",
+            "version": "0.1.0",
+            "docs_url": "/docs",
+            "health_check": f"{API_PREFIX}/health",
+            "status": f"{API_PREFIX}/status",
         }
-
-    # Include routers
-    app.include_router(health.router, prefix="/api/v1", tags=["health"])
-    # Future routers (placeholders)
-    app.include_router(llm.router, prefix="/api/v1", tags=["llm"])
-    app.include_router(rag.router, prefix="/api/v1", tags=["rag"])
-    app.include_router(t2i.router, prefix="/api/v1", tags=["t2i"])
-    app.include_router(vlm.router, prefix="/api/v1", tags=["vlm"])
-    app.include_router(finetune.router, prefix="/api/v1", tags=["finetune"])
-    app.include_router(game.router, prefix="/api/v1", tags=["Game"])
-    app.include_router(batch.router, prefix="/api/v1", tags=["batch"])
 
     return app
 
