@@ -44,6 +44,10 @@ class DocumentMetadata:
     license: str = ""
     tags: List[str] = None  # type: ignore
 
+    def __post_init__(self):
+        if self.tags is None:
+            self.tags = []
+
 
 @dataclass
 class Document:
@@ -55,6 +59,10 @@ class Document:
     embedding: Optional[np.ndarray] = None
     created_at: Optional[datetime] = None
 
+    def __post_init__(self):
+        if self.created_at is None:
+            self.created_at = datetime.now()
+
 
 @dataclass
 class ChunkResult:
@@ -65,6 +73,10 @@ class ChunkResult:
     section_title: str = ""
     metadata: Dict[str, Any] = None  # type: ignore
 
+    def __post_init__(self):
+        if self.metadata is None:
+            self.metadata = {}
+
 
 @dataclass
 class SearchResult:
@@ -73,6 +85,69 @@ class SearchResult:
     document: Document
     score: float
     rank: int
+
+
+class ChineseTextProcessor:
+    """Chinese text processing utilities"""
+
+    def __init__(self):
+        try:
+            self.cc = opencc.OpenCC("t2s")  # Traditional to Simplified
+        except:
+            logger.warning("OpenCC not available, using basic text processing")
+            self.cc = None
+
+    def normalize_text(self, text: str) -> str:
+        """Normalize Chinese/English mixed text"""
+        if not text:
+            return ""
+
+        # Basic cleaning
+        text = re.sub(r"\s+", " ", text)  # Normalize whitespace
+        text = re.sub(
+            r"[^\w\s\u4e00-\u9fff.,!?;:]", "", text
+        )  # Keep Chinese, English, basic punctuation
+
+        return text.strip()
+
+    def chunk_text(
+        self, text: str, chunk_size: int = 512, overlap: int = 50
+    ) -> List[str]:
+        """Split text into overlapping chunks"""
+        if not text:
+            return []
+
+        text = self.normalize_text(text)
+
+        # For Chinese text, we split by sentences and paragraphs
+        sentences = re.split(r"[。！？\n]", text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+
+        chunks = []
+        current_chunk = ""
+
+        for sentence in sentences:
+            if len(current_chunk) + len(sentence) < chunk_size:
+                current_chunk += sentence + "。"
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                current_chunk = sentence + "。"
+
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+
+        # Add overlap between chunks
+        final_chunks = []
+        for i, chunk in enumerate(chunks):
+            if i > 0 and overlap > 0:
+                # Add overlap from previous chunk
+                prev_words = chunks[i - 1].split()[-overlap:]
+                overlap_text = " ".join(prev_words)
+                chunk = overlap_text + " " + chunk
+            final_chunks.append(chunk)
+
+        return final_chunks
 
 
 class ChineseRAGEngine:
@@ -90,58 +165,76 @@ class ChineseRAGEngine:
 
         # Document storage
         self.documents: Dict[str, Document] = {}
-        self.index: Optional[faiss.Index] = None
+        self.index: Optional[faiss.IndexFlatIP] = None
         self.doc_id_map: List[str] = []  # Maps FAISS index to doc_id
-
         # Index parameters
         self.embedding_dim = 768  # Default for BGE models
         self.max_chunk_size = 500  # Characters per chunk
 
+        # BM25 for hybrid search
+        self.bm25: Optional[BM25Okapi] = None
+        self.bm25_corpus: List[str] = []
+
+        # Text processor
+        self.text_processor = ChineseTextProcessor()
+
     @handle_model_error
-    def load_embedding_model(self) -> None:
-        """Load embedding model for document encoding"""
+    def _load_model(self) -> bool:
+        """Load embedding model"""
         if self._loaded:
-            return
+            return True
 
         try:
+            cache_dir = self.cache.get_path("MODELS_EMBEDDING")
+
             logger.info(f"Loading embedding model: {self.embedding_model_name}")
 
-            # Load tokenizer and model
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                self.embedding_model_name, cache_dir=self.cache.cache_root / "hf"  # type: ignore
-            )
+            # Try SentenceTransformer first (better for retrieval)
+            try:
+                self._embedding_model = SentenceTransformer(
+                    self.embedding_model_name,
+                    cache_folder=str(cache_dir),
+                    device=self.config.device,
+                )
+                self.embedding_dim = (
+                    self._embedding_model.get_sentence_embedding_dimension()
+                )
+                logger.info(
+                    f"Loaded SentenceTransformer model, dim={self.embedding_dim}"
+                )
 
-            self._embedding_model = AutoModel.from_pretrained(
-                self.embedding_model_name,
-                device_map="auto",
-                torch_dtype=(
-                    torch.float16 if torch.cuda.is_available() else torch.float32
-                ),
-                cache_dir=self.cache.cache_root / "hf",  # type: ignore
-                trust_remote_code=True,
-            )
+            except Exception as e:
+                logger.warning(f"SentenceTransformer failed, trying AutoModel: {e}")
 
-            # Get actual embedding dimension
-            sample_input = self._tokenizer(
-                "test", return_tensors="pt", max_length=512, truncation=True
-            )
-            with torch.no_grad():
-                sample_output = self._embedding_model(**sample_input)
-                self.embedding_dim = sample_output.last_hidden_state.mean(dim=1).shape[
-                    -1
-                ]
+                # Fallback to Transformers
+                self._tokenizer = AutoTokenizer.from_pretrained(
+                    self.embedding_model_name, cache_dir=str(cache_dir)
+                )
+                self._embedding_model = AutoModel.from_pretrained(
+                    self.embedding_model_name,
+                    cache_dir=str(cache_dir),
+                    torch_dtype=(
+                        torch.float16 if self.config.use_fp16 else torch.float32
+                    ),
+                    device_map="auto" if torch.cuda.is_available() else None,
+                )
+
+                # Test embedding dimension
+                test_embedding = self._encode_text("test")
+                self.embedding_dim = test_embedding.shape[0]
+                logger.info(f"Loaded AutoModel, dim={self.embedding_dim}")
 
             self._loaded = True
-            logger.info(f"Embedding model loaded, dimension: {self.embedding_dim}")
+            return True
 
         except Exception as e:
             logger.error(f"Failed to load embedding model: {e}")
-            raise EmbeddingError("", f"Model loading failed: {str(e)}")
+            raise EmbeddingError(f"Model loading failed: {e}")
 
     def _generate_embedding(self, text: str) -> np.ndarray:
         """Generate embedding for text"""
         if not self._loaded:
-            self.load_embedding_model()
+            self._load_model()
 
         try:
             # Tokenize input
@@ -212,6 +305,56 @@ class ChineseRAGEngine:
 
         return chunks
 
+    def _encode_text(self, text: str) -> np.ndarray:
+        """Encode text to embedding vector"""
+        if not self._loaded:
+            self._load_model()
+
+        try:
+            if isinstance(self._embedding_model, SentenceTransformer):
+                # SentenceTransformer path
+                embedding = self._embedding_model.encode(
+                    text, convert_to_numpy=True, normalize_embeddings=True
+                )
+                return embedding.astype(np.float32)
+
+            else:
+                # Transformers path
+                inputs = self._tokenizer(
+                    text,
+                    return_tensors="pt",
+                    truncation=True,
+                    padding=True,
+                    max_length=512,
+                )
+
+                if torch.cuda.is_available():
+                    inputs = {k: v.cuda() for k, v in inputs.items()}
+
+                with torch.no_grad():
+                    outputs = self._embedding_model(**inputs)
+                    # Use CLS token or mean pooling
+                    embedding = outputs.last_hidden_state.mean(dim=1).squeeze()
+
+                    # Normalize
+                    embedding = torch.nn.functional.normalize(embedding, p=2, dim=0)
+
+                return embedding.cpu().numpy().astype(np.float32)
+
+        except Exception as e:
+            logger.error(f"Text encoding failed: {e}")
+            raise EmbeddingError(f"Encoding failed: {e}")
+
+    def _create_index(self) -> faiss.IndexFlatIP:
+        """Create new FAISS index"""
+        if not self._loaded:
+            self._load_model()
+
+        # Inner Product index for cosine similarity (with normalized vectors)
+        index = faiss.IndexFlatIP(self.embedding_dim)
+        logger.info(f"Created FAISS index with dimension {self.embedding_dim}")
+        return index
+
     def add_document(
         self, doc_id: str, content: str, metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
@@ -261,6 +404,23 @@ class ChineseRAGEngine:
             logger.error(f"Failed to add document {doc_id}: {e}")
             raise DocumentIndexError(doc_id, str(e))
 
+    def _update_bm25(self):
+        """Update BM25 index with current documents"""
+        try:
+            self.bm25_corpus = [
+                self.text_processor.normalize_text(doc.content)
+                for doc in self.documents.values()
+            ]
+
+            if self.bm25_corpus:
+                tokenized_corpus = [doc.split() for doc in self.bm25_corpus]
+                self.bm25 = BM25Okapi(tokenized_corpus)
+                logger.debug(f"Updated BM25 with {len(self.bm25_corpus)} documents")
+
+        except Exception as e:
+            logger.warning(f"BM25 update failed: {e}")
+            self.bm25 = None
+
     def search(
         self, query: str, top_k: int = 5, min_score: float = 0.3
     ) -> List[SearchResult]:
@@ -299,60 +459,283 @@ class ChineseRAGEngine:
             logger.error(f"Search failed for query '{query[:50]}...': {e}")
             raise RAGError(f"Search failed: {str(e)}")
 
+    def _semantic_search(self, query: str, top_k: int) -> List[SearchResult]:
+        """Semantic search using FAISS"""
+        if not self.index or not self.documents:
+            return []
+
+        try:
+            # Encode query
+            query_embedding = self._encode_text(query)
+
+            # Search FAISS index
+            scores, indices = self.index.search(query_embedding.reshape(1, -1), top_k)
+
+            results = []
+            for score, idx in zip(scores[0], indices[0]):
+                if idx >= 0 and idx in self.doc_id_map:
+                    doc_id = self.doc_id_map[idx]
+                    if doc_id in self.documents:
+                        results.append(
+                            SearchResult(
+                                document=self.documents[doc_id],
+                                score=float(score),
+                                rank=0,
+                            )
+                        )
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Semantic search failed: {e}")
+            return []
+
+    def _bm25_search(self, query: str, top_k: int) -> List[SearchResult]:
+        """BM25 lexical search"""
+        if not self.bm25 or not self.bm25_corpus:
+            return []
+
+        try:
+            query_tokens = self.text_processor.normalize_text(query).split()
+            scores = self.bm25.get_scores(query_tokens)
+
+            # Get top results
+            top_indices = np.argsort(scores)[-top_k:][::-1]
+
+            results = []
+            doc_ids = list(self.documents.keys())
+
+            for idx in top_indices:
+                if idx < len(doc_ids) and scores[idx] > 0:
+                    doc_id = doc_ids[idx]
+                    results.append(
+                        SearchResult(
+                            document=self.documents[doc_id],
+                            score=float(scores[idx]),
+                            rank=0,
+                        )
+                    )
+
+            return results
+
+        except Exception as e:
+            logger.error(f"BM25 search failed: {e}")
+            return []
+
     def generate_context(
-        self, query: str, max_context_length: int = 1000, top_k: int = 3
+        self, query: str, max_context_length: int = 2000, top_k: int = 5
     ) -> Dict[str, Any]:
         """Generate context for RAG-enhanced generation"""
-        search_results = self.search(query, top_k=top_k)
+        try:
+            search_results = self.search(query, top_k=top_k)
 
-        if not search_results:
-            return {
-                "context": "",
-                "sources": [],
-                "relevance_scores": [],
-                "total_documents": 0,
-            }
+            if not search_results:
+                return {"context": "", "sources": [], "total_chars": 0}
 
-        # Build context from top results
-        context_parts = []
-        sources = []
-        scores = []
-        total_length = 0
+            # Build context from top results
+            context_parts = []
+            sources = []
+            total_chars = 0
 
-        for result in search_results:
-            chunk_content = result.document.content
+            for result in search_results:
+                content = result.document.content
 
-            # Check if adding this chunk exceeds limit
-            if total_length + len(chunk_content) > max_context_length:
-                # Truncate the chunk to fit
-                remaining_space = max_context_length - total_length
-                if remaining_space > 100:  # Only add if meaningful space left
-                    chunk_content = chunk_content[:remaining_space] + "..."
+                # Check if adding this would exceed limit
+                if total_chars + len(content) > max_context_length:
+                    # Truncate to fit
+                    remaining = max_context_length - total_chars
+                    if remaining > 100:  # Only add if meaningful content fits
+                        content = content[:remaining] + "..."
+                    else:
+                        break
+
+                context_parts.append(f"[相關資料 {len(context_parts)+1}]\n{content}\n")
+                sources.append(
+                    {
+                        "doc_id": result.document.doc_id,
+                        "score": result.score,
+                        "metadata": result.document.metadata,
+                    }
+                )
+
+                total_chars += len(content)
+
+            context = "\n".join(context_parts)
+
+            return {"context": context, "sources": sources, "total_chars": total_chars}
+
+        except Exception as e:
+            logger.error(f"Context generation failed: {e}")
+            return {"context": "", "sources": [], "total_chars": 0}
+
+    def rebuild_index(self) -> bool:
+        """Rebuild FAISS index from existing documents"""
+        try:
+            if not self.documents:
+                logger.warning("No documents to rebuild index")
+                return False
+
+            # Create new index
+            self.index = self._create_index()
+            self.doc_id_map.clear()
+
+            # Re-add all documents
+            embeddings = []
+            doc_ids = []
+
+            for doc_id, document in self.documents.items():
+                if document.embedding is not None:
+                    embeddings.append(document.embedding)
+                    doc_ids.append(doc_id)
                 else:
-                    break
+                    # Re-generate embedding if missing
+                    embedding = self._encode_text(document.content)
+                    document.embedding = embedding
+                    embeddings.append(embedding)
+                    doc_ids.append(doc_id)
 
-            context_parts.append(chunk_content)
-            sources.append(
-                {
-                    "doc_id": result.document.metadata.get(
-                        "parent_doc_id", result.document.doc_id
-                    ),
-                    "chunk_id": result.document.doc_id,
-                    "score": result.score,
-                }
-            )
-            scores.append(result.score)
-            total_length += len(chunk_content)
+            if embeddings:
+                # Batch add to FAISS
+                embeddings_array = np.vstack(embeddings)
+                self.index.add(embeddings_array)
 
-        context = "\n\n".join(context_parts)
+                # Update mapping
+                for i, doc_id in enumerate(doc_ids):
+                    self.doc_id_map[i] = doc_id
+
+            # Update BM25
+            self._update_bm25()
+
+            logger.info(f"Rebuilt index with {len(embeddings)} documents")
+            return True
+
+        except Exception as e:
+            logger.error(f"Index rebuild failed: {e}")
+            return False
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get RAG engine statistics"""
+        unique_docs = set(
+            doc.metadata.get("parent_doc_id", doc.doc_id)
+            for doc in self.documents.values()
+        )
 
         return {
-            "context": context,
-            "sources": sources,
-            "relevance_scores": scores,
-            "total_documents": len(search_results),
-            "context_length": len(context),
+            "total_documents": len(unique_docs),
+            "total_chunks": len(self.documents),
+            "index_size": self.index.ntotal if self.index else 0,
+            "embedding_model": self.embedding_model_name,
+            "embedding_dim": self.embedding_dim,
+            "model_loaded": self._loaded,
+            "bm25_enabled": self.bm25 is not None,
         }
+
+    def save_index(self, filepath: Optional[Path] = None) -> Path:
+        """Save FAISS index and metadata to disk"""
+        if filepath is None:
+            filepath = self.cache.get_output_path("rag") / "index"
+
+        filepath = Path(filepath)
+        filepath.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Save FAISS index
+            if self.index is not None:
+                faiss.write_index(self.index, str(filepath / "faiss.index"))
+
+            # Save metadata
+            metadata = {
+                "doc_id_map": self.doc_id_map,
+                "embedding_model": self.embedding_model_name,
+                "embedding_dim": self.embedding_dim,
+                "created_at": datetime.now().isoformat(),
+                "total_documents": len(self.documents),
+            }
+
+            with open(filepath / "metadata.json", "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+            # Save documents (without embeddings to save space)
+            documents_data = {}
+            for doc_id, doc in self.documents.items():
+                documents_data[doc_id] = {
+                    "doc_id": doc.doc_id,
+                    "content": doc.content,
+                    "metadata": doc.metadata,
+                    "created_at": (
+                        doc.created_at.isoformat() if doc.created_at else None
+                    ),
+                }
+
+            with open(filepath / "documents.json", "w", encoding="utf-8") as f:
+                json.dump(documents_data, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"RAG index saved to {filepath}")
+            return filepath
+
+        except Exception as e:
+            logger.error(f"Failed to save RAG index: {e}")
+            raise RAGError(f"Index save failed: {e}")
+
+    def load_index(self, filepath: Path) -> bool:
+        """Load FAISS index and metadata from disk"""
+        try:
+            filepath = Path(filepath)
+
+            if not filepath.exists():
+                logger.warning(f"Index path does not exist: {filepath}")
+                return False
+
+            # Load metadata
+            metadata_file = filepath / "metadata.json"
+            if metadata_file.exists():
+                with open(metadata_file, "r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+
+                self.doc_id_map = {int(k): v for k, v in metadata["doc_id_map"].items()}
+                self.embedding_dim = metadata["embedding_dim"]
+
+                # Verify model compatibility
+                if metadata["embedding_model"] != self.embedding_model_name:
+                    logger.warning(
+                        f"Model mismatch: loaded={metadata['embedding_model']}, "
+                        f"current={self.embedding_model_name}. Index rebuild recommended."
+                    )
+
+            # Load FAISS index
+            faiss_file = filepath / "faiss.index"
+            if faiss_file.exists():
+                self.index = faiss.read_index(str(faiss_file))
+
+            # Load documents
+            documents_file = filepath / "documents.json"
+            if documents_file.exists():
+                with open(documents_file, "r", encoding="utf-8") as f:
+                    documents_data = json.load(f)
+
+                for doc_id, doc_data in documents_data.items():
+                    created_at = None
+                    if doc_data.get("created_at"):
+                        created_at = datetime.fromisoformat(doc_data["created_at"])
+
+                    self.documents[doc_id] = Document(
+                        doc_id=doc_data["doc_id"],
+                        content=doc_data["content"],
+                        metadata=doc_data["metadata"],
+                        created_at=created_at,
+                    )
+
+            # Update BM25
+            self._update_bm25()
+
+            logger.info(
+                f"RAG index loaded from {filepath}, {len(self.documents)} documents"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load RAG index from {filepath}: {e}")
+            return False
 
     def get_document(self, doc_id: str) -> Optional[Document]:
         """Get document by ID"""
@@ -382,112 +765,6 @@ class ChineseRAGEngine:
         )
 
         return True
-
-    def get_stats(self) -> Dict[str, Any]:
-        """Get RAG engine statistics"""
-        return {
-            "total_documents": len(
-                set(
-                    doc.metadata.get("parent_doc_id", doc.doc_id)
-                    for doc in self.documents.values()
-                )
-            ),
-            "total_chunks": len(self.documents),
-            "index_size": self.index.ntotal if self.index else 0,
-            "embedding_model": self.embedding_model_name,
-            "embedding_dim": self.embedding_dim,
-            "model_loaded": self._loaded,
-        }
-
-    def save_index(self, filepath: Optional[Path] = None) -> Path:
-        """Save FAISS index and metadata to disk"""
-        if filepath is None:
-            filepath = self.cache.get_output_path("rag") / "index"  # type: ignore
-
-        filepath = Path(filepath)  # type: ignore
-        filepath.mkdir(parents=True, exist_ok=True)
-
-        # Save FAISS index
-        if self.index is not None:
-            faiss.write_index(self.index, str(filepath / "faiss.index"))
-
-        # Save metadata
-        metadata = {
-            "doc_id_map": self.doc_id_map,
-            "embedding_model": self.embedding_model_name,
-            "embedding_dim": self.embedding_dim,
-            "created_at": datetime.now().isoformat(),
-            "total_documents": len(self.documents),
-        }
-
-        with open(filepath / "metadata.json", "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
-
-        # Save documents
-        documents_data = {}
-        for doc_id, doc in self.documents.items():
-            documents_data[doc_id] = {
-                "doc_id": doc.doc_id,
-                "content": doc.content,
-                "metadata": doc.metadata,
-                "created_at": doc.created_at.isoformat() if doc.created_at else None,
-                "embedding": (
-                    doc.embedding.tolist() if doc.embedding is not None else None
-                ),
-            }
-
-        with open(filepath / "documents.json", "w", encoding="utf-8") as f:
-            json.dump(documents_data, f, indent=2, ensure_ascii=False)
-
-        logger.info(f"RAG index saved to {filepath}")
-        return filepath
-
-    def load_index(self, filepath: Path) -> bool:
-        """Load FAISS index and metadata from disk"""
-        filepath = Path(filepath)
-
-        try:
-            # Load metadata
-            with open(filepath / "metadata.json", "r", encoding="utf-8") as f:
-                metadata = json.load(f)
-
-            self.doc_id_map = metadata["doc_id_map"]
-            self.embedding_dim = metadata["embedding_dim"]
-
-            # Load FAISS index
-            index_file = filepath / "faiss.index"
-            if index_file.exists():
-                self.index = faiss.read_index(str(index_file))
-
-            # Load documents
-            with open(filepath / "documents.json", "r", encoding="utf-8") as f:
-                documents_data = json.load(f)
-
-            for doc_id, doc_data in documents_data.items():
-                embedding = None
-                if doc_data["embedding"]:
-                    embedding = np.array(doc_data["embedding"])
-
-                created_at = None
-                if doc_data["created_at"]:
-                    created_at = datetime.fromisoformat(doc_data["created_at"])
-
-                self.documents[doc_id] = Document(
-                    doc_id=doc_data["doc_id"],
-                    content=doc_data["content"],
-                    metadata=doc_data["metadata"],
-                    embedding=embedding,
-                    created_at=created_at,
-                )
-
-            logger.info(
-                f"RAG index loaded from {filepath}, {len(self.documents)} documents"
-            )
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to load RAG index from {filepath}: {e}")
-            return False
 
 
 # Global RAG engine instance
