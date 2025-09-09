@@ -5,7 +5,7 @@ Safety Filter API Schemas
 
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Dict, Any, Optional
-from .base import BaseRequest, BaseResponse
+from .schemas_base import BaseRequest, BaseResponse
 
 
 class SafetyCheckRequest(BaseRequest):

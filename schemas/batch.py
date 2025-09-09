@@ -5,7 +5,7 @@ Batch Processing API Schemas
 
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Any, Optional
-from .base import BaseRequest, BaseResponse, BaseParameters
+from .schemas_base import BaseRequest, BaseResponse, BaseParameters
 
 
 class BatchParameters(BaseParameters):

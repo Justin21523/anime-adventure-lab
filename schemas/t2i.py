@@ -5,7 +5,7 @@ Text-to-Image API Schemas
 
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any, List
-from .base import BaseRequest, BaseResponse, BaseParameters
+from .schemas_base import BaseRequest, BaseResponse, BaseParameters
 
 
 class T2IParameters(BaseParameters):

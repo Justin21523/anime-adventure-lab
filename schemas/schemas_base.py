@@ -1,4 +1,4 @@
-# schemas/base.py
+# schemas/schemas_base.py
 """
 Base Pydantic Models
 Shared data structures across all API endpoints

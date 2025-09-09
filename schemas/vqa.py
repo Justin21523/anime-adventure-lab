@@ -6,7 +6,7 @@ Visual Question Answering API Schemas
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-from .base import BaseRequest, BaseResponse, UsageInfo, BaseParameters
+from .schemas_base import BaseRequest, BaseResponse, UsageInfo, BaseParameters
 
 
 class VQAParameters(BaseParameters):
