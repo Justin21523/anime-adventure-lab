@@ -5,7 +5,7 @@ Agent API Schemas
 
 from pydantic import BaseModel, Field, validator
 from typing import List, Dict, Any, Optional
-from .base import BaseRequest, BaseResponse, BaseParameters
+from .schemas_base import BaseRequest, BaseResponse, BaseParameters
 
 
 class AgentParameters(BaseParameters):

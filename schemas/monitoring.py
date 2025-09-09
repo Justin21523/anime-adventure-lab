@@ -7,7 +7,7 @@ System Monitoring API Schemas
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-from .base import BaseResponse
+from .schemas_base import BaseResponse
 
 
 class SystemMetrics(BaseModel):

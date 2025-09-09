@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Any, Optional
 import json
 from .parsers import get_parser
-from .embedders import EmbeddingModel
-from .retrievers import VectorRetriever
+from .embeddings import EmbeddingModel
+from .retriever import VectorRetriever
 from .rerankers import SimpleReranker
 from ..shared_cache import get_shared_cache
 

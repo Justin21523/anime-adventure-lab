@@ -5,7 +5,7 @@ Admin API Schemas
 
 from pydantic import BaseModel, Field, field_validator
 from typing import Dict, List, Tuple, Any, Optional
-from .base import BaseResponse
+from .schemas_base import BaseResponse
 
 
 class AdminSystemInfoResponse(BaseResponse):

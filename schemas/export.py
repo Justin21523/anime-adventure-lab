@@ -5,7 +5,7 @@ Export/Import API Schemas
 
 from pydantic import BaseModel, Field, field_validator
 from typing import Dict, Any, List, Optional
-from .base import BaseRequest, BaseResponse
+from .schemas_base import BaseRequest, BaseResponse
 
 
 class ExportRequest(BaseRequest):

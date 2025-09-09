@@ -5,7 +5,7 @@ ControlNet API Schemas
 
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
-from .base import BaseRequest, BaseResponse, BaseParameters
+from .schemas_base import BaseRequest, BaseResponse, BaseParameters
 
 
 class ControlNetParameters(BaseParameters):
