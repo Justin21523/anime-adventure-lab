@@ -9,18 +9,12 @@ from datetime import datetime
 from .schemas_base import BaseRequest, BaseResponse, BaseParameters
 
 
-class GameParameters(BaseParameters):
-    """Game-specific parameters"""
+class GameParameters(BaseModel):
+    """Game creation parameters"""
 
-    max_length: int = Field(
-        800, ge=100, le=1500, description="Maximum narrative length"
-    )
-    temperature: float = Field(
-        0.8, ge=0.1, le=1.5, description="Creativity level for story generation"
-    )
-    persona_id: str = Field("default", description="Game master persona")
-    setting: str = Field("fantasy", description="Game world setting")
-    difficulty: str = Field("normal", description="Game difficulty level")
+    persona_id: str = Field(default="wise_sage", description="遊戲角色ID")
+    setting: str = Field(default="fantasy", description="遊戲設定")
+    difficulty: str = Field(default="medium", description="難度等級")
 
     @field_validator("setting", mode="after")
     def validate_setting(cls, v):
@@ -39,7 +33,7 @@ class GameParameters(BaseParameters):
         return v
 
 
-class NewGameRequest(BaseRequest):
+class NewGameRequest(BaseModel):
     """Create new game session request"""
 
     player_name: str = Field(
@@ -54,106 +48,85 @@ class NewGameRequest(BaseRequest):
         return v.strip()
 
 
-class GameStepRequest(BaseRequest):
-    """Game action/step request"""
+class GameStepRequest(BaseModel):
+    """Request to process game step"""
 
-    session_id: str = Field(..., description="Game session ID")
-    action: str = Field(
-        ..., min_length=1, max_length=500, description="Player action description"
-    )
-    choice_id: Optional[str] = Field(
-        None, description="Predefined choice ID if applicable"
-    )
-
-    parameters: Optional[GameParameters] = Field(
-        None, description="Optional parameter overrides"
-    )
-
-    @field_validator("action", mode="after")
-    def validate_action(cls, v):
-        if not v.strip():
-            raise ValueError("Action cannot be empty")
-        return v.strip()
+    session_id: str = Field(..., description="遊戲會話ID")
+    player_input: str = Field(..., description="玩家輸入")
+    choice_id: Optional[str] = Field(None, description="選擇ID")
 
 
 class GameChoice(BaseModel):
-    """Single player choice option"""
+    """Game choice option"""
 
-    id: str = Field(..., description="Choice identifier")
-    text: str = Field(..., description="Choice display text")
-    description: str = Field("", description="Detailed choice description")
-    requirements: Optional[Dict[str, Any]] = Field(
-        None, description="Requirements to select this choice"
-    )
-
-
-class GameDialogue(BaseModel):
-    """Single dialogue entry"""
-
-    speaker: str = Field(..., description="Character/speaker name")
-    text: str = Field(..., description="Dialogue content")
-    emotion: Optional[str] = Field(None, description="Speaker emotion/tone")
+    choice_id: str = Field(..., description="選擇ID")
+    text: str = Field(..., description="選擇文字")
+    type: str = Field(..., description="選擇類型")
+    difficulty: str = Field(..., description="難度等級")
+    can_choose: bool = Field(..., description="是否可選擇")
 
 
-class GameResponse(BaseResponse):
-    """Game turn response"""
+class GameResponse(BaseModel):
+    """Game response with narrative and choices"""
 
-    session_id: str = Field(..., description="Game session ID")
-    turn_count: int = Field(..., description="Current turn number")
-    scene: str = Field(..., description="Current scene/location")
-    narration: str = Field(..., description="Narrative description of events")
-    dialogues: List[GameDialogue] = Field(
-        default_factory=list, description="Character dialogues"
-    )
-    choices: List[GameChoice] = Field(..., description="Available player choices")
-
-    # Unified parameters field
-    parameters: GameParameters = Field(..., description="Game parameters used")
-
-    # Game state
-    game_state: Dict[str, Any] = Field(
-        ..., description="Current game state (inventory, stats, flags)"
-    )
-    status: str = Field("active", description="Game session status")
-
-    # Optional analysis
-    story_analysis: Optional[Dict[str, Any]] = Field(
-        None, description="Story progression analysis"
-    )
+    session_id: str = Field(..., description="遊戲會話ID")
+    turn_count: int = Field(..., description="回合數")
+    narrative: str = Field(..., description="故事敘述")
+    choices: List[Dict[str, Any]] = Field(..., description="可選擇選項")
+    stats: Dict[str, int] = Field(..., description="玩家統計")
+    inventory: List[str] = Field(..., description="背包物品")
+    scene_id: str = Field(..., description="場景ID")
+    flags: Dict[str, bool] = Field(default_factory=dict, description="遊戲標記")
+    choice_result: Optional[Dict[str, Any]] = Field(None, description="選擇結果")
+    success: bool = Field(..., description="操作是否成功")
+    message: str = Field(..., description="回應訊息")
 
 
-class GameSessionSummary(BaseResponse):
-    """Game session summary information"""
+class GameSessionSummary(BaseModel):
+    """Game session summary"""
 
-    session_id: str = Field(..., description="Session identifier")
-    player_name: str = Field(..., description="Player character name")
-    current_scene: str = Field(..., description="Current scene/location")
-    turn_count: int = Field(..., description="Number of turns played")
-    inventory_count: int = Field(..., description="Number of items in inventory")
-    stats: Dict[str, int] = Field(..., description="Player statistics")
-    active_flags: List[str] = Field(
-        default_factory=list, description="Active story flags"
-    )
-    relationships: Dict[str, int] = Field(
-        default_factory=dict, description="NPC relationship levels"
-    )
-    status: str = Field("active", description="Session status (active/saved/completed)")
-    created_at: Optional[str] = Field(None, description="Session creation timestamp")
-    last_action: Optional[str] = Field(None, description="Last player action")
+    session_id: str = Field(..., description="會話ID")
+    player_name: str = Field(..., description="玩家名稱")
+    persona_id: Optional[str] = Field(None, description="角色ID")
+    persona_name: Optional[str] = Field(None, description="角色名稱")
+    turn_count: int = Field(..., description="回合數")
+    created_at: str = Field(..., description="創建時間")
+    updated_at: str = Field(..., description="更新時間")
+    is_active: bool = Field(..., description="是否活躍")
+    current_scene: Optional[str] = Field(None, description="當前場景")
+    total_history: Optional[int] = Field(None, description="歷史記錄數")
 
 
 class GamePersonaInfo(BaseModel):
     """Game persona information"""
 
-    name: str = Field(..., description="Persona display name")
-    description: str = Field(..., description="Persona description")
-    personality: List[str] = Field(
-        default_factory=list, description="Personality traits"
+    persona_id: str = Field(..., description="角色ID")
+    name: str = Field(..., description="角色名稱")
+    description: str = Field(..., description="角色描述")
+    personality_traits: List[str] = Field(..., description="性格特徵")
+    special_abilities: List[str] = Field(..., description="特殊能力")
+
+
+class GameStatsResponse(BaseModel):
+    """Detailed game statistics response"""
+
+    session_id: str = Field(..., description="會話ID")
+    player_name: str = Field(..., description="玩家名稱")
+    stats: Dict[str, int] = Field(..., description="玩家統計")
+    inventory: List[str] = Field(..., description="背包物品")
+    turn_count: int = Field(..., description="回合數")
+    flags: Dict[str, bool] = Field(..., description="遊戲標記")
+    created_at: str = Field(..., description="創建時間")
+    updated_at: str = Field(..., description="更新時間")
+
+
+class GameStatsRequest(BaseModel):
+    """Request for game statistics"""
+
+    session_ids: Optional[List[str]] = Field(
+        None, description="Specific session IDs to analyze"
     )
-    speech_style: str = Field("", description="Speaking style description")
-    recommended_for: Optional[List[str]] = Field(
-        None, description="Recommended game settings"
-    )
+    date_range: Optional[Dict[str, str]] = Field(None, description="Date range filter")
 
 
 class GameInventoryResponse(BaseResponse):
@@ -169,34 +142,3 @@ class GameInventoryResponse(BaseResponse):
         None, description="Items grouped by category"
     )
     total_value: Optional[int] = Field(None, description="Total inventory value")
-
-
-class GameStatsRequest(BaseModel):
-    """Request for game statistics"""
-
-    session_ids: Optional[List[str]] = Field(
-        None, description="Specific session IDs to analyze"
-    )
-    date_range: Optional[Dict[str, str]] = Field(None, description="Date range filter")
-
-
-class GameStatsResponse(BaseResponse):
-    """Game statistics response"""
-
-    total_sessions: int = Field(..., description="Total number of sessions")
-    active_sessions: int = Field(..., description="Currently active sessions")
-    average_turns_per_session: float = Field(
-        ..., description="Average turns per session"
-    )
-    most_popular_personas: List[str] = Field(..., description="Most used personas")
-    most_popular_settings: List[str] = Field(..., description="Most used settings")
-
-    # Player engagement
-    longest_session_turns: int = Field(
-        ..., description="Highest turn count in any session"
-    )
-    total_turns_played: int = Field(..., description="Total turns across all sessions")
-
-    # Temporal analysis
-    sessions_today: int = Field(..., description="Sessions created today")
-    sessions_this_week: int = Field(..., description="Sessions created this week")
