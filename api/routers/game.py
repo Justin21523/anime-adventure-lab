@@ -17,6 +17,7 @@ from schemas.game import (
     GameSessionSummary,
     GamePersonaInfo,
     GameParameters,
+    GameStatsResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,10 +32,10 @@ async def new_game_session(request: NewGameRequest):
         story_engine = get_story_engine()
 
         # Extract parameters with defaults
-        params = request.parameters or GameParameters()  # type: ignore
+        params = request.parameters or GameParameters()
 
         # Create new game session
-        game_state = story_engine.create_session(
+        session = story_engine.create_session(
             player_name=request.player_name,
             persona_id=params.persona_id,
             setting=params.setting,
@@ -42,42 +43,31 @@ async def new_game_session(request: NewGameRequest):
         )
 
         # Generate opening scene
-        opening_response = story_engine.process_turn(
-            session_id=game_state.session_id,
+        opening_response = await story_engine.process_turn(
+            session_id=session.session_id,
             player_input=f"開始遊戲，玩家名稱：{request.player_name}",
             choice_id=None,
         )
 
         return GameResponse(  # type: ignore
-            session_id=game_state.session_id,
-            turn_count=game_state.turn_count,
-            scene=game_state.current_scene,
-            narration=opening_response.narration,
-            dialogues=opening_response.dialogues,
-            choices=[
-                {
-                    "id": choice.id,
-                    "text": choice.text,
-                    "description": choice.description,
-                }
-                for choice in opening_response.choices
-            ],
-            parameters=params,
-            game_state={
-                "inventory": game_state.inventory,
-                "stats": game_state.stats,
-                "flags": {k: v for k, v in game_state.flags.items() if v},
-            },
-            status="active",
+            session_id=session.session_id,
+            turn_count=opening_response["turn_count"],
+            narrative=opening_response["narrative"],
+            choices=opening_response["choices"],
+            stats=opening_response["stats"],
+            inventory=opening_response["inventory"],
+            scene_id=opening_response["scene_id"],
+            flags=opening_response.get("flags", {}),
+            success=True,
+            message="遊戲會話創建成功",
         )
 
     except GameError as e:
-        logger.error(f"Game creation failed: {e}")
-        raise HTTPException(400, f"Failed to create game: {e.message}")
-
+        logger.error(f"Game error in new_game_session: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Unexpected error in new game: {e}", exc_info=True)
-        raise HTTPException(500, "Failed to create new game session")
+        logger.error(f"Unexpected error in new_game_session: {e}")
+        raise HTTPException(status_code=500, detail="內部伺服器錯誤")
 
 
 @router.post("/game/step", response_model=GameResponse)
@@ -88,52 +78,120 @@ async def game_step(request: GameStepRequest):
         story_engine = get_story_engine()
 
         # Process the turn
-        turn_response = story_engine.process_turn(
+        response = await story_engine.process_turn(
             session_id=request.session_id,
-            player_input=request.action,
+            player_input=request.player_input,
             choice_id=request.choice_id,
         )
 
-        # Get updated game state
-        game_state = story_engine.get_session(request.session_id)
-
-        # Use request parameters or create defaults
-        params = request.parameters or GameParameters()  # type: ignore
-
         return GameResponse(  # type: ignore
-            session_id=request.session_id,
-            turn_count=game_state.turn_count,
-            scene=game_state.current_scene,
-            narration=turn_response.narration,
-            dialogues=turn_response.dialogues,
-            choices=[
-                {
-                    "id": choice.id,
-                    "text": choice.text,
-                    "description": choice.description,
-                }
-                for choice in turn_response.choices
-            ],
-            parameters=params,
-            game_state={
-                "inventory": game_state.inventory,
-                "stats": game_state.stats,
-                "flags": {k: v for k, v in game_state.flags.items() if v},
-                "relationships": game_state.relationships,
-            },
-            status="active",
+            session_id=response["session_id"],
+            turn_count=response["turn_count"],
+            narrative=response["narrative"],
+            choices=response["choices"],
+            stats=response["stats"],
+            inventory=response["inventory"],
+            scene_id=response["scene_id"],
+            flags=response.get("flags", {}),
+            choice_result=response.get("choice_result"),
+            success=True,
+            message="回合處理成功",
+        )
+
+    except (SessionNotFoundError, InvalidChoiceError) as e:
+        logger.error(f"Game error in game_step: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except GameError as e:
+        logger.error(f"Game error in game_step: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error in game_step: {e}")
+        raise HTTPException(status_code=500, detail="內部伺服器錯誤")
+
+
+@router.get("/game/sessions", response_model=List[GameSessionSummary])
+async def list_game_sessions(active_only: bool = True):
+    """List game sessions"""
+    try:
+        story_engine = get_story_engine()
+        sessions = story_engine.list_sessions(active_only=active_only)
+
+        return [GameSessionSummary(**session) for session in sessions]
+
+    except Exception as e:
+        logger.error(f"Error in list_game_sessions: {e}")
+        raise HTTPException(status_code=500, detail="無法獲取遊戲會話列表")
+
+
+@router.get("/game/session/{session_id}", response_model=GameSessionSummary)
+async def get_game_session(session_id: str):
+    """Get game session details"""
+    try:
+        story_engine = get_story_engine()
+        session = story_engine.get_session_summary(session_id)
+
+        return GameSessionSummary(**session)
+
+    except SessionNotFoundError as e:
+        logger.error(f"Session not found: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error in get_game_session: {e}")
+        raise HTTPException(status_code=500, detail="無法獲取遊戲會話")
+
+
+@router.delete("/game/session/{session_id}")
+async def end_game_session(session_id: str):
+    """End a game session"""
+    try:
+        story_engine = get_story_engine()
+        story_engine.end_session(session_id)
+
+        return {"success": True, "message": f"遊戲會話 {session_id} 已結束"}
+
+    except SessionNotFoundError as e:
+        logger.error(f"Session not found: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error in end_game_session: {e}")
+        raise HTTPException(status_code=500, detail="無法結束遊戲會話")
+
+
+@router.get("/game/personas", response_model=List[GamePersonaInfo])
+async def list_personas():
+    """List available game personas"""
+    try:
+        story_engine = get_story_engine()
+        personas = story_engine.list_personas()
+
+        return [GamePersonaInfo(**persona) for persona in personas]
+
+    except Exception as e:
+        logger.error(f"Error in list_personas: {e}")
+        raise HTTPException(status_code=500, detail="無法獲取角色列表")
+
+
+@router.get("/game/stats/{session_id}", response_model=GameStatsResponse)
+async def get_game_stats(session_id: str):
+    """Get detailed game statistics"""
+    try:
+        story_engine = get_story_engine()
+        session = story_engine.get_session(session_id)
+
+        return GameStatsResponse(  # type: ignore
+            session_id=session.session_id,
+            player_name=session.player_name,
+            stats=session.stats.to_dict(),
+            inventory=session.inventory,
+            turn_count=session.turn_count,
+            flags=session.current_state.flags,
+            created_at=session.created_at.isoformat(),
+            updated_at=session.updated_at.isoformat(),
         )
 
     except SessionNotFoundError as e:
-        raise HTTPException(404, f"Game session not found: {request.session_id}")
-
-    except InvalidChoiceError as e:
-        raise HTTPException(400, f"Invalid choice: {e.message}")
-
-    except GameError as e:
-        logger.error(f"Game step failed: {e}")
-        raise HTTPException(500, f"Game action failed: {e.message}")
-
+        logger.error(f"Session not found: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"Unexpected error in game step: {e}", exc_info=True)
-        raise HTTPException(500, "Game action processing failed")
+        logger.error(f"Error in get_game_stats: {e}")
+        raise HTTPException(status_code=500, detail="無法獲取遊戲統計")
