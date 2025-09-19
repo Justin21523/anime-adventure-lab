@@ -1,108 +1,380 @@
 # configs/agent.yaml
-# Agent Tools Registry Configuration
+# Agent Tools Configuration
+# Defines available tools and their parameters for the agent system
 
-agent:
-  name: "Multi-Modal Lab Agent"
-  description: "AI agent with vision, text, and tool capabilities"
-  version: "0.1.0"
+tools:
+  - name: calculator
+    description: "Perform mathematical calculations and unit conversions"
+    function_path: "core.agents.tools.calculator.calculate"
+    function: "tools.calculator.calculate"
+    category: "computation"
+    requires_auth: false
+    timeout_seconds: 10
+    requires_sandbox: true
+    parameters:
+      expression:
+        type: string
+        description: "Mathematical expression to evaluate"
+        required: true
+        examples:
+          - "2 + 2"
+          - "sqrt(16)"
+          - "3.14159 * 2^2"
 
-  # Tool registry
-  tools:
-    calculator:
-      name: "Calculator"
-      description: "Perform mathematical calculations"
-      enabled: true
-      endpoint: "http://localhost:8000/api/v1/tools/calculator"
-      timeout: 10
-      parameters:
-        expression:
-          type: "string"
-          description: "Mathematical expression to evaluate"
-          required: true
-          example: "2 + 3 * 4"
 
-    web_search:
-      name: "Web Search"
-      description: "Search the web for information"
-      enabled: false # Disabled by default - implement as needed
-      endpoint: "http://localhost:8000/api/v1/tools/web_search"
-      timeout: 30
-      parameters:
-        query:
-          type: "string"
-          description: "Search query"
-          required: true
-          max_length: 200
-        num_results:
-          type: "integer"
-          description: "Number of results to return"
-          default: 5
-          min: 1
-          max: 10
+  - name: basic_math
+    description: "Perform basic mathematical operations"
+    function: "tools.calculator.basic_math"
+    category: "computation"
+    requires_auth: false
+    timeout_seconds: 5
+    parameters:
+      operation:
+        type: string
+        description: "Operation to perform"
+        required: true
+        enum: ["add", "subtract", "multiply", "divide", "power", "sqrt", "square", "cube", "abs", "log", "log10", "sin", "cos", "tan"]
+      a:
+        type: number
+        description: "First number"
+        required: true
+      b:
+        type: number
+        description: "Second number (optional for unary operations)"
+        required: false
 
-    image_analysis:
-      name: "Image Analysis"
-      description: "Analyze uploaded images using VLM"
-      enabled: true
-      endpoint: "http://localhost:8000/api/v1/tools/image_analysis"
-      timeout: 60
-      parameters:
-        image:
-          type: "file"
-          description: "Image file to analyze"
-          required: true
-          formats: ["jpg", "jpeg", "png", "webp"]
-        analysis_type:
-          type: "string"
-          description: "Type of analysis"
-          enum: ["caption", "objects", "text", "scene"]
-          default: "caption"
+  - name: percentage
+    description: "Calculate percentage of a value"
+    function: "tools.calculator.percentage"
+    category: "computation"
+    requires_auth: false
+    timeout_seconds: 5
+    parameters:
+      value:
+        type: number
+        description: "Base value"
+        required: true
+      percent:
+        type: number
+        description: "Percentage to calculate"
+        required: true
 
-  # Agent behavior configuration
-  behavior:
-    max_iterations: 5
-    max_tool_calls_per_iteration: 2
-    enable_chain_of_thought: true
-    enable_self_correction: true
+  - name: unit_convert
+    description: "Convert between different units"
+    function: "tools.calculator.unit_convert"
+    category: "computation"
+    requires_auth: false
+    timeout_seconds: 5
+    parameters:
+      value:
+        type: number
+        description: "Value to convert"
+        required: true
+      from_unit:
+        type: string
+        description: "Source unit"
+        required: true
+        examples: ["mm", "cm", "m", "km", "inch", "ft", "yard", "mile", "mg", "g", "kg", "oz", "lb", "celsius", "fahrenheit", "kelvin"]
+      to_unit:
+        type: string
+        description: "Target unit"
+        required: true
 
-    # Response formatting
-    response_format: "structured" # structured, natural, json
-    include_reasoning: true
-    include_tool_traces: false # For debugging
+  - name: web_search
+    description: "Search the web for information"
+    function_path: "core.agent.tools.web_search.search"
+    function: "tools.web_search.search"
+    category: "information"
+    requires_auth: false
+    timeout_seconds: 30
+    parameters:
+      query:
+        type: string
+        description: "Search query"
+        required: true
+        min_length: 1
+        max_length: 200
+      max_results:
+        type: integer
+        description: "Maximum number of results to return"
+        required: false
+        default: 5
+        minimum: 1
+        maximum: 20
 
-    # Safety
-    validate_tool_outputs: true
-    sanitize_responses: true
-    max_response_length: 2000
+  - name: web_search_summary
+    description: "Search the web and provide summarized results"
+    function: "tools.web_search.search_and_summarize"
+    category: "information"
+    requires_auth: false
+    timeout_seconds: 45
+    parameters:
+      query:
+        type: string
+        description: "Search query"
+        required: true
+        min_length: 1
+        max_length: 200
+      max_results:
+        type: integer
+        description: "Maximum results to consider for summary"
+        required: false
+        default: 3
+        minimum: 1
+        maximum: 10
 
-  # Tool calling strategy
-  strategy:
-    tool_selection: "best_match" # best_match, parallel, sequential
-    error_handling: "graceful" # graceful, strict, retry
-    retry_attempts: 2
-    fallback_to_llm: true
+  - name: file_list
+    description: "List files and directories"
+    function: "tools.file_ops.list_files"
+    category: "file_system"
+    requires_auth: false
+    timeout_seconds: 15
+    parameters:
+      path:
+        type: string
+        description: "Directory path to list"
+        required: false
+        default: "."
+      pattern:
+        type: string
+        description: "File pattern filter (e.g., *.txt, *.py)"
+        required: false
+        default: "*"
 
-    # Context management
-    preserve_context: true
-    max_context_length: 4000
-    context_compression: "summarize" # summarize, truncate, sliding_window
+  - name: file_read
+    description: "Read file content safely"
+    function: "tools.file_ops.read_file"
+    category: "file_system"
+    requires_auth: false
+    timeout_seconds: 30
+    parameters:
+      file_path:
+        type: string
+        description: "Path to file to read"
+        required: true
+      encoding:
+        type: string
+        description: "Text encoding"
+        required: false
+        default: "utf-8"
+        enum: ["utf-8", "ascii", "latin1", "cp1252"]
+      max_lines:
+        type: integer
+        description: "Maximum lines to read"
+        required: false
+        default: 1000
+        minimum: 1
+        maximum: 10000
 
-# Tool-specific configurations
-tools_config:
-  calculator:
-    safe_mode: true # Restrict dangerous operations
-    precision: 10
-    max_expression_length: 200
+  - name: file_write
+    description: "Write content to file safely"
+    function: "tools.file_ops.write_file"
+    category: "file_system"
+    requires_auth: true
+    timeout_seconds: 30
+    parameters:
+      file_path:
+        type: string
+        description: "Path to file to write"
+        required: true
+      content:
+        type: string
+        description: "Content to write"
+        required: true
+      encoding:
+        type: string
+        description: "Text encoding"
+        required: false
+        default: "utf-8"
+      overwrite:
+        type: boolean
+        description: "Whether to overwrite existing files"
+        required: false
+        default: false
 
-  web_search:
-    user_agent: "Multi-Modal Lab Agent/0.1.0"
-    max_page_size: 10000
-    respect_robots_txt: true
-    cache_results: true
-    cache_ttl_hours: 24
+  - name: file_exists
+    description: "Check if file exists and get basic info"
+    function: "tools.file_ops.file_exists"
+    category: "file_system"
+    requires_auth: false
+    timeout_seconds: 5
+    parameters:
+      file_path:
+        type: string
+        description: "Path to check"
+        required: true
 
-  image_analysis:
-    max_file_size_mb: 10
-    supported_formats: ["jpg", "jpeg", "png", "webp", "bmp"]
-    auto_resize: true
-    max_resolution: 1024
+  - name: file_ops
+    description: "Perform safe file operations (read, list, info) within current directory"
+    function_path: "core.agent.tools.file_ops.execute"
+    parameters:
+      operation:
+        type: string
+        description: "Operation type: 'read' (read file), 'list' (list directory), 'info' (get file info)"
+        required: true
+      path:
+        type: string
+        description: "File or directory path (relative to current directory only)"
+        required: true
+    timeout_seconds: 15
+    requires_sandbox: true
+
+  - name: create_directory
+    description: "Create directory safely"
+    function: "tools.file_ops.create_directory"
+    category: "file_system"
+    requires_auth: true
+    timeout_seconds: 10
+    parameters:
+      dir_path:
+        type: string
+        description: "Directory path to create"
+        required: true
+      parents:
+        type: boolean
+        description: "Create parent directories if needed"
+        required: false
+        default: true
+
+# Agent behavior configuration
+agent_settings:
+  # Default agent parameters
+  default_max_iterations: 5
+  default_max_tools_per_iteration: 2
+  default_timeout_seconds: 300
+  enable_chain_of_thought: true
+
+  # Safety settings
+  max_file_size_mb: 100
+  allowed_file_extensions: [".txt", ".md", ".json", ".yaml", ".yml", ".csv", ".tsv", ".log"]
+  blocked_file_extensions: [".exe", ".bat", ".cmd", ".com", ".scr", ".vbs", ".js"]
+
+  # Tool execution limits
+  max_concurrent_tools: 3
+  max_tools_per_task: 10
+  max_execution_time_seconds: 600
+
+  # Multi-step task settings
+  max_task_steps: 20
+  max_parallel_steps: 3
+  task_timeout_seconds: 1800  # 30 minutes
+
+  # Story agent settings
+  story_agents:
+    narrative:
+      max_iterations: 3
+      enable_reasoning: true
+      narrative_styles: ["adventure", "mystery", "sci-fi", "fantasy", "horror", "comedy"]
+
+    dialogue:
+      max_iterations: 2
+      enable_reasoning: true
+      conversation_styles: ["formal", "casual", "dramatic", "humorous", "serious"]
+
+    world:
+      max_iterations: 4
+      enable_reasoning: true
+      detail_levels: ["brief", "detailed", "comprehensive"]
+
+    action:
+      max_iterations: 3
+      enable_reasoning: true
+      action_types: ["combat", "skill_check", "exploration", "social"]
+
+# Tool categories for organization
+tool_categories:
+  computation:
+    description: "Mathematical calculations and data processing"
+    tools: ["calculator", "basic_math", "percentage", "unit_convert"]
+
+  information:
+    description: "Information gathering and research"
+    tools: ["web_search", "web_search_summary"]
+
+  file_system:
+    description: "File and directory operations"
+    tools: ["file_list", "file_read", "file_write", "file_exists", "create_directory"]
+
+  communication:
+    description: "Communication and messaging tools"
+    tools: []  # Can be extended with email, SMS, etc.
+
+  creative:
+    description: "Creative and content generation tools"
+    tools: []  # Can be extended with image generation, text generation, etc.
+
+# Security policies
+security:
+  # File system access restrictions
+  allowed_directories:
+    - "."
+    - "./data"
+    - "./temp"
+    - "./outputs"
+    - "./cache"
+    - "./user_files"
+
+  # Network access restrictions
+  allowed_domains:
+    - "google.com"
+    - "wikipedia.org"
+    - "github.com"
+    - "stackoverflow.com"
+
+  # Content filtering
+  enable_content_filter: true
+  blocked_keywords:
+    - "password"
+    - "secret"
+    - "private_key"
+    - "api_key"
+
+  # Rate limiting
+  max_requests_per_minute: 60
+  max_requests_per_hour: 1000
+
+# Logging and monitoring
+logging:
+  log_tool_execution: true
+  log_agent_reasoning: true
+  log_file_operations: true
+  log_web_requests: true
+
+  # Log levels for different components
+  log_levels:
+    tool_registry: "INFO"
+    agent_executor: "INFO"
+    multi_step_processor: "INFO"
+    story_integration: "INFO"
+
+# Performance tuning
+performance:
+  # Caching settings
+  enable_tool_result_cache: true
+  cache_timeout_seconds: 3600
+
+  # Memory management
+  max_memory_mb: 2048
+  cleanup_interval_seconds: 300
+
+  # Concurrency settings
+  thread_pool_size: 4
+  async_timeout_seconds: 30
+
+# Safety settings
+safety:
+  sandbox_mode: true
+  allowed_file_extensions: [".txt", ".json", ".csv", ".md", ".py", ".yaml", ".yml", ".log"]
+  max_file_size_mb: 1
+  blocked_patterns:
+    - "import os"
+    - "import subprocess"
+    - "exec("
+    - "eval("
+    - "__import__"
+    - "open("
+    - "../"
+    - "~/"
+    - "/etc/"
+    - "/usr/"
+    - "/var/"
