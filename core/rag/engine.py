@@ -194,7 +194,7 @@ class ChineseRAGEngine:
                 self._embedding_model = SentenceTransformer(
                     self.embedding_model_name,
                     cache_folder=str(cache_dir),
-                    device=self.config.device,
+                    device=self.config.model.device,
                 )
                 self.embedding_dim = (
                     self._embedding_model.get_sentence_embedding_dimension()
@@ -214,7 +214,7 @@ class ChineseRAGEngine:
                     self.embedding_model_name,
                     cache_dir=str(cache_dir),
                     torch_dtype=(
-                        torch.float16 if self.config.use_fp16 else torch.float32
+                        torch.float16 if self.config.model.use_fp16 else torch.float32
                     ),
                     device_map="auto" if torch.cuda.is_available() else None,
                 )

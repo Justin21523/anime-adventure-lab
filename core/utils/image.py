@@ -10,8 +10,9 @@ import hashlib
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Union, Tuple, Optional
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageFilter, ImageEnhance
 import numpy as np
+import cv2
 
 from ..exceptions import ImageProcessingError, ValidationError
 
@@ -45,48 +46,81 @@ class ImageProcessor:
             elif isinstance(image, bytes):
                 pil_image = Image.open(io.BytesIO(image))
             else:
-                raise ImageProcessingError(f"Unsupported image format: {type(image)}")
+                raise ImageProcessingError(f"Unsupported image type: {type(image)}")
 
-            # Convert to RGB and validate
-            pil_image = pil_image.convert("RGB")
-
-            # Validate image size
-            width, height = pil_image.size
-            if width < 32 or height < 32:
-                raise ValidationError(
-                    "image_size", f"{width}x{height}", "Image too small (minimum 32x32)"
-                )
-
-            # Resize if too large
-            if max(width, height) > self.max_size:
-                pil_image = self.resize_image(pil_image, self.max_size)
-                logger.info(f"Image resized from {width}x{height} to {pil_image.size}")
+            # Convert to RGB if needed
+            if pil_image.mode != "RGB":
+                pil_image = pil_image.convert("RGB")
 
             return pil_image
 
         except Exception as e:
-            logger.error(f"Image loading failed: {e}")
-            raise ImageProcessingError(str(e))
+            raise ImageProcessingError(f"Failed to load image: {e}")
 
     def resize_image(
-        self, image: Image.Image, max_size: int, maintain_aspect: bool = True
+        self,
+        image: Image.Image,
+        max_size: Optional[int] = None,
+        target_size: Optional[Tuple[int, int]] = None,
     ) -> Image.Image:
-        """Resize image while maintaining aspect ratio"""
-        if maintain_aspect:
-            # Calculate new size maintaining aspect ratio
-            width, height = image.size
-            if width > height:
-                new_width = max_size
-                new_height = int(height * max_size / width)
-            else:
-                new_height = max_size
-                new_width = int(width * max_size / height)
+        """Resize image while maintaining aspect ratio or to exact size"""
+        if target_size:
+            return image.resize(target_size, Image.Resampling.LANCZOS)
 
-            return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        max_size = max_size or self.max_size
+        width, height = image.size
+
+        if width <= max_size and height <= max_size:
+            return image
+
+        # Calculate new size maintaining aspect ratio
+        if width > height:
+            new_width = max_size
+            new_height = int(height * (max_size / width))
         else:
-            return image.resize((max_size, max_size), Image.Resampling.LANCZOS)
+            new_height = max_size
+            new_width = int(width * (max_size / height))
 
-    def crop_center(self, image: Image.Image, size: Tuple[int, int]) -> Image.Image:
+        return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+    def normalize_image(
+        self,
+        image: Image.Image,
+        mean: Tuple[float, float, float] = (0.5, 0.5, 0.5),
+        std: Tuple[float, float, float] = (0.5, 0.5, 0.5),
+    ) -> np.ndarray:
+        """Normalize image for model input"""
+        # Convert to numpy array
+        img_array = np.array(image).astype(np.float32) / 255.0
+
+        # Normalize
+        img_array = (img_array - np.array(mean)) / np.array(std)
+
+        # Convert to CHW format
+        img_array = np.transpose(img_array, (2, 0, 1))
+
+        return img_array
+
+    def denormalize_image(
+        self,
+        tensor: np.ndarray,
+        mean: Tuple[float, float, float] = (0.5, 0.5, 0.5),
+        std: Tuple[float, float, float] = (0.5, 0.5, 0.5),
+    ) -> Image.Image:
+        """Denormalize tensor back to PIL Image"""
+        # Convert from CHW to HWC
+        if tensor.ndim == 3 and tensor.shape[0] == 3:
+            tensor = np.transpose(tensor, (1, 2, 0))
+
+        # Denormalize
+        tensor = tensor * np.array(std) + np.array(mean)
+
+        # Clamp and convert to uint8
+        tensor = np.clip(tensor * 255, 0, 255).astype(np.uint8)
+
+        return Image.fromarray(tensor)
+
+    def center_crop(self, image: Image.Image, size: Tuple[int, int]) -> Image.Image:
         """Center crop image to specified size"""
         return ImageOps.fit(image, size, Image.Resampling.LANCZOS)
 
@@ -107,34 +141,96 @@ class ImageProcessor:
 
         return Image.open(io.BytesIO(image_data)).convert("RGB")
 
-    def calculate_hash(self, image: Image.Image) -> str:
+    def calculate_hash(self, image: Image.Image, hash_size: int = 8) -> str:
         """Calculate perceptual hash for duplicate detection"""
-        # Simple implementation - can be enhanced with imagehash library
-        resized = image.resize((8, 8), Image.Resampling.LANCZOS).convert("L")
+        # Resize to hash_size x hash_size and convert to grayscale
+        resized = image.resize(
+            (hash_size, hash_size), Image.Resampling.LANCZOS
+        ).convert("L")
         pixels = list(resized.getdata())
+
+        # Calculate average
         avg = sum(pixels) / len(pixels)
+
+        # Create hash bits
         hash_bits = "".join("1" if pixel > avg else "0" for pixel in pixels)
+
+        # Convert to hex
         return hashlib.md5(hash_bits.encode()).hexdigest()[:16]
 
-    def apply_safety_blur(
-        self, image: Image.Image, blur_regions: List[Tuple[int, int, int, int]]
-    ) -> Image.Image:
-        """Apply blur to sensitive regions (face detection, etc.)"""
-        from PIL import ImageFilter
+    def detect_faces(self, image: Image.Image) -> List[Tuple[int, int, int, int]]:
+        """Detect faces in image using OpenCV"""
+        try:
+            # Convert PIL to OpenCV format
+            img_array = np.array(image)
+            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
 
+            # Load face cascade
+            face_cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            )
+            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
+            # Convert to (x1, y1, x2, y2) format
+            face_boxes = []
+            for x, y, w, h in faces:
+                face_boxes.append((x, y, x + w, y + h))
+
+            return face_boxes
+
+        except Exception as e:
+            logger.warning(f"Face detection failed: {e}")
+            return []
+
+    def apply_safety_blur(
+        self,
+        image: Image.Image,
+        blur_regions: List[Tuple[int, int, int, int]],
+        blur_radius: int = 20,
+    ) -> Image.Image:
+        """Apply blur to sensitive regions"""
         result_image = image.copy()
 
         for x1, y1, x2, y2 in blur_regions:
             # Extract region
             region = result_image.crop((x1, y1, x2, y2))
 
-            # Apply strong blur
-            blurred_region = region.filter(ImageFilter.GaussianBlur(radius=20))
+            # Apply blur
+            blurred_region = region.filter(ImageFilter.GaussianBlur(radius=blur_radius))
 
             # Paste back
             result_image.paste(blurred_region, (x1, y1))
 
         return result_image
+
+    def enhance_image(
+        self,
+        image: Image.Image,
+        brightness: float = 1.0,
+        contrast: float = 1.0,
+        saturation: float = 1.0,
+        sharpness: float = 1.0,
+    ) -> Image.Image:
+        """Apply image enhancements"""
+        enhanced = image.copy()
+
+        if brightness != 1.0:
+            enhancer = ImageEnhance.Brightness(enhanced)
+            enhanced = enhancer.enhance(brightness)
+
+        if contrast != 1.0:
+            enhancer = ImageEnhance.Contrast(enhanced)
+            enhanced = enhancer.enhance(contrast)
+
+        if saturation != 1.0:
+            enhancer = ImageEnhance.Color(enhanced)
+            enhanced = enhancer.enhance(saturation)
+
+        if sharpness != 1.0:
+            enhancer = ImageEnhance.Sharpness(enhanced)
+            enhanced = enhancer.enhance(sharpness)
+
+        return enhanced
 
     def validate_image_content(self, image: Image.Image) -> Dict[str, Any]:
         """Basic image content validation"""
@@ -210,6 +306,99 @@ class ImageProcessor:
             }
 
         return stats
+
+    def apply_watermark(
+        self,
+        image: Image.Image,
+        watermark_text: str = "Generated by AI",
+        position: str = "bottom-right",
+        opacity: float = 0.5,
+    ) -> Image.Image:
+        """Apply text watermark to image"""
+        try:
+            from PIL import ImageDraw, ImageFont
+
+            # Create copy
+            watermarked = image.copy()
+
+            # Create transparent overlay
+            overlay = Image.new("RGBA", watermarked.size, (255, 255, 255, 0))
+            draw = ImageDraw.Draw(overlay)
+
+            # Try to load a font
+            try:
+                font = ImageFont.truetype("arial.ttf", 24)
+            except:
+                font = ImageFont.load_default()
+
+            # Get text size
+            bbox = draw.textbbox((0, 0), watermark_text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+
+            # Calculate position
+            if position == "bottom-right":
+                x = watermarked.width - text_width - 20
+                y = watermarked.height - text_height - 20
+            elif position == "bottom-left":
+                x = 20
+                y = watermarked.height - text_height - 20
+            elif position == "top-right":
+                x = watermarked.width - text_width - 20
+                y = 20
+            elif position == "top-left":
+                x = 20
+                y = 20
+            else:  # center
+                x = (watermarked.width - text_width) // 2
+                y = (watermarked.height - text_height) // 2
+
+            # Draw text
+            alpha = int(255 * opacity)
+            draw.text((x, y), watermark_text, font=font, fill=(255, 255, 255, alpha))
+
+            # Composite
+            watermarked = Image.alpha_composite(watermarked.convert("RGBA"), overlay)
+            return watermarked.convert("RGB")
+
+        except Exception as e:
+            logger.warning(f"Failed to apply watermark: {e}")
+            return image
+
+    def auto_adjust(self, image: Image.Image) -> Image.Image:
+        """Automatically adjust image brightness, contrast and color"""
+        try:
+            # Convert to numpy for analysis
+            img_array = np.array(image)
+
+            # Calculate automatic adjustments
+            brightness_factor = 1.0
+            contrast_factor = 1.0
+
+            # Brightness adjustment based on mean
+            mean_brightness = img_array.mean()
+            if mean_brightness < 100:  # Too dark
+                brightness_factor = 1.2
+            elif mean_brightness > 180:  # Too bright
+                brightness_factor = 0.9
+
+            # Contrast adjustment based on standard deviation
+            contrast_std = img_array.std()
+            if contrast_std < 40:  # Low contrast
+                contrast_factor = 1.3
+            elif contrast_std > 80:  # High contrast
+                contrast_factor = 0.9
+
+            # Apply adjustments
+            enhanced = self.enhance_image(
+                image, brightness=brightness_factor, contrast=contrast_factor
+            )
+
+            return enhanced
+
+        except Exception as e:
+            logger.warning(f"Auto adjustment failed: {e}")
+            return image
 
 
 # Global image processor

@@ -1,0 +1,87 @@
+# 測試環境 Docker Compose 配置
+
+version: '3.9'
+
+services:
+  test-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.test
+    environment:
+      - AI_CACHE_ROOT=/tmp/test_cache
+      - API_PREFIX=/api/v1
+      - ALLOWED_ORIGINS=http://localhost:3000
+      - DEVICE=cpu
+      - DEBUG=true
+      - PYTHONPATH=/app/backend
+    volumes:
+      - ./backend:/app/backend
+      - ./tests:/app/tests
+      - ./test_results:/app/test_results
+      - test_cache:/tmp/test_cache
+    ports:
+      - "8001:8000"  # 避免與開發環境衝突
+    command: >
+      sh -c "
+        python scripts/health_check.py &&
+        python -m pytest tests/ -v --tb=short --junitxml=/app/test_results/junit.xml
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  test-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: test_db
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_pass
+    volumes:
+      - test_db_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+
+volumes:
+  test_cache:
+  test_db_data:
+
+---
+# docker/Dockerfile.test
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# 安裝系統依賴
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# 複製依賴文件
+COPY requirements.txt requirements-test.txt ./
+
+# 安裝 Python 依賴
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -r requirements-test.txt
+
+# 複製代碼
+COPY backend/ backend/
+COPY tests/ tests/
+COPY scripts/ scripts/
+COPY configs/ configs/
+
+# 創建快取目錄
+RUN mkdir -p /tmp/test_cache/{hf,torch,models,datasets,outputs}
+
+# 設置環境變數
+ENV PYTHONPATH=/app/backend
+ENV AI_CACHE_ROOT=/tmp/test_cache
+
+# 健康檢查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python scripts/health_check.py || exit 1
+
+CMD ["python", "-m", "pytest", "tests/", "-v"]

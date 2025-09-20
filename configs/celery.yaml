@@ -1,0 +1,86 @@
+# configs/celery.yaml
+broker:
+  url: "redis://localhost:6379/0"
+  transport_options:
+    visibility_timeout: 3600
+    fanout_prefix: true
+    fanout_patterns: true
+
+backend:
+  url: "redis://localhost:6379/0"
+  result_expires: 3600
+
+worker:
+  prefetch_multiplier: 1
+  max_tasks_per_child: 50
+  task_time_limit: 1800  # 30 minutes
+  task_soft_time_limit: 1500  # 25 minutes
+  concurrency: 2  # Adjust based on GPU memory
+
+queues:
+  default:
+    routing_key: "default"
+    priority: 4
+  vision:
+    routing_key: "vision"
+    priority: 2
+  text:
+    routing_key: "text"
+    priority: 3
+  training:
+    routing_key: "training"
+    priority: 1
+
+task_routes:
+  "backend.jobs.tasks.batch_caption_task": "vision"
+  "backend.jobs.tasks.batch_vqa_task": "vision"
+  "backend.jobs.tasks.batch_chat_task": "text"
+  "backend.jobs.tasks.train_lora_task": "training"
+
+# configs/monitoring.yaml
+logging:
+  level: "INFO"
+  format: "json"
+  handlers:
+    console:
+      enabled: true
+      level: "INFO"
+    file:
+      enabled: true
+      level: "INFO"
+      path: "logs/app.log"
+      max_size: "100MB"
+      backup_count: 5
+    error_file:
+      enabled: true
+      level: "ERROR"
+      path: "logs/error.log"
+
+metrics:
+  collection_interval: 30  # seconds
+  retention_days: 30
+  database: "metrics.db"
+
+alerts:
+  enabled: true
+  thresholds:
+    cpu_percent: 85
+    memory_percent: 90
+    gpu_memory_percent: 95
+    disk_percent: 90
+    task_error_rate: 0.15
+
+dashboard:
+  enabled: true
+  refresh_interval: 30  # seconds
+  max_recent_jobs: 50
+
+performance:
+  batch_size_limits:
+    caption: 20
+    vqa: 10
+    chat: 15
+  timeout_seconds:
+    caption: 60
+    vqa: 120
+    chat: 90
