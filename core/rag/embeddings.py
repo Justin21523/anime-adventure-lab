@@ -54,7 +54,9 @@ class SentenceTransformerEmbedding(BaseEmbeddingModel):
             cache_dir = self.cache.get_path("MODELS_EMBEDDING")
 
             self.model = SentenceTransformer(
-                self.model_name, cache_folder=str(cache_dir), device=self.config.device
+                self.model_name,
+                cache_folder=str(cache_dir),
+                device=self.config.model.device,
             )
 
             self.dimension = self.model.get_sentence_embedding_dimension()
@@ -123,7 +125,9 @@ class TransformerEmbedding(BaseEmbeddingModel):
             self.model = AutoModel.from_pretrained(
                 self.model_name,
                 cache_dir=str(cache_dir),
-                torch_dtype=torch.float16 if self.config.use_fp16 else torch.float32,
+                torch_dtype=(
+                    torch.float16 if self.config.model.use_fp16 else torch.float32
+                ),
                 device_map="auto" if torch.cuda.is_available() else None,
             )
 

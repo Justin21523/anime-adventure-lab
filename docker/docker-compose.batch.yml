@@ -1,0 +1,180 @@
+# docker/docker-compose.batch.yml
+version: "3.9"
+
+services:
+  # Redis for Celery broker and result backend
+  redis:
+    image: redis:7-alpine
+    container_name: multi_modal_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Main API server
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: multi_modal_api
+    restart: unless-stopped
+    environment:
+      - AI_CACHE_ROOT=/warehouse/cache
+      - API_PREFIX=/api/v1
+      - DEVICE=auto
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - ENABLE_METRICS=true
+      - LOG_LEVEL=INFO
+    volumes:
+      - /mnt/ai_warehouse/cache:/warehouse/cache
+      - ../configs:/app/configs:ro
+      - ../logs:/app/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Celery workers for different task types
+  worker-vision:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: multi_modal_worker_vision
+    restart: unless-stopped
+    environment:
+      - AI_CACHE_ROOT=/warehouse/cache
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - LOG_LEVEL=INFO
+    volumes:
+      - /mnt/ai_warehouse/cache:/warehouse/cache
+      - ../configs:/app/configs:ro
+      - ../logs:/app/logs
+    command: python scripts/start_worker.py --queues vision --concurrency 1 --loglevel INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  worker-text:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: multi_modal_worker_text
+    restart: unless-stopped
+    environment:
+      - AI_CACHE_ROOT=/warehouse/cache
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - LOG_LEVEL=INFO
+    volumes:
+      - /mnt/ai_warehouse/cache:/warehouse/cache
+      - ../configs:/app/configs:ro
+      - ../logs:/app/logs
+    command: python scripts/start_worker.py --queues text --concurrency 2 --loglevel INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker-training:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: multi_modal_worker_training
+    restart: unless-stopped
+    environment:
+      - AI_CACHE_ROOT=/warehouse/cache
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - LOG_LEVEL=INFO
+    volumes:
+      - /mnt/ai_warehouse/cache:/warehouse/cache
+      - ../configs:/app/configs:ro
+      - ../logs:/app/logs
+    command: python scripts/start_worker.py --queues training --concurrency 1 --loglevel INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Monitoring dashboard (Gradio)
+  monitoring:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    container_name: multi_modal_monitoring
+    restart: unless-stopped
+    environment:
+      - API_BASE_URL=http://api:8000
+    ports:
+      - "7861:7861"
+    command: python frontend/gradio_app/monitoring_dashboard.py
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Metrics collection daemon
+  metrics-collector:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: multi_modal_metrics
+    restart: unless-stopped
+    environment:
+      - AI_CACHE_ROOT=../ai_warehouse/cache
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=INFO
+    volumes:
+      - /mnt/ai_warehouse/cache:/warehouse/cache
+      - ../configs:/app/configs:ro
+      - ../logs:/app/logs
+    command: python scripts/monitoring_setup.py --daemon --interval 30
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  default:
+    name: multi_modal_network

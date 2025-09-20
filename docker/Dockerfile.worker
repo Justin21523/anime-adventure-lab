@@ -1,0 +1,89 @@
+# docker/Dockerfile.worker
+FROM nvidia/cuda:11.8-devel-ubuntu22.04
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3.10-dev \
+    python3-pip \
+    git \
+    curl \
+    wget \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY backend/ ./backend/
+COPY scripts/ ./scripts/
+COPY configs/ ./configs/
+COPY frontend/gradio_app/ ./frontend/gradio_app/
+
+# Create necessary directories
+RUN mkdir -p logs
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Default command (can be overridden)
+CMD ["python", "scripts/start_worker.py", "--queues", "default,vision,text", "--loglevel", "INFO"]
+
+# Makefile for easy deployment
+# Makefile
+.PHONY: help build up down logs clean test-batch
+
+help:
+@echo "Multi-Modal Lab Batch Processing Commands:"
+@echo "  build       - Build all Docker images"
+@echo "  up          - Start all services"
+@echo "  down        - Stop all services"
+@echo "  logs        - Show logs from all services"
+@echo "  logs-api    - Show API logs"
+@echo "  logs-worker - Show worker logs"
+@echo "  test-batch  - Run batch processing tests"
+@echo "  clean       - Clean up containers and volumes"
+@echo "  status      - Show service status"
+
+build:
+docker-compose -f docker/docker-compose.batch.yml build
+
+up:
+docker-compose -f docker/docker-compose.batch.yml up -d
+
+down:
+docker-compose -f docker/docker-compose.batch.yml down
+
+logs:
+docker-compose -f docker/docker-compose.batch.yml logs -f
+
+logs-api:
+docker-compose -f docker/docker-compose.batch.yml logs -f api
+
+logs-worker:
+docker-compose -f docker/docker-compose.batch.yml logs -f worker-vision worker-text worker-training
+
+status:
+docker-compose -f docker/docker-compose.batch.yml ps
+
+test-batch:
+python scripts/batch_test.py --job-type caption --num-items 3 --monitor --test-monitoring
+
+clean:
+docker-compose -f docker/docker-compose.batch.yml down -v
+docker system prune -f

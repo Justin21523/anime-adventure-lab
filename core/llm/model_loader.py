@@ -43,10 +43,25 @@ class ModelLoadConfig:
     ):
         self.model_name = model_name
         self.device_map = device_map
-        self.torch_dtype = (
-            getattr(torch, torch_dtype) if isinstance(torch_dtype, str) else torch_dtype
-        )
-        self.use_quantization = use_quantization and torch.cuda.is_available()
+        # Handle torch_dtype conversion
+        if isinstance(torch_dtype, str):
+            if torch_dtype == "float16":
+                self.torch_dtype = torch.float16
+            elif torch_dtype == "float32":
+                self.torch_dtype = torch.float32
+            elif torch_dtype == "bfloat16":
+                self.torch_dtype = torch.bfloat16
+            else:
+                self.torch_dtype = getattr(torch, torch_dtype, torch.float16)
+        else:
+            self.torch_dtype = torch_dtype
+
+        # Auto-detect quantization based on GPU availability
+        if use_quantization is None:
+            self.use_quantization = torch.cuda.is_available()
+        else:
+            self.use_quantization = use_quantization and torch.cuda.is_available()
+
         self.quantization_bits = quantization_bits
         self.use_flash_attention = use_flash_attention
         self.trust_remote_code = trust_remote_code
