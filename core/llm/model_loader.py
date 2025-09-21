@@ -8,6 +8,7 @@ import json
 import torch
 import logging
 import hashlib
+import gc
 from typing import Dict, Any, Optional, Union, List
 from pathlib import Path
 from transformers import (
@@ -87,6 +88,11 @@ class ModelLoadConfig:
         config_str = json.dumps(self.to_dict(), sort_keys=True)
         return hashlib.md5(config_str.encode()).hexdigest()
 
+    def __repr__(self) -> str:
+        return (
+            f"ModelLoadConfig({self.model_name}, {self.device_map}, {self.torch_dtype})"
+        )
+
 
 class ModelLoader:
     """Advanced model loader with caching and memory management"""
@@ -96,6 +102,12 @@ class ModelLoader:
         self.cache = get_shared_cache()
         self._loaded_models: Dict[str, Dict[str, Any]] = {}
         self._model_configs: Dict[str, ModelLoadConfig] = {}
+        # In-memory model cache
+        self._model_cache: Dict[
+            str, Dict[str, Union[PreTrainedModel, PreTrainedTokenizer]]
+        ] = {}
+        self._config_cache: Dict[str, ModelLoadConfig] = {}
+        logger.info("ModelLoader initialized")
 
     @handle_cuda_oom
     def load_model(
@@ -122,8 +134,18 @@ class ModelLoader:
             logger.info(f"Model {model_name} already loaded, returning cached instance")
             return self._loaded_models[cache_key]
 
+        # Check if model is already loaded
+        if cache_key in self._model_cache:
+            logger.info(f"Using cached model: {model_name}")
+            return self._model_cache[cache_key]
+
+        logger.info(f"Loading model: {model_name}")
+
         try:
-            logger.info(f"Loading model: {model_name}")
+            # Clear GPU cache before loading
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                gc.collect()
 
             # Load tokenizer first
             tokenizer = self._load_tokenizer(model_name, load_config)
@@ -133,6 +155,9 @@ class ModelLoader:
 
             # Cache the loaded model
             model_dict = {"model": model, "tokenizer": tokenizer}
+
+            self._model_cache[cache_key] = model_dict
+            self._config_cache[cache_key] = load_config
             self._loaded_models[cache_key] = model_dict
             self._model_configs[cache_key] = load_config
 
@@ -146,6 +171,12 @@ class ModelLoader:
 
         except Exception as e:
             logger.error(f"Failed to load model {model_name}: {e}")
+
+            # Clean up on failure
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+
             raise ModelLoadError(model_name, str(e))
 
     def _load_tokenizer(
@@ -158,7 +189,11 @@ class ModelLoader:
             model_name,
             trust_remote_code=load_config.trust_remote_code,
             cache_dir=Path(self.cache.cache_root) / "hf",
-            **load_config.kwargs,
+            **{
+                k: v
+                for k, v in load_config.kwargs.items()
+                if k.startswith("tokenizer_")
+            },
         )
 
         # Setup special tokens
@@ -189,17 +224,36 @@ class ModelLoader:
             "low_cpu_mem_usage": load_config.low_cpu_mem_usage,
             "cache_dir": Path(self.cache.cache_root) / "hf",
         }
+        # Add device map if not CPU-only
+        if load_config.device_map != "cpu":
+            model_kwargs["device_map"] = load_config.device_map
 
+        # Add quantization config
         if quantization_config:
             model_kwargs["quantization_config"] = quantization_config
 
-        # Add custom kwargs
-        model_kwargs.update(load_config.kwargs)
+        # Add custom kwargs (filter out tokenizer-specific ones)
+        custom_kwargs = {
+            k: v
+            for k, v in load_config.kwargs.items()
+            if not k.startswith("tokenizer_")
+        }
+        model_kwargs.update(custom_kwargs)
 
         # Load the model
-        model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
+        try:
+            model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
+        except Exception as e:
+            # Fallback: try loading with minimal config
+            logger.warning(f"Failed to load with full config, trying minimal: {e}")
+            minimal_kwargs = {
+                "torch_dtype": torch.float32,
+                "trust_remote_code": True,
+                "cache_dir": Path(self.cache.cache_root) / "hf",
+            }
+            model = AutoModelForCausalLM.from_pretrained(model_name, **minimal_kwargs)
 
-        # Apply optimizations
+        # Apply post-loading optimizations
         self._apply_model_optimizations(model, load_config)
 
         return model
@@ -247,6 +301,8 @@ class ModelLoader:
 
         # Set model to eval mode for inference
         model.eval()
+
+        logger.info("Applied model optimizations")
 
     def _get_default_config(self, model_name: str) -> ModelLoadConfig:
         """Get default loading configuration for model"""
@@ -353,11 +409,19 @@ class ModelLoader:
                 logger.info(f"Unloaded model: {key}")
 
         # Clear GPU cache if any model was unloaded
-        if unloaded and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            logger.info("GPU cache cleared")
+        if unloaded:
+            # Force garbage collection
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+
+            logger.info(f"Unloaded model: {model_name}")
 
         return unloaded
+
+    def get_loaded_models(self) -> List[str]:
+        """Get list of currently loaded models"""
+        return list(set(key.split(":")[0] for key in self._model_cache.keys()))
 
     def unload_all(self) -> int:
         """Unload all models from memory"""
@@ -416,6 +480,19 @@ class ModelLoader:
             }
 
         return stats
+
+    def cleanup(self):
+        """Clean up all loaded models"""
+        model_count = len(self._model_cache)
+
+        self._model_cache.clear()
+        self._config_cache.clear()
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
+        logger.info(f"Cleaned up {model_count} models from cache")
 
 
 # Global model loader instance
