@@ -7,8 +7,9 @@ Handles multi-turn conversations, session management, and conversation history
 import json
 import uuid
 import logging
+import tiktoken
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Tuple, Optional, Any, Union
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
@@ -36,10 +37,40 @@ class ChatSession:
     max_history: int = 50
     system_prompt: Optional[str] = None
 
-    def add_message(self, message: ChatMessage) -> None:
-        """Add message to session"""
+    def __init__(
+        self,
+        session_id: str,
+        system_prompt: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
+        self.session_id = session_id
+        self.system_prompt = system_prompt
+        self.metadata = metadata or {}
+        self.messages: List[ChatMessage] = []
+        self.created_at = datetime.now()
+        self.last_updated = datetime.now()
+
+        # Add system message if provided
+        if system_prompt:
+            self.messages.append(ChatMessage(role="system", content=system_prompt))
+
+    def add_message(
+        self, role: str, content: str, metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Add a message to the session"""
+        if role not in ["user", "assistant", "system"]:
+            raise ValidationError(
+                "role", role, "Must be one of: user, assistant, system"
+            )
+
+        if not content.strip():
+            raise ValidationError("content", content, "Message content cannot be empty")
+
+        message = ChatMessage(role=role, content=content, metadata=metadata)
         self.messages.append(message)
         self.last_updated = datetime.now()
+
+        logger.debug(f"Added {role} message to session {self.session_id}")
 
         # Trim history if needed
         if len(self.messages) > self.max_history:
@@ -53,13 +84,37 @@ class ChatSession:
             ]
             self.messages = system_messages + recent_messages
 
-    def get_conversation_length(self) -> int:
-        """Get total character length of conversation"""
-        return sum(len(msg.content) for msg in self.messages)
+    def get_messages(
+        self, include_system: bool = True, last_n: Optional[int] = None
+    ) -> List[ChatMessage]:
+        """Get messages from the session"""
+        messages = self.messages.copy()
+
+        if not include_system:
+            messages = [msg for msg in messages if msg.role != "system"]
+
+        if last_n is not None:
+            messages = messages[-last_n:]
+
+        return messages
 
     def get_message_count(self) -> int:
         """Get total message count"""
         return len(self.messages)
+
+    def get_conversation_length(self) -> int:
+        """Get total character length of conversation"""
+        return sum(len(msg.content) for msg in self.messages)
+
+    def clear_messages(self, keep_system: bool = True) -> None:
+        """Clear all messages, optionally keeping system message"""
+        if keep_system and self.messages and self.messages[0].role == "system":
+            self.messages = [self.messages[0]]
+        else:
+            self.messages = []
+
+        self.updated_at = datetime.utcnow()
+        logger.info(f"Cleared messages for session {self.session_id}")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization"""
@@ -67,44 +122,78 @@ class ChatSession:
             "session_id": self.session_id,
             "created_at": self.created_at.isoformat(),
             "last_updated": self.last_updated.isoformat(),
-            "messages": [asdict(msg) for msg in self.messages],
             "metadata": self.metadata,
+            "messages": [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "metadata": msg.metadata,
+                }
+                for msg in self.messages
+            ],
+            "created_at": self.created_at.isoformat(),
             "max_history": self.max_history,
             "system_prompt": self.system_prompt,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatSession":
-        """Create from dictionary"""
-        messages = [ChatMessage(**msg) for msg in data["messages"]]
-        return cls(
+        """Create session from dictionary"""
+        session = cls(
             session_id=data["session_id"],
-            created_at=datetime.fromisoformat(data["created_at"]),
-            last_updated=datetime.fromisoformat(data["last_updated"]),
-            messages=messages,
+            system_prompt=data.get("system_prompt", ""),
             metadata=data.get("metadata", {}),
-            max_history=data.get("max_history", 50),
-            system_prompt=data.get("system_prompt"),
         )
+
+        # Restore timestamps
+        if "created_at" in data:
+            session.created_at = datetime.fromisoformat(data["created_at"])
+        if "last_updated" in data:
+            session.last_updated = datetime.fromisoformat(data["last_updated"])
+
+        # Restore messages (skip system message if it was auto-added)
+        session.messages = []
+        for msg_data in data.get("messages", []):
+            message = ChatMessage(
+                role=msg_data["role"],
+                content=msg_data["content"],
+                metadata=msg_data.get("metadata"),
+            )
+            session.messages.append(message)
+
+        return session
 
 
 class ChatManager:
     """Manages chat sessions and conversation history"""
 
-    def __init__(self):
+    def __init__(self, persist_sessions: bool = True):
         self.config = get_config()
         self.cache = get_shared_cache()
         self._sessions: Dict[str, ChatSession] = {}
+        self.persist_sessions = persist_sessions
         self._session_cleanup_interval = timedelta(hours=24)
 
         # Load existing sessions
         self._load_sessions()
+
+        # Setup persistence directory
+        if persist_sessions:
+            self.cache = get_shared_cache()
+            self.sessions_dir = Path(self.cache.cache_root) / "chat_sessions"
+            self.sessions_dir.mkdir(parents=True, exist_ok=True)
+
+            # Load existing sessions
+            self._load_persisted_sessions()
+
+        logger.info(f"ChatManager initialized (persist={persist_sessions})")
 
     def create_session(
         self,
         system_prompt: Optional[str] = None,
         max_history: int = 50,
         metadata: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
     ) -> str:
         """
         Create new chat session
@@ -117,31 +206,23 @@ class ChatManager:
         Returns:
             Session ID
         """
-        session_id = str(uuid.uuid4())
-        now = datetime.now()
+        if session_id is None:
+            session_id = str(uuid.uuid4())
+
+        if session_id in self._sessions:
+            raise ValidationError("session_id", session_id, "Session ID already exists")
 
         session = ChatSession(
             session_id=session_id,
-            created_at=now,
-            last_updated=now,
-            messages=[],
-            metadata=metadata or {},
-            max_history=max_history,
-            system_prompt=system_prompt,
+            system_prompt=system_prompt,  # type: ignore
+            metadata=metadata,
         )
 
-        # Add system message if provided
-        if system_prompt:
-            session.add_message(
-                ChatMessage(
-                    role="system",
-                    content=system_prompt,
-                    metadata={"auto_generated": True},
-                )
-            )
-
         self._sessions[session_id] = session
-        self._save_session(session_id)
+
+        # Persist if enabled
+        if self.persist_sessions:
+            self._save_session(session_id)
 
         logger.info(f"Created chat session: {session_id}")
         return session_id
@@ -149,9 +230,11 @@ class ChatManager:
     def get_session(self, session_id: str) -> ChatSession:
         """Get chat session by ID"""
         if session_id not in self._sessions:
-            # Try to load from cache
-            if not self._load_session(session_id):
-                raise SessionNotFoundError(session_id)
+            # Try to load from disk
+            if self.persist_sessions and self._load_session(session_id):
+                return self._sessions[session_id]
+
+            raise SessionNotFoundError(session_id)
 
         return self._sessions[session_id]
 
@@ -168,11 +251,11 @@ class ChatManager:
         # Validate message
         self._validate_message(role, content)
 
-        message = ChatMessage(role=role, content=content, metadata=metadata)
-        session.add_message(message)
+        session.add_message(role, content, metadata)
 
-        # Save updated session
-        self._save_session(session_id)
+        # Persist if enabled
+        if self.persist_sessions:
+            self._save_session(session_id)
 
         logger.debug(f"Added message to session {session_id}: {role}")
 
@@ -436,14 +519,43 @@ class ChatManager:
         except Exception as e:
             logger.error(f"Failed to load sessions: {e}")
 
+    def _load_persisted_sessions(self) -> None:
+        """Load all persisted sessions from disk"""
+        if not self.sessions_dir.exists():
+            return
+
+        loaded_count = 0
+        for session_file in self.sessions_dir.glob("*.json"):
+            session_id = session_file.stem
+            if self._load_session(session_id):
+                loaded_count += 1
+
+        logger.info(f"Loaded {loaded_count} persisted chat sessions")
+
+    def cleanup(self) -> None:
+        """Clean up resources"""
+        logger.info(f"ChatManager cleanup: {len(self._sessions)} sessions")
+        self._sessions.clear()
+
 
 # Global chat manager instance
 _chat_manager: Optional[ChatManager] = None
 
 
-def get_chat_manager() -> ChatManager:
+def get_chat_manager(persist_sessions: bool = True) -> ChatManager:
     """Get global chat manager instance"""
     global _chat_manager
     if _chat_manager is None:
-        _chat_manager = ChatManager()
+        _chat_manager = ChatManager(persist_sessions=persist_sessions)
     return _chat_manager
+
+
+def reset_chat_manager():
+    """Reset the global chat manager (for testing)"""
+    global _chat_manager
+
+    if _chat_manager:
+        _chat_manager.cleanup()
+
+    _chat_manager = None
+    logger.info("Chat manager reset")
