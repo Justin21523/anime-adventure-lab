@@ -7,7 +7,7 @@ Implements NSFW detection, sensitive content filtering and safety validation
 import logging
 import re
 import hashlib
-from typing import List, Dict, Any, Optional, Set, Tuple
+from typing import List, Dict, Any, Optional, Set, Tuple, Union
 from pathlib import Path
 import torch
 import numpy as np
@@ -29,12 +29,41 @@ class ContentFilter:
         self.config = get_config()
         self.image_processor = ImageProcessor()
 
+        # 初始化屬性
+        self.blocked_terms: Set[str] = set()
+        self.sensitive_patterns: List[Any] = []
+        self.nsfw_classifier: Optional[Any] = None
+        self.text_classifier: Optional[Any] = None
+
         # Load safety models
         self._load_safety_models()
 
         # Define blocked terms and patterns
         self.blocked_terms = self._load_blocked_terms()
         self.sensitive_patterns = self._compile_patterns()
+
+    def _detect_faces(self, image: Image.Image) -> int:
+        """Basic face detection using OpenCV"""
+        try:
+            # Convert PIL to OpenCV format
+            img_array = np.array(image)
+            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+
+            # Load face cascade - 修正 cv2.data 問題
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"  # type: ignore
+            if not Path(cascade_path).exists():
+                # 備用方案：使用完整路徑或跳過
+                logger.warning("Face cascade not found, skipping face detection")
+                return 0
+
+            face_cascade = cv2.CascadeClassifier(cascade_path)
+            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
+            return len(faces)
+
+        except Exception as e:
+            logger.warning(f"⚠️ Face detection failed: {e}")
+            return 0
 
     def _load_safety_models(self):
         """Load NSFW detection and safety models"""
@@ -89,7 +118,7 @@ class ContentFilter:
         blocked_terms.update(default_blocked)
 
         # Load from config file if exists
-        blocked_file = Path(self.config.safety.blocked_terms_file)
+        blocked_file = Path(self.config.safety.blocked_terms_file)  # type: ignore
         if blocked_file.exists():
             try:
                 with open(blocked_file, "r", encoding="utf-8") as f:
@@ -238,27 +267,8 @@ class ContentFilter:
             logger.error(f"❌ Image safety check failed: {e}")
             raise SafetyError(f"Image safety check failed: {e}")
 
-    def _detect_faces(self, image: Image.Image) -> int:
-        """Basic face detection using OpenCV"""
-        try:
-            # Convert PIL to OpenCV format
-            img_array = np.array(image)
-            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-
-            # Load face cascade
-            face_cascade = cv2.CascadeClassifier(
-                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-            )
-            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-
-            return len(faces)
-
-        except Exception as e:
-            logger.warning(f"⚠️ Face detection failed: {e}")
-            return 0
-
     def apply_safety_filter(self, content: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply comprehensive safety filtering to content"""
+        """Apply comprehensive safety filtering to content - 修正缺失方法"""
         try:
             filtered_content = content.copy()
             safety_report = {
@@ -267,49 +277,86 @@ class ContentFilter:
                 "violations": [],
             }
 
-            # Check text prompts
+            # Check text prompts - 安全檢查 None 值
             if "prompt" in content and content["prompt"]:
-                text_check = self.check_text_safety(content["prompt"])
-                safety_report["checks_performed"].append("text_prompt")
+                try:
+                    text_check = self.check_text_safety(content["prompt"])
+                    safety_report["checks_performed"].append("text_prompt")
 
-                if not text_check["is_safe"]:
-                    safety_report["overall_safe"] = False
-                    safety_report["violations"].extend(text_check["violations"])
+                    if not text_check["is_safe"]:
+                        safety_report["overall_safe"] = False
+                        safety_report["violations"].extend(text_check["violations"])
 
-                    # Apply filtering
-                    if self.config.safety.auto_filter_text:
-                        filtered_content["prompt"] = text_check["filtered_text"]
-                        filtered_content["_original_prompt"] = content["prompt"]
+                        # Apply filtering
+                        auto_filter = getattr(
+                            self.config.safety, "auto_filter_text", False
+                        )
+                        if auto_filter:
+                            filtered_content["prompt"] = text_check["filtered_text"]
+                            filtered_content["_original_prompt"] = content["prompt"]
+                except Exception as e:
+                    logger.warning(f"Text safety check failed: {e}")
 
-            # Check negative prompts
+            # Check negative prompts - 安全檢查 None 值
             if "negative_prompt" in content and content["negative_prompt"]:
-                neg_check = self.check_text_safety(content["negative_prompt"])
-                safety_report["checks_performed"].append("negative_prompt")
+                try:
+                    neg_check = self.check_text_safety(content["negative_prompt"])
+                    safety_report["checks_performed"].append("negative_prompt")
 
-                if (
-                    not neg_check["is_safe"]
-                    and not self.config.safety.allow_negative_filtering
-                ):
-                    safety_report["overall_safe"] = False
-                    safety_report["violations"].extend(neg_check["violations"])
+                    allow_negative = getattr(
+                        self.config.safety, "allow_negative_filtering", True
+                    )
+                    if not neg_check["is_safe"] and not allow_negative:
+                        safety_report["overall_safe"] = False
+                        safety_report["violations"].extend(neg_check["violations"])
+                except Exception as e:
+                    logger.warning(f"Negative prompt safety check failed: {e}")
 
-            # Check input images (for img2img, controlnet, etc.)
-            if "image" in content and content["image"]:
-                image = self.image_processor.load_image(content["image"])
-                image_check = self.check_image_safety(image)
-                safety_report["checks_performed"].append("input_image")
+            # Check input images - 修正 None 檢查
+            if "image" in content and content["image"] is not None:
+                try:
+                    # 確保圖片路徑有效
+                    image_input = content["image"]
+                    if (
+                        isinstance(image_input, (str, Path))
+                        and str(image_input).strip()
+                    ):
+                        image = self.image_processor.load_image(image_input)
+                        image_check = self.check_image_safety(image)
+                        safety_report["checks_performed"].append("input_image")
 
-                if not image_check["is_safe"]:
-                    safety_report["overall_safe"] = False
-                    safety_report["violations"].extend(image_check["violations"])
+                        if not image_check["is_safe"]:
+                            safety_report["overall_safe"] = False
+                            safety_report["violations"].extend(
+                                image_check["violations"]
+                            )
+                    elif hasattr(image_input, "size"):  # PIL Image 物件
+                        image_check = self.check_image_safety(image_input)  # type: ignore
+                        safety_report["checks_performed"].append("input_image")
+
+                        if not image_check["is_safe"]:
+                            safety_report["overall_safe"] = False
+                            safety_report["violations"].extend(
+                                image_check["violations"]
+                            )
+
+                except Exception as e:
+                    logger.warning(f"Image safety check failed: {e}")
 
             filtered_content["_safety_report"] = safety_report
-
             return filtered_content
 
         except Exception as e:
             logger.error(f"❌ Safety filtering failed: {e}")
-            raise SafetyError(f"Safety filtering failed: {e}")
+            # 返回安全的預設值而不是拋出異常
+            return {
+                **content,
+                "_safety_report": {
+                    "overall_safe": False,
+                    "checks_performed": [],
+                    "violations": [{"type": "system_error", "message": str(e)}],
+                },
+            }
 
     def validate_generation_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Validate generation parameters for safety"""
@@ -345,7 +392,9 @@ class ContentFilter:
 
         except Exception as e:
             logger.error(f"❌ Parameter validation failed: {e}")
-            raise ValidationError(f"Parameter validation failed: {e}")
+            raise ValidationError(
+                "parameter_error", f"Parameter validation failed: {e}"
+            )
 
 
 # Global instance
