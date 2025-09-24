@@ -7,6 +7,7 @@ Loads YAML configs with environment variable overrides
 import os
 import yaml
 import logging
+import torch
 from pathlib import Path
 from typing import List, Dict, Any, Optional, NamedTuple
 from dataclasses import dataclass
@@ -16,6 +17,16 @@ from pydantic_settings import SettingsConfigDict, BaseSettings
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def get_optimal_device():
+    """獲取最佳可用設備"""
+    if torch.cuda.is_available():
+        return "cuda"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    else:
+        return "cpu"
 
 
 class APIConfig(BaseSettings):
@@ -45,8 +56,12 @@ class ModelConfig(BaseSettings):
 
     # GPU/Device settings
     cuda_visible_devices: str = Field(default="0", env="CUDA_VISIBLE_DEVICES")  # type: ignore
-    device: str = Field(default="auto", description="Device mapping strategy")
-    device_map: str = Field(default="auto", description="Model device mapping")
+    device: str = Field(
+        default_factory=get_optimal_device, description="Device mapping strategy"
+    )
+    device_map: str = Field(
+        default="cpu", description="Model device mapping"
+    )  # 不使用 "auto"
     torch_dtype: str = Field(default="float16", description="Default torch dtype")
     max_batch_size: int = Field(default=4, description="Max inference batch size")
 
@@ -110,9 +125,41 @@ class SafetyConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="SAFETY_")
 
-    enable_nsfw_filter: bool = Field(default=True, description="ENABLE_NSFW_FILTER")
+    # NSFW 相關設定
     enable_nsfw_filter: bool = Field(default=True, description="Enable NSFW detection")
+    nsfw_threshold: float = Field(default=0.7, description="NSFW detection threshold")
+
+    # Face detection 設定
+    enable_face_detection: bool = Field(
+        default=False, description="Enable face detection"
+    )
     enable_face_blur: bool = Field(default=False, description="Enable face blurring")
+
+    # Text filtering 設定
+    enable_text_filter: bool = Field(
+        default=True, description="Enable text safety filtering"
+    )
+    auto_filter_text: bool = Field(default=False, description="Auto filter unsafe text")
+    allow_negative_filtering: bool = Field(
+        default=True, description="Allow negative prompt filtering"
+    )
+
+    # 生成參數限制
+    max_inference_steps: int = Field(default=50, description="Max inference steps")
+    max_guidance_scale: float = Field(default=20.0, description="Max guidance scale")
+    max_resolution: int = Field(default=1024, description="Max image resolution")
+    max_prompt_length: int = Field(default=500, description="Max prompt length")
+    max_negative_prompt_length: int = Field(
+        default=300, description="Max negative prompt length"
+    )
+
+    # 安全檢查設定
+    blocked_terms_file: Optional[str] = Field(
+        default=None, description="Path to blocked terms file"
+    )
+    toxicity_threshold: float = Field(
+        default=0.8, description="Toxicity detection threshold"
+    )
     enable_watermark: bool = Field(default=False, description="Enable watermarking")
     blocked_terms: str = Field(default="", description="Comma-separated blocked terms")
 
@@ -165,6 +212,7 @@ class CacheConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_")
 
     root: str = Field(default="../ai_warehouse/cache", env="AI_CACHE_ROOT")  # type: ignore
+    redis_enable: bool = Field(default=True, description="REDIS enable")
     redis_url: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")  # type: ignore
     celery_broker_url: str = Field(
         default="redis://localhost:6379/0", description="CELERY_BROKER_URL"
