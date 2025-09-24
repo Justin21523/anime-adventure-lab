@@ -3,6 +3,7 @@
 Unified Exception Classes
 Standardized error handling across all modules
 """
+import logging
 import asyncio
 import hashlib
 import json
@@ -23,6 +24,8 @@ sys.path.append(str(ROOT_DIR))
 from core.config import get_config
 from core.shared_cache import get_shared_cache
 
+logger = logging.getLogger(__name__)
+
 
 class MultiModalLabError(Exception):
     """Base exception for Multi-Modal Lab"""
@@ -32,6 +35,14 @@ class MultiModalLabError(Exception):
         self.error_code = error_code
         self.details = details or {}
         super().__init__(self.message)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "error": self.__class__.__name__,
+            "message": self.message,
+            "error_code": self.error_code,
+            "details": self.details,
+        }
 
 
 class ModelError(MultiModalLabError):
@@ -70,6 +81,97 @@ class CUDAOutOfMemoryError(ModelError):
         if allocated_gb > 0:
             message += f" (allocated: {allocated_gb:.1f}GB)"
         super().__init__(message, model_name, "CUDA_OOM")
+
+
+# === Performance Errors ===
+class PerformanceError(MultiModalLabError):
+    """Performance monitoring and system metric errors"""
+
+    def __init__(
+        self, message: str, metric_type: str = "", error_code: str = "PERFORMANCE_ERROR"
+    ):
+        super().__init__(message, error_code, {"metric_type": metric_type})
+
+
+class SystemMetricsError(PerformanceError):
+    """System metrics collection failed"""
+
+    def __init__(self, message: str):
+        super().__init__(message, "system_metrics", "SYSTEM_METRICS_ERROR")
+
+
+class ProfilingError(PerformanceError):
+    """Request profiling failed"""
+
+    def __init__(self, message: str):
+        super().__init__(message, "profiling", "PROFILING_ERROR")
+
+
+class ResourceLimitExceeded(PerformanceError):
+    """Resource limits exceeded"""
+
+    def __init__(self, resource_type: str, limit: str, current: str):
+        message = f"{resource_type} limit exceeded: {current} > {limit}"
+        super().__init__(message, resource_type, "RESOURCE_LIMIT_EXCEEDED")
+
+
+# API
+class APIError(MultiModalLabError):
+    """API 相關錯誤"""
+
+    def __init__(
+        self, message: str, status_code: int = 500, error_code: str = "API_ERROR"
+    ):
+        super().__init__(message, error_code, {"status_code": status_code})
+        self.status_code = status_code
+
+
+# Validation Errors
+class ValidationError(MultiModalLabError):
+    """驗證錯誤"""
+
+    def __init__(self, field: str, message: str, error_type: str = "validation_error"):
+        super().__init__(
+            f"Validation error in field '{field}': {message}",
+            "VALIDATION_ERROR",
+            {"field": field, "error_type": error_type},
+        )
+
+
+# =============================================================================
+# Processing Related Exceptions
+# =============================================================================
+
+
+class ProcessingError(MultiModalLabError):
+    """處理過程錯誤"""
+
+    def __init__(self, message: str, process_type: str = "unknown"):
+        super().__init__(message, "PROCESSING_ERROR", {"process_type": process_type})
+
+
+class ConversionError(ProcessingError):
+    """格式轉換錯誤"""
+
+    def __init__(self, message: str, source_format: str = "", target_format: str = ""):
+        super().__init__(f"Conversion error: {message}", "conversion")
+        self.details.update(
+            {"source_format": source_format, "target_format": target_format}
+        )
+
+
+class AuthenticationError(APIError):
+    """認證錯誤"""
+
+    def __init__(self, message: str = "Authentication failed"):
+        super().__init__(message, 401, "AUTHENTICATION_ERROR")
+
+
+class AuthorizationError(APIError):
+    """授權錯誤"""
+
+    def __init__(self, message: str = "Access denied"):
+        super().__init__(message, 403, "AUTHORIZATION_ERROR")
 
 
 class ContextLengthExceededError(MultiModalLabError):
@@ -131,6 +233,262 @@ class DocumentIndexError(RAGError):
         super().__init__(message, "DOC_INDEX_ERROR")
 
 
+# Text Processing Errors
+class TextProcessingError(MultiModalLabError):
+    """Text processing failed"""
+
+    def __init__(self, operation: str, reason: str = ""):
+        message = f"Text processing failed: {operation}"
+        if reason:
+            message += f" - {reason}"
+        super().__init__(message, "TEXT_PROCESSING_ERROR")
+
+
+class ChineseProcessingError(TextProcessingError):
+    """Chinese text processing failed"""
+
+    def __init__(self, text: str, reason: str = ""):
+        super().__init__(f"Chinese processing for text: {text[:50]}...", reason)
+
+
+# Session Management Errors
+class SessionNotFoundError(MultiModalLabError):
+    """Session not found in chat manager"""
+
+    def __init__(self, session_id: str):
+        super().__init__(
+            f"Session not found: {session_id}",
+            "SESSION_NOT_FOUND",
+            {"session_id": session_id},
+        )
+
+
+class SessionExpiredError(MultiModalLabError):
+    """Session has expired"""
+
+    def __init__(self, session_id: str, expired_at: str = ""):
+        message = f"Session expired: {session_id}"
+        if expired_at:
+            message += f" (expired at: {expired_at})"
+        super().__init__(message, "SESSION_EXPIRED", {"session_id": session_id})
+
+
+class ConfigurationError(MultiModalLabError):
+    """Configuration error"""
+
+    def __init__(self, config_key: str, reason: str = ""):
+        message = f"Configuration error: {config_key}"
+        if reason:
+            message += f" - {reason}"
+        super().__init__(message, "CONFIG_ERROR", {"config_key": config_key})
+
+
+# Agent and Tool Errors
+class AgentError(MultiModalLabError):
+    """Agent execution failed"""
+
+    def __init__(self, agent_name: str, reason: str = ""):
+        message = f"Agent error: {agent_name}"
+        if reason:
+            message += f" - {reason}"
+        super().__init__(message, "AGENT_ERROR", {"agent_name": agent_name})
+
+
+class ToolExecutionError(AgentError):
+    """Tool execution failed"""
+
+    def __init__(self, tool_name: str, reason: str = ""):
+        super().__init__(f"Tool execution failed: {tool_name}", reason)
+
+
+class ToolNotFoundError(AgentError):
+    """Tool not found in registry"""
+
+    def __init__(self, tool_name: str):
+        super().__init__(f"Tool not found: {tool_name}")
+
+
+# Batch Processing Errors
+class BatchProcessingError(MultiModalLabError):
+    """Batch processing failed"""
+
+    def __init__(self, batch_id: str, reason: str = ""):
+        message = f"Batch processing failed: {batch_id}"
+        if reason:
+            message += f" - {reason}"
+        super().__init__(message, "BATCH_ERROR", {"batch_id": batch_id})
+
+
+class QueueFullError(BatchProcessingError):
+    """Task queue is full"""
+
+    def __init__(self, queue_name: str, max_size: int):
+        super().__init__(
+            f"Queue full: {queue_name} (max: {max_size})",
+            f"Queue {queue_name} has reached maximum capacity",
+        )
+
+
+# Story Engine Errors
+class StoryEngineError(MultiModalLabError):
+    """Story engine errors"""
+
+    def __init__(self, message: str, error_code: str = "STORY_ERROR"):
+        super().__init__(message, error_code)
+
+
+class CharacterError(StoryEngineError):
+    """Character-related errors"""
+
+    def __init__(self, character_name: str, reason: str = ""):
+        message = f"Character error: {character_name}"
+        if reason:
+            message += f" - {reason}"
+        super().__init__(message, "CHARACTER_ERROR")
+
+
+class NarrativeError(StoryEngineError):
+    """Narrative generation errors"""
+
+    def __init__(self, reason: str):
+        super().__init__(f"Narrative generation failed: {reason}", "NARRATIVE_ERROR")
+
+
+# Export and Format Errors
+class ExportError(MultiModalLabError):
+    """Export operation failed"""
+
+    def __init__(self, format_type: str, reason: str = ""):
+        message = f"Export failed: {format_type}"
+        if reason:
+            message += f" - {reason}"
+        super().__init__(message, "EXPORT_ERROR", {"format": format_type})
+
+
+class FormatNotSupportedError(ExportError):
+    """Unsupported format"""
+
+    def __init__(self, format_type: str, supported_formats: List[str] = None):  # type: ignore
+        message = f"Format not supported: {format_type}"
+        if supported_formats:
+            message += f" (supported: {', '.join(supported_formats)})"
+        super().__init__(format_type, message)
+
+
+# Monitoring and Metrics Errors
+class MonitoringError(MultiModalLabError):
+    """Monitoring system errors"""
+
+    def __init__(self, component: str, reason: str = ""):
+        message = f"Monitoring error: {component}"
+        if reason:
+            message += f" - {reason}"
+        super().__init__(message, "MONITORING_ERROR", {"component": component})
+
+
+class MetricsCollectionError(MonitoringError):
+    """Metrics collection failed"""
+
+    def __init__(self, metric_name: str, reason: str = ""):
+        super().__init__(f"Metrics collection failed: {metric_name}", reason)
+
+
+# Cache and Storage Errors
+
+
+class StorageError(MultiModalLabError):
+    """Storage operation failed"""
+
+    def __init__(self, path: str, operation: str, reason: str = ""):
+        message = f"Storage error: {operation} on {path}"
+        if reason:
+            message += f" - {reason}"
+        super().__init__(
+            message, "STORAGE_ERROR", {"path": path, "operation": operation}
+        )
+
+
+class CacheError(MultiModalLabError):
+    """Cache operation failed"""
+
+    def __init__(self, operation: str, reason: str = ""):
+        message = f"Cache error: {operation}"
+        if reason:
+            message += f" - {reason}"
+        super().__init__(message, "CACHE_ERROR", {"operation": operation})
+
+
+class DatabaseError(StorageError):
+    """資料庫錯誤"""
+
+    def __init__(self, message: str, operation: str = "unknown"):
+        super().__init__(f"Database error: {message}", "database")
+        self.details["operation"] = operation
+
+
+# =============================================================================
+# Configuration Related Exceptions
+# =============================================================================
+
+
+class ConfigError(MultiModalLabError):
+    """配置錯誤"""
+
+    def __init__(self, message: str, config_key: str = ""):
+        super().__init__(message, "CONFIG_ERROR", {"config_key": config_key})
+
+
+class EnvironmentError(ConfigError):
+    """環境配置錯誤"""
+
+    def __init__(self, message: str, env_var: str = ""):
+        super().__init__(f"Environment error: {message}", "environment")
+        self.details["env_var"] = env_var
+
+
+# Security and Safety Errors
+class SecurityError(MultiModalLabError):
+    """Security violation"""
+
+    def __init__(self, violation_type: str, details: str = ""):
+        message = f"Security violation: {violation_type}"
+        if details:
+            message += f" - {details}"
+        super().__init__(message, "SECURITY_ERROR", {"violation": violation_type})
+
+
+class SafetyError(MultiModalLabError):
+    """Safety filter errors"""
+
+    def __init__(
+        self, message: str, content_type: str = "", error_code: str = "SAFETY_ERROR"
+    ):
+        super().__init__(message, error_code, {"content_type": content_type})
+
+
+class ContentFilterError(SafetyError):
+    """Content filtered by safety system"""
+
+    def __init__(self, message: str, filter_type: str = "nsfw"):
+        super().__init__(f"Content filtered: {message}", "content_filter")
+        self.details["filter_type"] = filter_type
+
+
+class RateLimitError(SecurityError):
+    """Rate limit exceeded"""
+
+    def __init__(self, resource: str, limit: int):
+        super().__init__(
+            f"Rate limit exceeded: {resource}", f"Exceeded limit of {limit} requests"
+        )
+
+
+class GameEngineError(StoryEngineError):
+    """Game engine specific errors"""
+
+    pass
+
+
 class GameError(MultiModalLabError):
     """Text adventure game errors"""
 
@@ -138,15 +496,6 @@ class GameError(MultiModalLabError):
         self, message: str, session_id: str = "", error_code: str = "GAME_ERROR"
     ):
         super().__init__(message, error_code, {"session_id": session_id})
-
-
-class SessionNotFoundError(GameError):
-    """Game session not found"""
-
-    def __init__(self, session_id: str):
-        super().__init__(
-            f"Game session not found: {session_id}", session_id, "SESSION_NOT_FOUND"
-        )
 
 
 class InvalidChoiceError(GameError):
@@ -188,32 +537,11 @@ class LoRALoadError(LoRAError):
         super().__init__(message, lora_id, "LORA_LOAD_ERROR")
 
 
-class SafetyError(MultiModalLabError):
-    """Safety filter errors"""
-
-    def __init__(
-        self, message: str, content_type: str = "", error_code: str = "SAFETY_ERROR"
-    ):
-        super().__init__(message, error_code, {"content_type": content_type})
-
-
 class ContentBlockedError(SafetyError):
     """Content blocked by safety filter"""
 
     def __init__(self, reason: str, content_type: str = ""):
         super().__init__(f"Content blocked: {reason}", content_type, "CONTENT_BLOCKED")
-
-
-class ValidationError(MultiModalLabError):
-    """Input validation errors"""
-
-    def __init__(self, field: str, value: Any, reason: str = ""):
-        message = f"Validation failed for field '{field}': {value}"
-        if reason:
-            message += f" - {reason}"
-        super().__init__(
-            message, "VALIDATION_ERROR", {"field": field, "value": str(value)}
-        )
 
 
 class ResourceError(MultiModalLabError):
@@ -225,20 +553,6 @@ class ResourceError(MultiModalLabError):
         super().__init__(
             f"{resource_type}: {message}", error_code, {"resource_type": resource_type}
         )
-
-
-class CacheError(ResourceError):
-    """Cache-related errors"""
-
-    def __init__(self, message: str):
-        super().__init__("Cache", message, "CACHE_ERROR")
-
-
-class StorageError(ResourceError):
-    """Storage-related errors"""
-
-    def __init__(self, message: str):
-        super().__init__("Storage", message, "STORAGE_ERROR")
 
 
 # Error handler decorators
@@ -323,3 +637,39 @@ def handle_validation_error(func):
             raise ValidationError("type", str(e), "Type error") from e
 
     return wrapper
+
+
+def handle_api_errors(func):
+    """處理 API 錯誤的通用裝飾器"""
+
+    @wraps(func)
+    async def async_wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except ValidationError:
+            raise  # Re-raise validation errors as-is
+        except ModelError:
+            raise  # Re-raise model errors as-is
+        except Exception as e:
+            logger.error(f"Unexpected error in {func.__name__}: {e}")
+            raise APIError(f"Internal server error: {str(e)}") from e
+
+    @wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except ValidationError:
+            raise  # Re-raise validation errors as-is
+        except ModelError:
+            raise  # Re-raise model errors as-is
+        except Exception as e:
+            logger.error(f"Unexpected error in {func.__name__}: {e}")
+            raise APIError(f"Internal server error: {str(e)}") from e
+
+    # Return appropriate wrapper based on function type
+    import asyncio
+
+    if asyncio.iscoroutinefunction(func):
+        return async_wrapper
+    else:
+        return sync_wrapper
