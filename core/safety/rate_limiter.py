@@ -48,6 +48,10 @@ class InMemoryRateLimiter:
     """In-memory rate limiter for single-instance deployments"""
 
     def __init__(self):
+        self.config = get_config()
+        self.redis = None  # Redis 連接 (optional)
+        self.memory_store = {}  # 記憶體存儲作為備用方案
+
         self.request_history: Dict[str, deque] = defaultdict(
             lambda: deque(maxlen=10000)
         )
@@ -204,6 +208,10 @@ class RedisRateLimiter:
     """Redis-based rate limiter for distributed deployments"""
 
     def __init__(self, redis_url: str = "redis://localhost:6379"):
+        self.config = get_config()
+        self.redis = None  # Redis 連接 (optional)
+        self.memory_store = {}  # 記憶體存儲作為備用方案
+
         try:
             self.redis_client = redis.from_url(redis_url, decode_responses=True)
             self.redis_client.ping()
@@ -227,7 +235,6 @@ class RedisRateLimiter:
             return InMemoryRateLimiter().check_rate_limit(
                 client_id, endpoint, rate_limit
             )
-
         current_time = time.time()
 
         try:
@@ -287,6 +294,28 @@ class RedisRateLimiter:
             # Fallback to allowing request
             return True, {"allowed": True, "error": "Rate limiter unavailable"}
 
+    def get_client_id(self, request) -> str:
+        """Get client ID from request - 簡化版本"""
+        try:
+            # 從請求中提取客戶端 ID
+            if hasattr(request, "client") and hasattr(request.client, "host"):
+                return request.client.host
+            elif hasattr(request, "headers"):
+                return request.headers.get("x-forwarded-for", "unknown")
+            else:
+                return "test_client"
+        except Exception:
+            return "default_client"
+
+    def get_rate_limit_for_endpoint(self, endpoint: str) -> Dict[str, int]:
+        """Get rate limit configuration for specific endpoint"""
+        # 返回預設限制
+        return {
+            "requests_per_minute": 60,
+            "requests_per_hour": 1000,
+            "requests_per_day": 10000,
+        }
+
     def record_request(
         self,
         client_id: str,
@@ -335,8 +364,8 @@ class RateLimiterManager:
         self.config = get_config()
 
         # Initialize appropriate limiter
-        if hasattr(self.config, "redis") and self.config.redis.enabled:
-            self.limiter = RedisRateLimiter(self.config.redis.url)
+        if hasattr(self.config, "redis") and self.config.cache.redis_enable:
+            self.limiter = RedisRateLimiter(self.config.cache.redis_url)
         else:
             self.limiter = InMemoryRateLimiter()
 

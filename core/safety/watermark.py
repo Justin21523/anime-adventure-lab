@@ -8,6 +8,7 @@ import numpy as np
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 import logging
+from core.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -15,32 +16,38 @@ logger = logging.getLogger(__name__)
 class WatermarkGenerator:
     """Generate watermarks for images with attribution info"""
 
-    def __init__(self, cache_root: str):
-        self.cache_root = Path(cache_root)
+    def __init__(self):
+        self.config = get_config()
         self.default_font_size = 12
+        self.default_font = self._load_font()
         self.watermark_opacity = 128  # 50% transparency
 
         # Try to load a font
         self.font = self._load_font()
 
     def _load_font(self) -> ImageFont.ImageFont:
-        """Load font for watermark text"""
-        font_paths = [
-            "/System/Library/Fonts/Arial.ttf",  # macOS
-            "/usr/share/fonts/truetype/arial.ttf",  # Linux
-            "C:/Windows/Fonts/arial.ttf",  # Windows
-            "/usr/share/fonts/TTF/arial.ttf",  # Arch Linux
-        ]
+        """Load watermark font"""
+        try:
+            # 可能的字體路徑
+            font_paths = [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/System/Library/Fonts/Arial.ttf",
+                "C:\\Windows\\Fonts\\arial.ttf",
+            ]
 
-        for font_path in font_paths:
-            if os.path.exists(font_path):
-                try:
-                    return ImageFont.truetype(font_path, self.default_font_size)
-                except Exception:
-                    continue
+            for font_path in font_paths:
+                if os.path.exists(font_path):
+                    try:
+                        return ImageFont.truetype(font_path, self.default_font_size)  # type: ignore
+                    except Exception:
+                        continue
 
-        # Fallback to default font
-        return ImageFont.load_default()
+            # 備用方案：使用預設字體
+            return ImageFont.load_default()  # type: ignore
+
+        except Exception:
+            # 最終備用方案
+            return ImageFont.load_default()  # type: ignore
 
     def add_visible_watermark(
         self,
@@ -50,93 +57,91 @@ class WatermarkGenerator:
         opacity: float = 0.5,
     ) -> Image.Image:
         """Add visible watermark to image"""
+        try:
+            # 建立副本避免修改原圖
+            watermarked = image.copy()
+            draw = ImageDraw.Draw(watermarked)
 
-        # Create a copy to avoid modifying original
-        watermarked = image.copy()
+            # 計算文字位置
+            text_bbox = draw.textbbox((0, 0), text, font=self.default_font)
+            text_width = text_bbox[2] - text_bbox[0]
+            text_height = text_bbox[3] - text_bbox[1]
 
-        # Create watermark overlay
-        overlay = Image.new("RGBA", watermarked.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
+            margin = 10
+            if position == "bottom_right":
+                x = watermarked.width - text_width - margin
+                y = watermarked.height - text_height - margin
+            elif position == "bottom_left":
+                x = margin
+                y = watermarked.height - text_height - margin
+            else:  # top_right
+                x = watermarked.width - text_width - margin
+                y = margin
 
-        # Calculate text size and position
-        bbox = draw.textbbox((0, 0), text, font=self.font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
+            # 繪製半透明背景
+            overlay = Image.new("RGBA", watermarked.size, (255, 255, 255, 0))
+            overlay_draw = ImageDraw.Draw(overlay)
+            overlay_draw.rectangle(
+                [x - 5, y - 2, x + text_width + 5, y + text_height + 2],
+                fill=(0, 0, 0, 128),
+            )
 
-        margin = 10
-        positions = {
-            "bottom_right": (
-                watermarked.width - text_width - margin,
-                watermarked.height - text_height - margin,
-            ),
-            "bottom_left": (margin, watermarked.height - text_height - margin),
-            "top_right": (watermarked.width - text_width - margin, margin),
-            "top_left": (margin, margin),
-            "center": (
-                (watermarked.width - text_width) // 2,
-                (watermarked.height - text_height) // 2,
-            ),
-        }
+            # 合併背景
+            watermarked = Image.alpha_composite(
+                watermarked.convert("RGBA"), overlay
+            ).convert("RGB")
 
-        text_pos = positions.get(position, positions["bottom_right"])
+            # 繪製文字
+            draw = ImageDraw.Draw(watermarked)
+            draw.text((x, y), text, font=self.default_font, fill=(255, 255, 255))
 
-        # Draw text with semi-transparent background
-        padding = 5
-        bg_color = (0, 0, 0, int(opacity * 255 * 0.7))  # Dark background
-        draw.rectangle(
-            [
-                text_pos[0] - padding,
-                text_pos[1] - padding,
-                text_pos[0] + text_width + padding,
-                text_pos[1] + text_height + padding,
-            ],
-            fill=bg_color,
-        )
+            return watermarked
 
-        # Draw text
-        text_color = (255, 255, 255, int(opacity * 255))  # White text
-        draw.text(text_pos, text, font=self.font, fill=text_color)
-
-        # Composite the overlay onto the image
-        if watermarked.mode != "RGBA":
-            watermarked = watermarked.convert("RGBA")
-
-        watermarked = Image.alpha_composite(watermarked, overlay)
-
-        return watermarked
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to add watermark: {e}")
+            return image
 
     def add_invisible_watermark(
         self, image: Image.Image, metadata: Dict[str, Any]
     ) -> Image.Image:
         """Add invisible metadata watermark to image"""
+        try:
+            # Convert to RGB if necessary (PNG metadata preservation)
+            if image.mode == "RGBA":
+                # Create a white background and paste the image
+                background = Image.new("RGB", image.size, (255, 255, 255))
+                background.paste(
+                    image, mask=image.split()[-1] if len(image.split()) == 4 else None
+                )
+                image = background
 
-        # Convert to RGB if necessary (PNG metadata preservation)
-        if image.mode == "RGBA":
-            # Create a white background and paste the image
-            background = Image.new("RGB", image.size, (255, 255, 255))
-            background.paste(
-                image, mask=image.split()[-1] if len(image.split()) == 4 else None
-            )
-            image = background
+            # 正確的方式：使用 PngInfo 處理 metadata
+            if isinstance(metadata, dict):
+                # 建立 PNG metadata
+                png_info = PngInfo()
 
-        # For PNG files, we can add metadata directly
-        png_info = PngInfo()
+                for key, value in metadata.items():
+                    if isinstance(value, (str, int, float)):
+                        png_info.add_text(f"SagaForge_{key}", str(value))
+                    else:
+                        png_info.add_text(f"SagaForge_{key}", str(value))
 
-        # Add metadata to PNG info
-        for key, value in metadata.items():
-            if isinstance(value, (str, int, float)):
-                png_info.add_text(f"SagaForge_{key}", str(value))
-            else:
-                png_info.add_text(
-                    f"SagaForge_{key}", json.dumps(value, ensure_ascii=False)
+                # 將 metadata 附加到圖片
+                # 注意：這裡不是直接修改 image.text，而是在保存時使用 pnginfo 參數
+                # 我們將 metadata 存儲在圖片的 info 字典中
+                if not hasattr(image, "info"):
+                    image.info = {}
+
+                # 更新圖片的 info 字典（這是正確的方式）
+                image.info.update(
+                    {f"SagaForge_{k}": str(v) for k, v in metadata.items()}
                 )
 
-        # Store the PNG info for later saving
-        if not hasattr(image, "text"):
-            image.text = {}
-        image.text.update(png_info.text)
+            return image
 
-        return image
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to add invisible watermark: {e}")
+            return image
 
 
 class AttributionManager:
@@ -144,13 +149,13 @@ class AttributionManager:
 
     def __init__(self, cache_root: str):
         self.cache_root = Path(cache_root)
-        self.watermark_gen = WatermarkGenerator(cache_root)
+        self.watermark_gen = WatermarkGenerator()
 
     def create_attribution_metadata(
         self,
         generation_params: Dict[str, Any],
-        source_files: list = None,
-        model_info: Dict[str, Any] = None,
+        source_files: list = None,  # type: ignore
+        model_info: Dict[str, Any] = None,  # type: ignore
     ) -> Dict[str, Any]:
         """Create comprehensive attribution metadata for generated content"""
 
@@ -213,8 +218,8 @@ class AttributionManager:
         self,
         image: Image.Image,
         generation_params: Dict[str, Any],
-        source_files: list = None,
-        model_info: Dict[str, Any] = None,
+        source_files: list = None,  # type: ignore
+        model_info: Dict[str, Any] = None,  # type: ignore
         add_visible_watermark: bool = True,
         watermark_position: str = "bottom_right",
     ) -> Tuple[Image.Image, Dict[str, Any]]:
@@ -243,13 +248,13 @@ class AttributionManager:
     def save_with_attribution(
         self,
         image: Image.Image,
-        output_path: str,
+        output_path: Optional[Path],  # str
         metadata: Dict[str, Any],
         format: str = "PNG",
     ) -> str:
         """Save image with proper attribution metadata"""
 
-        output_path = Path(output_path)
+        output_path = Path(output_path)  # type: ignore
 
         # Ensure output directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -261,8 +266,11 @@ class AttributionManager:
 
             png_info = PngInfo()
 
-            for key, value in image.text.items():
-                png_info.add_text(key, value)
+            for key, value in metadata.items():
+                if isinstance(value, (str, int, float)):
+                    png_info.add_text(f"SagaForge_{key}", str(value))
+                else:
+                    png_info.add_text(f"SagaForge_{key}", str(value))
 
             image.save(str(output_path), format="PNG", pnginfo=png_info)
         else:
