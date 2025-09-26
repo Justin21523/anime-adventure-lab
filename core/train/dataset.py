@@ -12,6 +12,7 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset, Dataset as HFDataset
+from dataclasses import asdict
 from transformers import CLIPTokenizer
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
@@ -19,7 +20,12 @@ from albumentations.pytorch import ToTensorV2
 from ..config import get_config
 from ..utils.image import ImageProcessor, get_image_processor
 from ..utils.text import TextProcessor, get_text_processor
-from ..exceptions import DatasetError, ValidationError
+from ..exceptions import (
+    DatasetError,
+    ValidationError,
+    DatasetLoadError,
+    DatasetNotFoundError,
+)
 from .config import TrainingConfig, DatasetConfig
 
 logger = logging.getLogger(__name__)
@@ -46,84 +52,166 @@ class TrainingDataset(Dataset):
 
         # Load dataset
         self.dataset = self._load_dataset()
-        self.length = len(self.dataset)
+        self.length = len(self.dataset) if self.dataset else 0
 
         # Setup augmentations
         self.transforms = self._setup_augmentations() if augment else None
 
         logger.info(f"📚 Dataset loaded: {self.length} samples")
 
-    def _load_dataset(self) -> HFDataset:
+    def _load_dataset(self) -> Optional[Union[HFDataset, List[Dict[str, Any]]]]:
         """Load dataset from various sources"""
+        if not self.config.path:
+            raise DatasetError("Dataset path is required")
+
         try:
             if self.config.type == "imagefolder":
-                # Load from image folder structure
-                dataset = load_dataset(
-                    "imagefolder", data_dir=self.config.path, split=self.config.split
-                )
-
+                return self._load_imagefolder()
             elif self.config.type == "json":
-                # Load from JSON file
-                with open(self.config.path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                dataset = HFDataset.from_list(data)
-
+                return self._load_json()
             elif self.config.type == "parquet":
-                # Load from Parquet file
-                df = pd.read_parquet(self.config.path)
-                dataset = HFDataset.from_pandas(df)
-
+                return self._load_parquet()
             elif self.config.type == "huggingface":
-                # Load from Hugging Face Hub
-                dataset = load_dataset(self.config.path, split=self.config.split)
-
+                return self._load_huggingface()
             else:
                 raise DatasetError(f"Unsupported dataset type: {self.config.type}")
 
-            # Validate required columns
-            if self.config.caption_column not in dataset.column_names:
-                raise DatasetError(
-                    f"Caption column '{self.config.caption_column}' not found"
-                )
+        except Exception as e:
+            raise DatasetLoadError(self.config.path, str(e))
 
-            if self.config.image_column not in dataset.column_names:
-                raise DatasetError(
-                    f"Image column '{self.config.image_column}' not found"
-                )
+    def _load_imagefolder(self) -> Union[HFDataset, List[Dict[str, Any]]]:
+        """Load from image folder structure"""
+        data_path = Path(self.config.path)
+        if not data_path.exists():
+            raise DatasetNotFoundError(str(data_path))
 
-            return dataset
+        # Use HuggingFace datasets if available
+        dataset = load_dataset(
+            "imagefolder", data_dir=str(data_path), split=self.config.split
+        )
+        return dataset  # type: ignore
+
+    def _manual_load_imagefolder(self, data_path: Path) -> List[Dict[str, Any]]:
+        """Manually load imagefolder when HF datasets not available"""
+        data = []
+
+        # Look for images in subdirectories
+        for subdir in data_path.iterdir():
+            if subdir.is_dir():
+                caption_file = subdir / "caption.txt"
+
+                # Fix: Handle different image extensions properly
+                image_extensions = [
+                    "*.jpg",
+                    "*.jpeg",
+                    "*.png",
+                    "*.bmp",
+                    "*.webp",
+                    "*.JPG",
+                    "*.JPEG",
+                    "*.PNG",
+                ]
+                image_files = []
+                for ext in image_extensions:
+                    image_files.extend(subdir.glob(ext))
+
+                for image_file in image_files:
+                    item = {"image": str(image_file)}
+
+                    # Try to load caption
+                    if caption_file.exists():
+                        try:
+                            with open(caption_file, "r", encoding="utf-8") as f:
+                                item["text"] = f.read().strip()
+                        except Exception:
+                            item["text"] = ""
+                    else:
+                        item["text"] = subdir.name  # Use folder name as caption
+
+                    data.append(item)
+
+        return data
+
+    def _load_json(self) -> Union[HFDataset, List[Dict[str, Any]]]:
+        """Load from JSON file"""
+        json_path = Path(self.config.path)
+        if not json_path.exists():
+            raise DatasetNotFoundError(str(json_path))
+
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            return HFDataset.from_list(data)
 
         except Exception as e:
-            raise DatasetError(f"Failed to load dataset: {e}")
+            raise DatasetLoadError(str(json_path), f"JSON parsing failed: {e}")
 
-    def _setup_augmentations(self) -> A.Compose:
+    def _load_parquet(self) -> Union[HFDataset, List[Dict[str, Any]]]:
+        """Load from Parquet file"""
+        parquet_path = Path(self.config.path)
+        if not parquet_path.exists():
+            raise DatasetNotFoundError(str(parquet_path))
+
+        try:
+            df = pd.read_parquet(parquet_path)
+            data = df.to_dict("records")
+
+            return HFDataset.from_pandas(df)
+
+        except Exception as e:
+            raise DatasetLoadError(str(parquet_path), f"Parquet loading failed: {e}")
+
+    def _load_huggingface(self) -> HFDataset:
+        """Load from Hugging Face Hub"""
+
+        try:
+            dataset = load_dataset(
+                self.config.path,
+                split=self.config.split,
+                cache_dir=self.config.cache_dir,
+            )
+            return dataset  # type: ignore
+
+        except Exception as e:
+            raise DatasetLoadError(self.config.path, f"HF dataset loading failed: {e}")
+
+    def _setup_augmentations(self) -> Optional[A.Compose]:
         """Setup image augmentations"""
-        augmentations = [
-            # Resize to training resolution
-            A.Resize(self.resolution, self.resolution, interpolation=1),
-            # Color augmentations (mild)
-            A.ColorJitter(
-                brightness=0.1, contrast=0.1, saturation=0.1, hue=0.05, p=0.3
-            ),
-            # Geometric augmentations (very mild for character consistency)
-            A.HorizontalFlip(p=0.5),
-            # Noise and blur (very mild)
-            A.OneOf(
-                [
-                    A.GaussNoise(var_limit=(0, 25), p=0.2),
-                    A.GaussianBlur(blur_limit=3, p=0.1),
-                    A.MotionBlur(blur_limit=3, p=0.1),
-                ],
-                p=0.2,
-            ),
-            # Normalization for diffusion models
-            A.Normalize(
-                mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], max_pixel_value=255.0
-            ),
-            ToTensorV2(),
-        ]
+        try:
+            # Fix: Proper parameter types for albumentations
+            transforms = A.Compose(
+                [  # type: ignore
+                    # Color augmentations (mild)
+                    A.ColorJitter(
+                        brightness=0.1, contrast=0.1, saturation=0.1, hue=0.05, p=0.3
+                    ),
+                    # Geometric augmentations (very mild for character consistency)
+                    A.HorizontalFlip(p=0.5),
+                    # Noise and blur (very mild)
+                    A.OneOf(
+                        [
+                            A.GaussNoise(var_limit=(0, 25), p=0.2),  # type: ignore
+                            A.GaussianBlur(blur_limit=3, p=0.1),
+                            A.MotionBlur(blur_limit=3, p=0.1),
+                        ],
+                        p=0.2,
+                    ),
+                    # Normalization for diffusion models
+                    A.Normalize(
+                        mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], max_pixel_value=255.0  # type: ignore
+                    ),
+                    ToTensorV2(),
+                ]
+            )
+            return transforms
 
-        return A.Compose(augmentations)
+        except Exception as e:
+            logger.warning(f"Failed to setup augmentations: {e}")
+            return None
+
+    def __len__(self) -> int:
+        return self.length
 
     def _preprocess_caption(self, caption: str) -> str:
         """Preprocess caption text"""
@@ -154,68 +242,168 @@ class TrainingDataset(Dataset):
 
         return cleaned_caption
 
-    def __len__(self) -> int:
-        return self.length
-
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """Get a single item from the dataset"""
         try:
-            # Get data item
-            item = self.dataset[idx]
-
-            # Load and process image
-            image = item[self.config.image_column]
-            if isinstance(image, str):
-                # Image path
-                image_path = Path(image)
-                if not image_path.is_absolute():
-                    # Relative to dataset path
-                    image_path = Path(self.config.path).parent / image
-                image = Image.open(image_path).convert("RGB")
-            elif not isinstance(image, Image.Image):
-                # Convert array to PIL
-                image = Image.fromarray(image).convert("RGB")
-
-            # Apply augmentations or simple resize
-            if self.transforms:
-                # Convert PIL to numpy for albumentations
-                image_array = np.array(image)
-                augmented = self.transforms(image=image_array)
-                pixel_values = augmented["image"]
+            # Get item from dataset
+            if isinstance(self.dataset, list):
+                item = self.dataset[idx]
+            elif hasattr(self.dataset, "__getitem__"):
+                item = self.dataset[idx]  # type: ignore
             else:
-                # Simple resize and normalize
-                image = image.resize((self.resolution, self.resolution), Image.LANCZOS)
-                image_array = np.array(image).astype(np.float32) / 255.0
-                # Normalize to [-1, 1]
-                image_array = (image_array - 0.5) / 0.5
-                pixel_values = torch.from_numpy(image_array).permute(2, 0, 1)
+                raise DatasetError(f"Dataset type not supported: {type(self.dataset)}")
 
-            # Process caption
-            caption = item[self.config.caption_column]
-            if isinstance(caption, list):
-                caption = caption[0] if caption else ""
+            # Process image
+            image = self._process_image(item)
 
-            caption = self._preprocess_caption(caption)
+            # Process text
+            text = self._process_text(item)
 
-            # Tokenize caption
-            tokenized = self.tokenizer(
-                caption,
-                padding="max_length",
-                max_length=77,  # CLIP max length
-                truncation=True,
-                return_tensors="pt",
-            )
-
-            return {
-                "pixel_values": pixel_values,
-                "input_ids": tokenized.input_ids.squeeze(0),
-                "attention_mask": tokenized.attention_mask.squeeze(0),
-                "caption": caption,
+            result = {
+                "image": image,
+                "text": text,
+                "original_size": (
+                    (image.height, image.width)
+                    if hasattr(image, "height")
+                    else (512, 512)
+                ),
             }
 
+            # Add tokenized text if tokenizer is available
+            if self.tokenizer and text:
+                try:
+                    tokens = self.tokenizer(
+                        text,
+                        truncation=True,
+                        padding="max_length",
+                        max_length=77,  # Standard CLIP length
+                        return_tensors="pt",
+                    )
+                    result["input_ids"] = tokens.input_ids.squeeze()
+                    result["attention_mask"] = tokens.attention_mask.squeeze()
+                except Exception as e:
+                    logger.warning(f"Tokenization failed for item {idx}: {e}")
+
+            return result
+
         except Exception as e:
-            logger.warning(f"⚠️ Failed to process item {idx}: {e}")
-            # Return next item to avoid training interruption
-            return self.__getitem__((idx + 1) % self.length)
+            logger.error(f"Failed to get item {idx}: {e}")
+            # Return a fallback item
+            return self._get_fallback_item()
+
+    def _process_image(self, item: Dict[str, Any]) -> Image.Image:
+        """Process image from dataset item"""
+        image_key = self.config.image_column
+
+        try:
+            if image_key in item:
+                image_data = item[image_key]
+
+                # Handle different image formats
+                if isinstance(image_data, str):
+                    # File path
+                    image_path = Path(image_data)
+                    if not image_path.is_absolute():
+                        # Make relative paths absolute
+                        base_path = Path(self.config.path).parent
+                        image_path = base_path / image_data
+
+                    image = Image.open(image_path).convert("RGB")
+
+                elif isinstance(image_data, Image.Image):
+                    # PIL Image
+                    image = image_data.convert("RGB")
+
+                elif hasattr(image_data, "save"):
+                    # HF Image object
+                    image = image_data.convert("RGB")
+
+                else:
+                    raise DatasetError(f"Unsupported image format: {type(image_data)}")
+
+                # Resize image
+                if self.resolution != image.size[0] or self.resolution != image.size[1]:
+                    image = image.resize(
+                        (self.resolution, self.resolution), Image.Resampling.LANCZOS
+                    )
+
+                # Apply transforms if available
+                if self.transforms:
+                    # Convert to numpy for albumentations
+                    image_np = np.array(image)
+                    transformed = self.transforms(image=image_np)
+
+                    # If transforms return tensor, convert back to PIL for consistency
+                    if isinstance(transformed["image"], torch.Tensor):
+                        # Convert from tensor back to PIL Image
+                        tensor_img = transformed["image"]
+                        if tensor_img.shape[0] == 3:  # CHW format
+                            tensor_img = tensor_img.permute(1, 2, 0)  # HWC format
+
+                        # Denormalize from [-1, 1] to [0, 255]
+                        tensor_img = (tensor_img + 1.0) * 127.5
+                        tensor_img = tensor_img.clamp(0, 255).byte()
+
+                        image = Image.fromarray(tensor_img.numpy(), "RGB")
+                    else:
+                        image = Image.fromarray(transformed["image"], "RGB")
+
+                return image
+
+            else:
+                raise DatasetError(f"Image column '{image_key}' not found in item")
+
+        except Exception as e:
+            logger.error(f"Image processing failed: {e}")
+            # Return a black placeholder image
+            return Image.new("RGB", (self.resolution, self.resolution), color=(0, 0, 0))
+
+    def _process_text(self, item: Dict[str, Any]) -> str:
+        """Process text/caption from dataset item"""
+        text_key = self.config.caption_column
+
+        try:
+            if text_key in item:
+                text = item[text_key]
+                if isinstance(text, str):
+                    return text.strip()
+                else:
+                    return str(text).strip()
+            else:
+                logger.warning(f"Text column '{text_key}' not found in item")
+                return ""
+
+        except Exception as e:
+            logger.error(f"Text processing failed: {e}")
+            return ""
+
+    def _get_fallback_item(self) -> Dict[str, Any]:
+        """Return a fallback item when loading fails"""
+        fallback_image = Image.new(
+            "RGB", (self.resolution, self.resolution), color=(128, 128, 128)
+        )
+
+        result = {
+            "image": fallback_image,
+            "text": "fallback image",
+            "original_size": (self.resolution, self.resolution),
+        }
+
+        if self.tokenizer:
+            try:
+                tokens = self.tokenizer(
+                    "fallback image",
+                    truncation=True,
+                    padding="max_length",
+                    max_length=77,
+                    return_tensors="pt",
+                )
+                result["input_ids"] = tokens.input_ids.squeeze()
+                result["attention_mask"] = tokens.attention_mask.squeeze()
+            except Exception:
+                pass
+
+        return result
 
 
 class DatasetProcessor:
@@ -248,22 +436,22 @@ class DatasetProcessor:
 
             # Basic statistics
             stats = {
-                "total_samples": len(dataset),
+                "total_samples": len(dataset),  # type: ignore
                 "columns": dataset.column_names,
-                "features": dict(dataset.features),
+                "features": dict(dataset.features),  # type: ignore
             }
 
             # Image analysis (sample-based for performance)
-            if "image" in dataset.column_names:
+            if "image" in dataset.column_names:  # type: ignore
                 image_stats = self._analyze_images(
-                    dataset, sample_size=min(100, len(dataset))
+                    dataset, sample_size=min(100, len(dataset))  # type: ignore
                 )
                 stats["images"] = image_stats
 
             # Text analysis
-            if "text" in dataset.column_names:
+            if "text" in dataset.column_names:  # type: ignore
                 text_stats = self._analyze_captions(
-                    dataset, sample_size=min(1000, len(dataset))
+                    dataset, sample_size=min(1000, len(dataset))  # type: ignore
                 )
                 stats["captions"] = text_stats
 
@@ -392,18 +580,18 @@ class DatasetProcessor:
                 return issues
 
             # Check required columns
-            if dataset_config.caption_column not in dataset.column_names:
+            if dataset_config.caption_column not in dataset.column_names:  # type: ignore
                 issues.append(
                     f"Caption column '{dataset_config.caption_column}' not found"
                 )
 
-            if dataset_config.image_column not in dataset.column_names:
+            if dataset_config.image_column not in dataset.column_names:  # type: ignore
                 issues.append(f"Image column '{dataset_config.image_column}' not found")
 
             # Validate sample data
-            if len(dataset) > 0:
+            if len(dataset) > 0:  # type: ignore
                 try:
-                    sample = dataset[0]
+                    sample = dataset[0]  # type: ignore
 
                     # Check image
                     image = sample[dataset_config.image_column]
@@ -474,6 +662,72 @@ class DatasetProcessor:
                 logger.warning(f"⚠️ Failed to create validation dataset: {e}")
 
         return train_dataset, val_dataset
+
+
+class DatasetFactory:
+    """Factory for creating training datasets"""
+
+    @staticmethod
+    def create_dataset(
+        config: DatasetConfig,
+        tokenizer: Optional[Any] = None,
+        resolution: int = 512,
+        augment: bool = True,
+    ) -> TrainingDataset:
+        """Create a training dataset from configuration"""
+        return TrainingDataset(
+            config=config,
+            tokenizer=tokenizer,  # type: ignore
+            resolution=resolution,
+            augment=augment,
+        )
+
+    @staticmethod
+    def create_dataloader(
+        dataset: TrainingDataset,
+        batch_size: int = 1,
+        shuffle: bool = True,
+        num_workers: int = 0,
+        **kwargs,
+    ) -> DataLoader:
+        """Create a DataLoader from dataset"""
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+            drop_last=True,  # Important for training consistency
+            **kwargs,
+        )
+
+    @staticmethod
+    def validate_dataset_config(config: DatasetConfig) -> List[str]:
+        """Validate dataset configuration"""
+        warnings = []
+
+        # Check path
+        if not config.path:
+            warnings.append("Dataset path is empty")
+        elif not Path(config.path).exists():
+            warnings.append(f"Dataset path does not exist: {config.path}")
+
+        # Check type
+        supported_types = ["imagefolder", "json", "parquet", "huggingface"]
+        if config.type not in supported_types:
+            warnings.append(f"Unsupported dataset type: {config.type}")
+
+        # Check required dependencies
+        if config.type == "huggingface":
+            warnings.append(
+                "HuggingFace datasets library required for huggingface type"
+            )
+
+        # Check validation split
+        if not (0.0 <= config.validation_split <= 1.0):
+            warnings.append("Validation split must be between 0.0 and 1.0")
+
+        return warnings
 
 
 class ImageCaptionDataset(Dataset):
@@ -549,3 +803,57 @@ class ImageCaptionDataset(Dataset):
         caption = row.get("caption", "")
 
         return {"image": image, "caption": caption, "image_path": str(image_path)}
+
+
+# Utility functions
+
+
+def get_dataset_info(dataset_path: str) -> Dict[str, Any]:
+    """Get basic information about a dataset"""
+    path = Path(dataset_path)
+
+    info = {
+        "path": str(path),
+        "exists": path.exists(),
+        "type": "unknown",
+        "estimated_size": 0,
+        "num_files": 0,
+    }
+
+    if not path.exists():
+        return info
+
+    try:
+        if path.is_file():
+            # Single file dataset
+            if path.suffix.lower() == ".json":
+                info["type"] = "json"
+                with open(path, "r") as f:
+                    data = json.load(f)
+                    info["estimated_size"] = len(data) if isinstance(data, list) else 1
+            elif path.suffix.lower() == ".parquet":
+                info["type"] = "parquet"
+                df = pd.read_parquet(path)
+                info["estimated_size"] = len(df)
+
+            info["num_files"] = 1
+
+        elif path.is_dir():
+            # Directory dataset
+            info["type"] = "imagefolder"
+
+            # Count image files
+            image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+            image_files = []
+
+            for ext in image_extensions:
+                image_files.extend(path.rglob(f"*{ext}"))
+                image_files.extend(path.rglob(f"*{ext.upper()}"))
+
+            info["num_files"] = len(image_files)
+            info["estimated_size"] = len(image_files)
+
+    except Exception as e:
+        logger.error(f"Failed to analyze dataset {dataset_path}: {e}")
+
+    return info

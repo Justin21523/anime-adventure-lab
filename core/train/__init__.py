@@ -3,25 +3,92 @@
 Training Module
 LoRA training, dataset management, and evaluation
 """
+from .config import (
+    DatasetConfig,
+    ModelConfig,
+    LoRAConfig,
+    OptimizationConfig,
+    TrainingConfig,
+    TrainingConfigManager,
+    get_training_config_manager,
+    # Fix: 添加缺失的導入
+    LoRATrainingConfig,
+    load_training_config,
+    AnimeDatasetConfig,
+    create_default_anime_config,
+    VAEConfig,
+    NoiseSchedulerConfig,
+)
+from .dataset import (
+    TrainingDataset,
+    DatasetFactory,
+    get_dataset_info,
+    ImageCaptionDataset,
+)
+from .evaluators import (
+    EvaluationMetrics,
+    ModelEvaluator,
+    get_model_evaluator,
+    # Fix: 添加整合的舊版評估器
+    TrainingEvaluator,
+    CLIPSimilarityEvaluator,
+    TagConsistencyEvaluator,
+    get_training_evaluator,
+    get_clip_evaluator,
+    get_tag_evaluator,
+)
 
-from .lora_trainer import LoRATrainer, LoRATrainingConfig, load_training_config
-from .config import TrainingConfigManager, get_training_config_manager
-from .dataset import TrainingDataset, DatasetProcessor, get_dataset_processor
-from .evaluators import ModelEvaluator, EvaluationMetrics, get_model_evaluator
-from .registry import TrainingRegistry, get_training_registry
+from .lora_trainer import (
+    LoRATrainer,
+    TrainingManager,
+    create_lora_trainer,
+    train_lora_from_config,
+    AnimeDataset,
+)
+
+from .registry import (
+    ModelRegistry,
+    get_model_registry,
+)
+
 
 __all__ = [
-    "LoRATrainer",
-    "LoRATrainingConfig",
-    "load_training_config",
+    # Config classes and functions
+    "DatasetConfig",
+    "ModelConfig",
+    "LoRAConfig",
+    "OptimizationConfig",
+    "TrainingConfig",
     "TrainingConfigManager",
     "get_training_config_manager",
+    "LoRATrainingConfig",  # Fix: 添加到導出列表
+    "load_training_config",  # Fix: 添加到導出列表
+    "AnimeDatasetConfig",
+    "create_default_anime_config",
+    "VAEConfig",
+    "NoiseSchedulerConfig",
+    # Dataset classes
     "TrainingDataset",
-    "DatasetProcessor",
-    "get_dataset_processor",
-    "ModelEvaluator",
+    "DatasetFactory",
+    "get_dataset_info",
+    "ImageCaptionDataset",
+    # Evaluation classes
     "EvaluationMetrics",
+    "ModelEvaluator",
     "get_model_evaluator",
-    "TrainingRegistry",
-    "get_training_registry",
+    "TrainingEvaluator",
+    "CLIPSimilarityEvaluator",
+    "TagConsistencyEvaluator",
+    "get_training_evaluator",
+    "get_clip_evaluator",
+    "get_tag_evaluator",
+    # Registry classes
+    "ModelRegistry",
+    "get_model_registry",
+    # Training classes (may not be available)
+    "LoRATrainer",
+    "TrainingManager",
+    "create_lora_trainer",
+    "train_lora_from_config",
+    "AnimeDataset",
 ]
