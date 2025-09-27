@@ -3,6 +3,7 @@ import os
 import json
 import hashlib
 from datetime import datetime
+import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 import torch
@@ -19,7 +20,11 @@ from diffusers.schedulers.scheduling_dpmsolver_multistep import (
 from diffusers.schedulers.scheduling_euler_ancestral_discrete import (
     EulerAncestralDiscreteScheduler,
 )
-
+from diffusers.pipelines.controlnet.pipeline_controlnet import (
+    StableDiffusionControlNetPipeline,
+)
+from diffusers.schedulers.scheduling_euler_discrete import EulerDiscreteScheduler
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from PIL import Image
 import yaml
 
@@ -30,6 +35,138 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
 from core.shared_cache import get_shared_cache
+
+logger = logging.getLogger(__name__)
+
+
+class PipelineManager:
+    """Manages diffusion pipeline lifecycle and optimization - COMPLETE"""
+
+    def __init__(self, cache_root: str, device: str = "cuda"):
+        self.cache_root = Path(cache_root)
+        self.device = device
+        self.pipeline = None
+        self.model_cache_dir = self.cache_root / "models"
+        self.model_cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Initialize optimization settings
+        self.optimization_settings = {
+            "enable_attention_slicing": True,
+            "enable_vae_slicing": True,
+            "enable_cpu_offload": False,
+            "use_fp16": torch.cuda.is_available(),
+            "enable_xformers": True,
+        }
+
+        logger.info(f"PipelineManager initialized with device: {device}")
+
+    async def load_pipeline(self, model_id: str, **kwargs) -> DiffusionPipeline:
+        """Load diffusion pipeline with optimizations"""
+        try:
+            logger.info(f"Loading pipeline: {model_id}")
+
+            # Determine pipeline type
+            pipeline_class = self._get_pipeline_class(model_id)
+
+            # Prepare loading arguments
+            load_args = {
+                "cache_dir": str(self.model_cache_dir),
+                "torch_dtype": (
+                    torch.float16
+                    if self.optimization_settings["use_fp16"]
+                    else torch.float32
+                ),
+                **kwargs,
+            }
+
+            # Load pipeline
+            pipeline = pipeline_class.from_pretrained(model_id, **load_args)
+
+            # Move to device
+            if self.device != "auto":
+                pipeline = pipeline.to(self.device)
+
+            # Apply optimizations
+            pipeline = self._apply_optimizations(pipeline)
+
+            self.pipeline = pipeline
+            logger.info(f"Pipeline loaded and optimized: {model_id}")
+            return pipeline
+
+        except Exception as e:
+            logger.error(f"Pipeline loading failed: {e}")
+            raise RuntimeError(f"Failed to load pipeline {model_id}: {e}")
+
+    def _get_pipeline_class(self, model_id: str):
+        """Determine appropriate pipeline class based on model"""
+        model_id_lower = model_id.lower()
+
+        if "xl" in model_id_lower or "sdxl" in model_id_lower:
+            return StableDiffusionXLPipeline
+        else:
+            return StableDiffusionPipeline
+
+    def _apply_optimizations(self, pipeline) -> DiffusionPipeline:
+        """Apply memory and performance optimizations"""
+
+        # Enable attention slicing for memory efficiency
+        if self.optimization_settings["enable_attention_slicing"]:
+            try:
+                pipeline.enable_attention_slicing()
+                logger.debug("Attention slicing enabled")
+            except Exception as e:
+                logger.warning(f"Failed to enable attention slicing: {e}")
+
+        # Enable VAE slicing for large images
+        if self.optimization_settings["enable_vae_slicing"]:
+            try:
+                pipeline.enable_vae_slicing()
+                logger.debug("VAE slicing enabled")
+            except Exception as e:
+                logger.warning(f"Failed to enable VAE slicing: {e}")
+
+        # Enable CPU offload if needed
+        if self.optimization_settings["enable_cpu_offload"]:
+            try:
+                pipeline.enable_model_cpu_offload()
+                logger.debug("CPU offload enabled")
+            except Exception as e:
+                logger.warning(f"Failed to enable CPU offload: {e}")
+
+        # Enable xFormers if available
+        if self.optimization_settings["enable_xformers"]:
+            try:
+                pipeline.enable_xformers_memory_efficient_attention()
+                logger.debug("xFormers attention enabled")
+            except Exception as e:
+                logger.debug(f"xFormers not available: {e}")
+
+        return pipeline
+
+    def get_scheduler_options(self) -> Dict[str, Any]:
+        """Get available scheduler options"""
+        return {
+            "euler": EulerDiscreteScheduler,
+            "dpm": DPMSolverMultistepScheduler,
+            "default": None,  # Keep original scheduler
+        }
+
+    def set_scheduler(self, scheduler_name: str):
+        """Change pipeline scheduler"""
+        if self.pipeline is None:
+            raise RuntimeError("No pipeline loaded")
+
+        scheduler_classes = self.get_scheduler_options()
+
+        if scheduler_name not in scheduler_classes:
+            raise ValueError(f"Unknown scheduler: {scheduler_name}")
+
+        if scheduler_classes[scheduler_name] is not None:
+            self.pipeline.scheduler = scheduler_classes[scheduler_name].from_config(
+                self.pipeline.scheduler.config
+            )
+            logger.info(f"Scheduler changed to: {scheduler_name}")
+
 
 # Global pipeline cache
 _pipelines = {}
@@ -335,4 +472,4 @@ class T2IPipeline:
 
 
 # Global instance
-t2i_pipeline = T2IPipeline(low_vram=True)
+t2i_pipeline = T2IPipeline(low_vram=False)
