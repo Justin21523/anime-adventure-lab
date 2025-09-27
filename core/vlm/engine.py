@@ -35,7 +35,6 @@ class VLMEngine:
     def __init__(self):
         self.config = get_config()
         self.cache = get_shared_cache()
-        self.image_processor = ImageProcessor()
 
         # Core processors
         self.image_processor = ImageProcessor()
@@ -49,13 +48,66 @@ class VLMEngine:
         )
         self.vqa_pipeline = VQAPipeline(self.model_manager, self.image_processor)
 
+        # 添加缺失的屬性
+        self.caption_model = None
+        self.caption_processor = None
+        self.vqa_model = None
+        self.vqa_processor = None
+
+        # 模型載入狀態
+        self._models_loaded = False
+        self._caption_loaded = False
+        self._vqa_loaded = False
+
     def load_caption_model(self, model_name: Optional[str] = None) -> None:
         """Load image captioning model"""
-        self.model_manager.load_caption_model(model_name)
+        try:
+            if self._caption_loaded:
+                logger.info("Caption model already loaded")
+                return
+
+            model_name = model_name or self.config.models.caption_model
+            logger.info(f"Loading caption model: {model_name}")
+
+            # 使用model_manager載入模型
+            self.model_manager.load_caption_model(model_name)
+
+            # 獲取載入的模型和處理器
+            models = self.model_manager.get_models()
+            self._caption_model = models[0]  # caption_model
+            self._caption_processor = models[1]  # caption_processor
+
+            self._caption_loaded = True
+            logger.info(f"Caption model loaded successfully: {model_name}")
+
+        except Exception as e:
+            logger.error(f"Failed to load caption model: {e}")
+            raise ModelLoadError(f"Caption model loading failed: {str(e)}")
 
     def load_vqa_model(self, model_name: Optional[str] = None) -> None:
         """Load VQA model"""
-        self.model_manager.load_vqa_model(model_name)
+        try:
+            if self._vqa_loaded:
+                logger.info("VQA model already loaded")
+                return
+
+            model_name = model_name or self.config.models.vqa_model
+            logger.info(f"Loading VQA model: {model_name}")
+
+            # 使用model_manager載入模型
+            self.model_manager.load_vqa_model(model_name)
+
+            # 獲取載入的模型和處理器
+            models = self.model_manager.get_models()
+            self._vqa_model = models[2]  # vqa_model
+            self._vqa_processor = models[3]  # vqa_processor
+
+            self._vqa_loaded = True
+            logger.info(f"VQA model loaded successfully: {model_name}")
+
+        except Exception as e:
+            logger.error(f"Failed to load VQA model: {e}")
+            raise ModelLoadError(f"VQA model loading failed: {str(e)}")
 
     @handle_cuda_oom
     @handle_model_error
@@ -71,6 +123,8 @@ class VLMEngine:
     ) -> Dict[str, Any]:
         """Generate image caption with advanced preprocessing options"""
         try:
+            if not self._caption_loaded:
+                self.load_caption_model()
             # Load base image
             pil_image = self.image_processor.load_image(image)
 
@@ -108,6 +162,27 @@ class VLMEngine:
             logger.error(f"Enhanced caption generation failed: {e}")
             raise VLMError(f"Failed to generate caption: {str(e)}")
 
+    def caption_image(
+        self, image_path: str, max_length: int = 50, num_beams: int = 3, **kwargs
+    ) -> Dict[str, Any]:
+        """Generate image caption (wrapper for caption method)"""
+        return self.caption(
+            image=image_path, max_length=max_length, num_beams=num_beams, **kwargs
+        )
+
+    def visual_question_answering(
+        self, image_path: str, question: str, max_length: int = 100, **kwargs
+    ) -> Dict[str, Any]:
+        """Visual Question Answering (wrapper method)"""
+        # Load image
+        pil_image = self.image_processor.load_image(image_path)
+
+        # Call VQA pipeline
+        result = self.vqa_pipeline.answer_question(
+            image=pil_image, question=question, max_length=max_length, **kwargs
+        )
+        return result
+
     @handle_cuda_oom
     @handle_model_error
     def vqa(
@@ -115,6 +190,7 @@ class VLMEngine:
         image: Union[str, bytes, Image.Image],
         question: str,
         max_length: int = 100,
+        temperature: float = 0.7,
         enhance_image: bool = True,
         process_question: bool = True,
         analyze_quality: bool = False,
@@ -122,6 +198,8 @@ class VLMEngine:
     ) -> Dict[str, Any]:
         """Answer question about image with enhanced processing"""
         try:
+            if not self._vqa_loaded:
+                self.load_vqa_model()
             # Load base image
             pil_image = self.image_processor.load_image(image)
 
@@ -747,9 +825,44 @@ class VLMEngine:
             },
         }
 
+    def get_model_info(self) -> Dict[str, Any]:
+        """獲取模型資訊"""
+        return {
+            "caption_loaded": self._caption_loaded,
+            "vqa_loaded": self._vqa_loaded,
+            "models_loaded": self._models_loaded,
+            "caption_model_name": getattr(
+                self.model_manager, "_caption_model_name", None
+            ),
+            "vqa_model_name": getattr(self.model_manager, "_vqa_model_name", None),
+            "device_info": {
+                "cuda_available": torch.cuda.is_available(),
+                "cuda_device_count": (
+                    torch.cuda.device_count() if torch.cuda.is_available() else 0
+                ),
+            },
+        }
+
     def unload_models(self) -> None:
         """Unload all VLM models to free memory"""
-        self.model_manager.unload_all_models()
+        try:
+            self.model_manager.unload_all_models()
+            self._caption_model = None
+            self._caption_processor = None
+            self._vqa_model = None
+            self._vqa_processor = None
+            self._caption_loaded = False
+            self._vqa_loaded = False
+            self._models_loaded = False
+
+            # 強制垃圾回收
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            logger.info("All VLM models unloaded successfully")
+
+        except Exception as e:
+            logger.error(f"Failed to unload models: {e}")
 
     def get_status(self) -> Dict[str, Any]:
         """Get comprehensive VLM engine status"""
@@ -794,4 +907,4 @@ def reset_vlm_engine() -> None:
     global _vlm_engine
     if _vlm_engine is not None:
         _vlm_engine.unload_models()
-        _vlm_engine = None
+    _vlm_engine = None
