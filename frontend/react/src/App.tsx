@@ -10,8 +10,9 @@ import { StoryGameScreen } from './features/story/components/StoryGameScreen'
 import { RAGManagement } from './features/rag/components/RAGManagement'
 import { BatchMonitor } from './features/batch/components/BatchMonitor'
 import { AgentSystem } from './features/agent/components/AgentSystem'
+import { T2IManagement } from './features/t2i/components/T2IManagement'
 
-type Route = 'home' | 'new-story' | 'game' | 'rag' | 'batch' | 'agent'
+type Route = 'home' | 'new-story' | 'game' | 'rag' | 'batch' | 'agent' | 't2i'
 
 function App() {
   const [route, setRoute] = useState<Route>('home')
@@ -73,6 +74,13 @@ function App() {
                   >
                     Agent
                   </Button>
+                  <Button
+                    variant={route === 't2i' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setRoute('t2i')}
+                  >
+                    場景生成
+                  </Button>
                 </div>
               </div>
             </div>
@@ -107,6 +115,8 @@ function App() {
         {route === 'batch' && <BatchMonitor />}
 
         {route === 'agent' && <AgentSystem />}
+
+        {route === 't2i' && <T2IManagement />}
       </div>
 
       {/* React Query DevTools (only in development) */}
