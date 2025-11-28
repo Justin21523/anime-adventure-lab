@@ -3,6 +3,7 @@ import { useStorySession } from '../hooks/useStorySession'
 import { NarrativeDisplay } from './NarrativeDisplay'
 import { PlayerInput } from './PlayerInput'
 import { CharacterSheet } from './CharacterSheet'
+import { SceneVisualizer, SceneVisualizerSkeleton } from './SceneVisualizer'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useUiStore } from '@/stores/uiStore'
@@ -66,7 +67,19 @@ export function StoryGameScreen({ sessionId }: StoryGameScreenProps) {
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-slate-900 to-slate-800">
-      {/* 左側：敘事區域 */}
+      {/* 左側：場景圖像 */}
+      <div className="w-96 p-6 border-r border-slate-700 overflow-y-auto">
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-white mb-2">場景圖像</h2>
+        </div>
+        {isExecuting ? (
+          <SceneVisualizerSkeleton />
+        ) : (
+          <SceneVisualizer sceneImage={session.scene_image} showMetadata={true} />
+        )}
+      </div>
+
+      {/* 中間：敘事區域 */}
       <div className="flex-1 flex flex-col p-6 overflow-hidden">
         <div className="mb-4 flex items-center justify-between">
           <div>

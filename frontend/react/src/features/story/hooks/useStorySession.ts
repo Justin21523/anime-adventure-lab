@@ -56,11 +56,10 @@ export function useStorySession(sessionId?: string) {
       return response
     },
     onSuccess: (data) => {
-      // Update session in cache with optimistic update
-      queryClient.setQueryData(
-        CACHE_KEYS.story.session(data.session.session_id),
-        data.session
-      )
+      // Invalidate session query to refetch with new data
+      if (sessionId) {
+        queryClient.invalidateQueries({ queryKey: CACHE_KEYS.story.session(sessionId) })
+      }
     },
   })
 

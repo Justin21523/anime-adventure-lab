@@ -1,7 +1,17 @@
 /**
  * Story feature types
- * These will eventually be replaced by auto-generated types from OpenAPI
+ * Updated to match backend SceneImage integration
  */
+
+export interface SceneImage {
+  image_url: string
+  prompt: string
+  negative_prompt: string
+  generation_time: number
+  seed?: number
+  width: number
+  height: number
+}
 
 export interface StorySession {
   session_id: string
@@ -17,6 +27,7 @@ export interface StorySession {
   flags: Record<string, any>
   created_at: string
   updated_at: string
+  scene_image?: SceneImage | null
 }
 
 export interface StoryChoice {
@@ -66,14 +77,19 @@ export interface StoryTurnRequest {
 }
 
 export interface StoryTurnResponse {
-  session: StorySession
-  turn_result: {
-    narrative: string
-    dialogue?: string
-    choices?: StoryChoice[]
-    image_path?: string
-    success: boolean
-  }
+  session_id: string
+  turn_count: number
+  narrative: string
+  choices: Array<Record<string, any>>
+  stats: Record<string, any>
+  inventory: string[]
+  scene_id?: string | null
+  flags: Record<string, any>
+  agent_used: boolean
+  agent_overlay?: Record<string, any> | null
+  knowledge_used?: Array<Record<string, any>> | null
+  context?: Record<string, any> | null
+  scene_image?: SceneImage | null
 }
 
 export interface StorySessionListResponse {
