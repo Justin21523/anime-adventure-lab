@@ -92,6 +92,9 @@ class StoryTurnResponse(BaseModel):
     flags: Dict[str, Any] = Field(default_factory=dict)
     agent_used: bool = False
     agent_overlay: Optional[Dict[str, Any]] = None
+    agent_actions: Optional[Dict[str, Any]] = Field(
+        None, description="Agent autonomous actions (modify flags/stats, etc.)"
+    )
     knowledge_used: Optional[List[Dict[str, Any]]] = None
     context: Optional[Dict[str, Any]] = None
     scene_image: Optional[SceneImage] = Field(

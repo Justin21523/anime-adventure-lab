@@ -34,14 +34,23 @@ from ..shared_cache import get_shared_cache
 
 logger = logging.getLogger(__name__)
 
+# Agent integration (optional, controlled by config)
+try:
+    from ..agents.story_agent_layer import get_agent_layer
+    AGENT_AVAILABLE = True
+except ImportError:
+    AGENT_AVAILABLE = False
+    logger.warning("Agent layer not available")
+
 
 class StoryEngine:
     """Main story engine coordinating all game systems"""
 
-    def __init__(self, config_dir: Optional[Path] = None, enhanced_mode: bool = True):
+    def __init__(self, config_dir: Optional[Path] = None, enhanced_mode: bool = True, agent_enabled: bool = True):
         self.config = get_config()
         self.cache = get_shared_cache()
         self.enhanced_mode = enhanced_mode
+        self.agent_enabled = agent_enabled and AGENT_AVAILABLE
 
         # Initialize component managers
         self.persona_manager = PersonaManager(
@@ -618,17 +627,72 @@ class StoryEngine:
                 player_input, narrative_result["main_narrative"], choice_id
             )
 
+            # Agent decision layer (optional)
+            agent_actions = None
+            if self.agent_enabled:
+                try:
+                    agent_layer = get_agent_layer()
+
+                    # Check if Agent should intervene
+                    should_intervene, intervention_reason = await agent_layer.should_agent_intervene(
+                        session_id,
+                        player_input,
+                        narrative_result["main_narrative"],
+                        context_memory
+                    )
+
+                    if should_intervene:
+                        logger.info(f"Agent intervening: {intervention_reason}")
+
+                        # Let Agent make decision
+                        decision = await agent_layer.make_decision(
+                            session_id,
+                            player_input,
+                            narrative_result["main_narrative"],
+                            context_memory,
+                            session.stats.to_dict()
+                        )
+
+                        if decision:
+                            # Execute Agent decision
+                            agent_actions = await agent_layer.execute_decision(
+                                session_id,
+                                decision
+                            )
+
+                            logger.info(
+                                f"Agent executed {len(decision.tool_calls)} actions: "
+                                f"{agent_actions['overall_success']}"
+                            )
+                except Exception as e:
+                    logger.warning(f"Agent decision failed: {e}")
+
             # Record turn in memory manager
             try:
                 memory_manager = get_memory_manager(session_id)
+
+                # Track changes from Agent actions
+                flags_changed = {}
+                stats_changed = {}
+                if agent_actions and agent_actions.get("overall_success"):
+                    for tool_result in agent_actions.get("tool_results", []):
+                        if tool_result.get("success") and tool_result.get("tool") == "modify_world_state":
+                            result_data = tool_result.get("result", {})
+                            if "modified_flags" in result_data:
+                                flags_changed.update(result_data["modified_flags"])
+                        elif tool_result.get("success") and tool_result.get("tool") == "update_character_state":
+                            result_data = tool_result.get("result", {})
+                            if "modified_stats" in result_data:
+                                stats_changed.update(result_data["modified_stats"])
+
                 await memory_manager.record_turn(
                     turn_number=session.turn_count,
                     player_input=player_input,
                     narrative_response=narrative_result["main_narrative"],
                     scene_id=context_memory.current_scene.scene_id if context_memory.current_scene else None,
                     choices_made=[choice_id] if choice_id else [],
-                    flags_changed={},  # TODO: Track flag changes
-                    stats_changed={}   # TODO: Track stat changes
+                    flags_changed=flags_changed,
+                    stats_changed=stats_changed
                 )
             except Exception as e:
                 logger.warning(f"Failed to record turn in memory: {e}")
@@ -636,7 +700,7 @@ class StoryEngine:
             # Save session
             self._save_session(session)
 
-            return {
+            result = {
                 "session_id": session.session_id,
                 "turn_count": session.turn_count,
                 "narrative": narrative_result["main_narrative"],
@@ -662,6 +726,12 @@ class StoryEngine:
                     "active_plot_points": len(context_memory.main_plot_points),
                 },
             }
+
+            # Add Agent actions if available
+            if agent_actions:
+                result["agent_actions"] = agent_actions
+
+            return result
 
         except Exception as e:
             logger.error(
