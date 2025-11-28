@@ -15,147 +15,153 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
-async def test_web_search_engine():
+def test_web_search_engine():
     """測試完整的 WebSearchEngine 功能"""
     print("\n🔍 測試 WebSearchEngine 完整功能...")
 
-    try:
-        from core.agents.tools.web_search import (
-            WebSearchEngine,
-            get_search_engine,
-            search,
-            search_and_summarize,
-            configure_search_engine,
-        )
+    async def _run():
+        try:
+            from core.agents.tools.web_search import (
+                WebSearchEngine,
+                get_search_engine,
+                search,
+                search_and_summarize,
+                configure_search_engine,
+            )
 
-        # 測試 1: 基本搜尋功能
-        print("  1️⃣ 測試基本搜尋...")
-        engine = get_search_engine()
-        results = await engine.search("Python programming", 3)
-        print(f"     搜尋到 {len(results)} 個結果")
-        for i, result in enumerate(results):
-            print(f"     - {result.title[:50]}...")
+            # 測試 1: 基本搜尋功能
+            print("  1️⃣ 測試基本搜尋...")
+            engine = get_search_engine()
+            results = await engine.search("Python programming", 3)
+            print(f"     搜尋到 {len(results)} 個結果")
+            for i, result in enumerate(results):
+                print(f"     - {result.title[:50]}...")
 
-        # 測試 2: 不同主題的搜尋
-        print("  2️⃣ 測試不同主題搜尋...")
-        topics = [
-            "machine learning",
-            "web development",
-            "artificial intelligence",
-            "unknown topic xyz",
-        ]
-        for topic in topics:
-            results = await engine.search(topic, 2)
-            print(f"     {topic}: {len(results)} 結果，相關度: {results[0].score:.2f}")
+            # 測試 2: 不同主題的搜尋
+            print("  2️⃣ 測試不同主題搜尋...")
+            topics = [
+                "machine learning",
+                "web development",
+                "artificial intelligence",
+                "unknown topic xyz",
+            ]
+            for topic in topics:
+                results = await engine.search(topic, 2)
+                print(f"     {topic}: {len(results)} 結果，相關度: {results[0].score:.2f}")
 
-        # 測試 3: 搜尋歷史
-        print("  3️⃣ 測試搜尋歷史...")
-        history = engine.get_search_history(5)
-        print(f"     歷史記錄: {len(history)} 次搜尋")
+            # 測試 3: 搜尋歷史
+            print("  3️⃣ 測試搜尋歷史...")
+            history = engine.get_search_history(5)
+            print(f"     歷史記錄: {len(history)} 次搜尋")
 
-        # 測試 4: 統計資訊
-        print("  4️⃣ 測試統計資訊...")
-        stats = engine.get_search_stats()
-        print(f"     統計: {json.dumps(stats, indent=2, default=str)}")
+            # 測試 4: 統計資訊
+            print("  4️⃣ 測試統計資訊...")
+            stats = engine.get_search_stats()
+            print(f"     統計: {json.dumps(stats, indent=2, default=str)}")
 
-        # 測試 5: 主要搜尋函數
-        print("  5️⃣ 測試主要搜尋函數...")
-        search_result = await search("Python tutorial", 3)
-        print(
-            f"     搜尋函數結果: {search_result['success']}, 結果數: {search_result.get('results_count', 0)}"
-        )
+            # 測試 5: 主要搜尋函數
+            print("  5️⃣ 測試主要搜尋函數...")
+            search_result = await search("Python tutorial", 3)
+            print(
+                f"     搜尋函數結果: {search_result['success']}, 結果數: {search_result.get('results_count', 0)}"
+            )
 
-        # 測試 6: 搜尋和摘要
-        print("  6️⃣ 測試搜尋和摘要...")
-        summary_result = await search_and_summarize("machine learning basics", 2)
-        if summary_result["success"]:
-            print(f"     摘要長度: {len(summary_result['summary'])} 字元")
-            print(f"     首段摘要: {summary_result['summary'][:100]}...")
+            # 測試 6: 搜尋和摘要
+            print("  6️⃣ 測試搜尋和摘要...")
+            summary_result = await search_and_summarize("machine learning basics", 2)
+            if summary_result["success"]:
+                print(f"     摘要長度: {len(summary_result['summary'])} 字元")
+                print(f"     首段摘要: {summary_result['summary'][:100]}...")
 
-        # 測試 7: 配置功能
-        print("  7️⃣ 測試配置功能...")
-        config_result = configure_search_engine(
-            mock_enabled=True, search_engine_type="google"
-        )
-        print(f"     配置結果: {config_result['success']}")
+            # 測試 7: 配置功能
+            print("  7️⃣ 測試配置功能...")
+            config_result = configure_search_engine(
+                mock_enabled=True, search_engine_type="google"
+            )
+            print(f"     配置結果: {config_result['success']}")
 
-        print("  ✅ WebSearchEngine 所有測試通過")
-        return True
+            print("  ✅ WebSearchEngine 所有測試通過")
+            return True
 
-    except Exception as e:
-        print(f"  ❌ WebSearchEngine 測試失敗: {e}")
-        import traceback
+        except Exception as e:
+            print(f"  ❌ WebSearchEngine 測試失敗: {e}")
+            import traceback
 
-        traceback.print_exc()
-        return False
+            traceback.print_exc()
+            return False
+
+    assert asyncio.run(_run()) is True
 
 
-async def test_real_search_apis():
+def test_real_search_apis():
     """測試真實搜尋 API（如果配置了）"""
     print("\n🌐 測試真實搜尋 API...")
 
-    try:
-        from core.agents.tools.web_search import (
-            get_search_engine,
-            configure_search_engine,
-        )
+    async def _run():
+        try:
+            from core.agents.tools.web_search import (
+                get_search_engine,
+                configure_search_engine,
+            )
 
-        # 檢查是否有 API 密鑰配置
-        google_api_key = os.getenv("SEARCH_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        bing_api_key = os.getenv("BING_API_KEY")
-        serpapi_key = os.getenv("SERPAPI_KEY")
+            # 檢查是否有 API 密鑰配置
+            google_api_key = os.getenv("SEARCH_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            bing_api_key = os.getenv("BING_API_KEY")
+            serpapi_key = os.getenv("SERPAPI_KEY")
 
-        if not any([google_api_key, bing_api_key, serpapi_key]):
-            print("  ⏭️  沒有配置搜尋 API 密鑰，跳過真實 API 測試")
-            print("     要測試真實 API，請設定以下環境變數之一：")
-            print("     - SEARCH_API_KEY (Google)")
-            print("     - BING_API_KEY (Bing)")
-            print("     - SERPAPI_KEY (SerpAPI)")
+            if not any([google_api_key, bing_api_key, serpapi_key]):
+                print("  ⏭️  沒有配置搜尋 API 密鑰，跳過真實 API 測試")
+                print("     要測試真實 API，請設定以下環境變數之一：")
+                print("     - SEARCH_API_KEY (Google)")
+                print("     - BING_API_KEY (Bing)")
+                print("     - SERPAPI_KEY (SerpAPI)")
+                return True
+
+            engine = get_search_engine()
+
+            # 測試 Google API
+            if google_api_key:
+                print("  🔍 測試 Google Search API...")
+                configure_search_engine(
+                    mock_enabled=False, api_key=google_api_key, search_engine_type="google"
+                )
+                results = await engine.search("Python programming tutorial", 3)
+                print(
+                    f"     Google API: {len(results)} 結果，第一個結果來自 {results[0].url if results else 'N/A'}"
+                )
+
+            # 測試 Bing API
+            if bing_api_key:
+                print("  🔍 測試 Bing Search API...")
+                configure_search_engine(
+                    mock_enabled=False, api_key=bing_api_key, search_engine_type="bing"
+                )
+                results = await engine.search("machine learning basics", 3)
+                print(
+                    f"     Bing API: {len(results)} 結果，第一個結果來自 {results[0].url if results else 'N/A'}"
+                )
+
+            # 測試 SerpAPI
+            if serpapi_key:
+                print("  🔍 測試 SerpAPI...")
+                configure_search_engine(
+                    mock_enabled=False, api_key=serpapi_key, search_engine_type="serpapi"
+                )
+                results = await engine.search("web development guide", 3)
+                print(
+                    f"     SerpAPI: {len(results)} 結果，第一個結果來自 {results[0].url if results else 'N/A'}"
+                )
+
+            # 重置為 mock 模式
+            configure_search_engine(mock_enabled=True)
+            print("  ✅ 真實搜尋 API 測試完成")
             return True
 
-        engine = get_search_engine()
+        except Exception as e:
+            print(f"  ❌ 真實搜尋 API 測試失敗: {e}")
+            return False
 
-        # 測試 Google API
-        if google_api_key:
-            print("  🔍 測試 Google Search API...")
-            configure_search_engine(
-                mock_enabled=False, api_key=google_api_key, search_engine_type="google"
-            )
-            results = await engine.search("Python programming tutorial", 3)
-            print(
-                f"     Google API: {len(results)} 結果，第一個結果來自 {results[0].url if results else 'N/A'}"
-            )
-
-        # 測試 Bing API
-        if bing_api_key:
-            print("  🔍 測試 Bing Search API...")
-            configure_search_engine(
-                mock_enabled=False, api_key=bing_api_key, search_engine_type="bing"
-            )
-            results = await engine.search("machine learning basics", 3)
-            print(
-                f"     Bing API: {len(results)} 結果，第一個結果來自 {results[0].url if results else 'N/A'}"
-            )
-
-        # 測試 SerpAPI
-        if serpapi_key:
-            print("  🔍 測試 SerpAPI...")
-            configure_search_engine(
-                mock_enabled=False, api_key=serpapi_key, search_engine_type="serpapi"
-            )
-            results = await engine.search("web development guide", 3)
-            print(
-                f"     SerpAPI: {len(results)} 結果，第一個結果來自 {results[0].url if results else 'N/A'}"
-            )
-
-        # 重置為 mock 模式
-        configure_search_engine(mock_enabled=True)
-        print("  ✅ 真實搜尋 API 測試完成")
-        return True
-
-    except Exception as e:
-        print(f"  ❌ 真實搜尋 API 測試失敗: {e}")
-        return False
+    assert asyncio.run(_run()) is True
 
 
 def test_enhanced_calculator():
@@ -244,14 +250,14 @@ def test_enhanced_calculator():
             print(f"     SafeCalculator: {expr} = {result}")
 
         print("  ✅ 計算器所有測試通過")
-        return True
+        assert True
 
     except Exception as e:
         print(f"  ❌ 計算器測試失敗: {e}")
         import traceback
 
         traceback.print_exc()
-        return False
+        assert False
 
 
 def test_enhanced_file_ops():
@@ -348,137 +354,117 @@ def test_enhanced_file_ops():
         print("     清理完成")
 
         print("  ✅ 檔案操作所有測試通過")
-        return True
+        assert True
 
     except Exception as e:
         print(f"  ❌ 檔案操作測試失敗: {e}")
         import traceback
 
         traceback.print_exc()
-        return False
+        assert False
 
 
-async def test_tool_registry_integration():
+def test_tool_registry_integration():
     """測試工具註冊器整合"""
     print("\n🔧 測試工具註冊器整合...")
 
-    try:
-        from core.agents.tool_registry import ToolRegistry
-        from core.agents.executor import SafeExecutor
+    async def _run():
+        try:
+            from core.agents.tool_registry import ToolRegistry
+            from core.agents.executor import SafeExecutor
 
-        # 測試 1: 工具註冊器
-        print("  1️⃣ 測試工具註冊器...")
-        registry = ToolRegistry()
-        tools = registry.list_tools()
-        print(f"     註冊工具: {', '.join(tools)}")
+            print("  1️⃣ 測試工具註冊器...")
+            registry = ToolRegistry()
+            tools = registry.list_tools()
+            print(f"     註冊工具: {', '.join(tools)}")
 
-        # 測試 2: 每個工具的詳細資訊
-        print("  2️⃣ 測試工具資訊...")
-        for tool_name in tools:
-            info = registry.get_tool_info(tool_name)
-            if info:
-                print(f"     {tool_name}: {info.get('description', 'No description')}")
-            function = registry.get_tool_function(tool_name)
-            print(f"       函數可用: {function is not None}")
+            print("  2️⃣ 測試工具資訊...")
+            for tool_name in tools:
+                info = registry.get_tool_info(tool_name)
+                if info:
+                    print(f"     {tool_name}: {info.get('description', 'No description')}")
+                function = registry.get_tool_function(tool_name)
+                print(f"       函數可用: {function is not None}")
 
-        # 測試 3: 安全執行器
-        print("  3️⃣ 測試安全執行器...")
-        executor = SafeExecutor()
+            print("  3️⃣ 測試安全執行器...")
+            executor = SafeExecutor()
+            test_cases = [
+                ("calculator", {"expression": "5 * 6"}),
+                ("web_search", {"query": "Python programming", "max_results": 2}),
+                ("file_ops", {"path": "."}),
+            ]
+            for tool_name, params in test_cases:
+                try:
+                    result = await executor.execute_tool(tool_name, params)
+                    print(f"     {tool_name}: {result.success}")
+                    if not result.success:
+                        print(f"       錯誤: {result.error}")
+                except Exception as e:
+                    print(f"     {tool_name}: 執行失敗 {e}")
 
-        test_cases = [
-            ("calculator", {"expression": "5 * 6"}),
-            ("web_search", {"query": "Python programming", "max_results": 2}),
-            ("file_ops", {"path": "."}),
-        ]
+            print("  ✅ 工具註冊器整合測試通過")
+            return True
 
-        for tool_name, params in test_cases:
-            try:
-                result = await executor.execute_tool(tool_name, params)
-                print(f"     {tool_name}: {result.success}")
-                if not result.success:
-                    print(f"       錯誤: {result.error}")
-            except Exception as e:
-                print(f"     {tool_name}: 執行失敗 {e}")
+        except Exception as e:
+            print(f"  ❌ 工具註冊器整合測試失敗: {e}")
+            import traceback
 
-        print("  ✅ 工具註冊器整合測試通過")
-        return True
+            traceback.print_exc()
+            return False
 
-    except Exception as e:
-        print(f"  ❌ 工具註冊器整合測試失敗: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return False
+    assert asyncio.run(_run()) is True
 
 
-async def test_performance_and_reliability():
+def test_performance_and_reliability():
     """測試效能和可靠性"""
     print("\n⚡ 測試效能和可靠性...")
 
-    try:
-        import time
-        from core.agents.tools.web_search import get_search_engine
-        from core.agents.tools.calculator import calculate
+    async def _run():
+        try:
+            import time
+            from core.agents.tools.web_search import get_search_engine, search
+            from core.agents.tools.calculator import calculate
 
-        # 測試 1: 並發搜尋
-        print("  1️⃣ 測試並發搜尋...")
-        start_time = time.time()
+            print("  1️⃣ 測試並發搜尋...")
+            start_time = time.time()
+            engine = get_search_engine()
+            queries = ["Python", "JavaScript", "Java", "C++", "Go"]
+            tasks = [engine.search(q, 2) for q in queries]
+            results = await asyncio.gather(*tasks)
+            total_time = time.time() - start_time
+            print(f"     {len(results)} 並發搜尋完成，耗時 {total_time:.2f} 秒")
+            print(f"     平均每次搜尋 {total_time/len(results):.2f} 秒")
 
-        search_tasks = []
-        engine = get_search_engine()
-        queries = ["Python", "JavaScript", "Java", "C++", "Go"]
+            print("  2️⃣ 測試大量計算...")
+            start_time = time.time()
+            calculation_results = [calculate(f"{i} * {i+1} + {i*2}") for i in range(100)]
+            calc_time = time.time() - start_time
+            successful_calcs = sum(1 for r in calculation_results if not r.get("error"))
+            print(f"     100 次計算完成，耗時 {calc_time:.3f} 秒")
+            print(f"     成功率: {successful_calcs}/100 ({successful_calcs}%)")
+            print(f"     平均每次計算 {calc_time*1000/100:.1f} ms")
 
-        for query in queries:
-            task = engine.search(query, 2)
-            search_tasks.append(task)
+            print("  3️⃣ 測試錯誤處理...")
+            error_tests = [
+                ("search", {"query": ""}),
+                ("calculator", {"expression": "1/0"}),
+                ("calculator", {"expression": "invalid_function(123)"}),
+            ]
+            for test_type, params in error_tests:
+                if test_type == "search":
+                    result = await search(**params)  # type: ignore
+                else:
+                    result = calculate(**params)
+                has_error = not result.get("success", True) or result.get("error")
+                print(f"     {test_type} 錯誤處理: {'✅' if has_error else '❌'}")
 
-        results = await asyncio.gather(*search_tasks)
-        total_time = time.time() - start_time
+            print("  ✅ 效能和可靠性測試通過")
+            return True
+        except Exception as e:
+            print(f"  ❌ 效能和可靠性測試失敗: {e}")
+            return False
 
-        print(f"     {len(results)} 並發搜尋完成，耗時 {total_time:.2f} 秒")
-        print(f"     平均每次搜尋 {total_time/len(results):.2f} 秒")
-
-        # 測試 2: 大量計算
-        print("  2️⃣ 測試大量計算...")
-        start_time = time.time()
-
-        calculation_results = []
-        for i in range(100):
-            result = calculate(f"{i} * {i+1} + {i*2}")
-            calculation_results.append(result)
-
-        calc_time = time.time() - start_time
-        successful_calcs = sum(1 for r in calculation_results if not r.get("error"))
-
-        print(f"     100 次計算完成，耗時 {calc_time:.3f} 秒")
-        print(f"     成功率: {successful_calcs}/100 ({successful_calcs}%)")
-        print(f"     平均每次計算 {calc_time*1000/100:.1f} ms")
-
-        # 測試 3: 錯誤處理
-        print("  3️⃣ 測試錯誤處理...")
-        error_tests = [
-            ("search", {"query": ""}),  # 空搜尋
-            ("calculator", {"expression": "1/0"}),  # 除零錯誤
-            ("calculator", {"expression": "invalid_function(123)"}),  # 無效函數
-        ]
-
-        for test_type, params in error_tests:
-            if test_type == "search":
-                from core.agents.tools.web_search import search
-
-                result = await search(**params)  # type: ignore
-            elif test_type == "calculator":
-                result = calculate(**params)
-
-            has_error = not result.get("success", True) or result.get("error")
-            print(f"     {test_type} 錯誤處理: {'✅' if has_error else '❌'}")
-
-        print("  ✅ 效能和可靠性測試通過")
-        return True
-
-    except Exception as e:
-        print(f"  ❌ 效能和可靠性測試失敗: {e}")
-        return False
+    assert asyncio.run(_run()) is True
 
 
 async def main():

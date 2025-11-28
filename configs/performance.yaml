@@ -30,7 +30,7 @@ cache:
   redis_enabled: true
 
   # Disk cache
-  disk_cache_dir: "../ai_warehouse/cache/pipeline_cache"
+  disk_cache_dir: "${AI_CACHE_ROOT}/cache/pipeline_cache"
   max_disk_cache_gb: 5.0
 
   # Cache TTL (seconds)

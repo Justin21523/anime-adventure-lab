@@ -13,7 +13,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
 # Set up minimal environment
-os.environ["AI_CACHE_ROOT"] = str(ROOT_DIR.parent / "ai_warehouse" / "cache")
+os.environ["AI_CACHE_ROOT"] = "/mnt/c/AI_LLM_projects/ai_warehouse"
 
 
 def test_basic_python():

@@ -18,7 +18,12 @@ celery_app = Celery(
     "multi_modal_lab",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["backend.jobs.tasks"],
+    include=[
+        "workers.tasks",
+        "workers.tasks.batch",
+        "workers.tasks.t2i",
+        "workers.tasks.training",
+    ],
 )
 
 # Celery configuration
@@ -35,10 +40,11 @@ celery_app.conf.update(
     worker_max_tasks_per_child=50,
     # Custom queues for different task types
     task_routes={
-        "backend.jobs.tasks.batch_caption_task": {"queue": "vision"},
-        "backend.jobs.tasks.batch_vqa_task": {"queue": "vision"},
-        "backend.jobs.tasks.batch_chat_task": {"queue": "text"},
-        "backend.jobs.tasks.train_lora_task": {"queue": "training"},
+        "workers.tasks.batch_caption_task": {"queue": "vision"},
+        "workers.tasks.batch_vqa_task": {"queue": "vision"},
+        "workers.tasks.batch_chat_task": {"queue": "text"},
+        "workers.tasks.train_lora_task": {"queue": "training"},
+        "workers.tasks.generate_image_async": {"queue": "vision"},
     },
     task_default_queue="default",
     task_queues=[

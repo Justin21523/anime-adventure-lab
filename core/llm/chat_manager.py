@@ -7,7 +7,10 @@ Handles multi-turn conversations, session management, and conversation history
 import json
 import uuid
 import logging
-import tiktoken
+try:
+    import tiktoken  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    tiktoken = None  # Allow running without tiktoken when only session management is needed
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Any, Union
 from dataclasses import dataclass, asdict
@@ -180,8 +183,12 @@ class ChatManager:
         # Setup persistence directory
         if persist_sessions:
             self.cache = get_shared_cache()
-            self.sessions_dir = Path(self.cache.cache_root) / "chat_sessions"
-            self.sessions_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                self.sessions_dir = Path(self.cache.cache_root) / "chat_sessions"
+                self.sessions_dir.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                self.sessions_dir = Path("/tmp/ai_cache/chat_sessions")
+                self.sessions_dir.mkdir(parents=True, exist_ok=True)
 
             # Load existing sessions
             self._load_persisted_sessions()

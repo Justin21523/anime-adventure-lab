@@ -3,6 +3,9 @@
 完整的端到端整合測試場景
 """
 
+import io
+import pytest
+
 
 class TestCompleteWorkflows:
     """完整工作流測試"""

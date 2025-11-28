@@ -7,12 +7,12 @@ Centralized dependency providers for FastAPI routers.
 """
 from __future__ import annotations
 from functools import lru_cache
-import os, pathlib, torch
-from functools import lru_cache
-from typing import Iterator, Dict, Any, Optional, List
+from types import SimpleNamespace
+import os, pathlib, torch, logging
+from pathlib import Path
+from typing import Dict, Any, Optional, List
 from fastapi import Depends, HTTPException
 
-from core import registry
 from core.config import get_config
 from core.shared_cache import get_shared_cache, bootstrap_cache
 from core.safety.detector import SafetyEngine
@@ -21,6 +21,7 @@ from core.safety.watermark import AttributionManager, ComplianceLogger
 from core.story.engine import StoryEngine
 from core.story.persona import PersonaManager
 from core.performance import gpu_available  # optional, but useful for /health
+from core.t2i.engine import T2IEngine
 
 # Replace with your actual implementation when ready
 # from core.t2i.pipeline import RealT2IEngine
@@ -48,6 +49,69 @@ _story_engine = None
 _persona_mgr = None
 
 
+# Minimal fallbacks used when real engines are not wired
+class _MinimalT2I:
+    def __init__(self):
+        self.lora = SimpleNamespace(list=lambda: [])
+        self.control = SimpleNamespace(list=lambda: [])
+
+    async def txt2img(self, prompt: str, **kwargs) -> Dict[str, Any]:
+        return {
+            "image_path": "/tmp/mock_txt2img.png",
+            "prompt": prompt,
+            "model_used": "mock-sd",
+            "parameters": kwargs,
+        }
+
+
+class _MinimalLLM:
+    def __init__(self):
+        self._loaded = ["mock-llm"]
+
+    def chat(
+        self, messages: List[Dict[str, str]], model_name: Optional[str] = None, **kwargs
+    ):
+        content = messages[-1].get("content", "") if messages else ""
+        return SimpleNamespace(
+            content=f"[mock reply] {content}",
+            model_name=model_name or "mock-llm",
+            usage={"tokens": len(content.split()), "inference_time_ms": 0},
+        )
+
+    def list_loaded_models(self) -> List[str]:
+        return self._loaded
+
+    def unload_all(self) -> None:
+        self._loaded = []
+
+
+class _MinimalVLM:
+    def get_status(self) -> Dict[str, Any]:
+        return {"loaded": [], "default_models": {"caption": "mock", "vqa": "mock"}}
+
+    def load_caption_model(self):
+        return True
+
+    def load_vqa_model(self):
+        return True
+
+    def unload_models(self):
+        return True
+
+
+class _MinimalRAG:
+    def ask(self, query: str) -> Dict[str, Any]:
+        return {"answer": f"[mock answer] {query}", "sources": []}
+
+
+class _MinimalStory:
+    def __init__(self):
+        self.state = {}
+
+    def step(self, state: Dict[str, Any], choice: str) -> Dict[str, Any]:
+        return {"state": {**state, "choice": choice}, "narration": f"Chose {choice}"}
+
+
 # Settings & Cache (never re-define env or paths here)
 def get_settings():
     """App-wide settings (single source of truth)."""
@@ -70,9 +134,50 @@ def get_cache():
 # Factory helpers — try real engines first, otherwise fall back to stubs
 def _new_t2i():
     try:
-        # return RealT2IEngine()
-        return _MinimalT2I()
+        cache = get_cache()
+        settings = get_settings()
+        mock_flag = os.getenv("T2I_MOCK", "1").lower() not in {"0", "false", "no"}
+
+        # Prefer本地 checkpoint，如不存在則使用設定值或目錄中第一個檔案
+        checkpoints_dir = Path(cache.cache_root) / "models" / "stable-diffusion" / "checkpoints"
+        default_checkpoint = checkpoints_dir / "sd_xl_base_1.0.safetensors"
+        default_model = settings.model.default_sd_model
+        if default_checkpoint.exists():
+            default_model = str(default_checkpoint)
+        else:
+            try:
+                first_ckpt = next(checkpoints_dir.glob("*.safetensors"))
+                default_model = str(first_ckpt)
+            except StopIteration:
+                # fallback to config default
+                default_model = settings.model.default_sd_model
+
+        safety_cfg = getattr(settings, "safety", None)
+        if safety_cfg is None:
+            safety_cfg = {}
+        elif hasattr(safety_cfg, "model_dump"):
+            safety_cfg = safety_cfg.model_dump()
+        elif isinstance(safety_cfg, dict):
+            safety_cfg = safety_cfg
+        else:
+            # Fallback to attrs->dict best-effort
+            safety_cfg = {k: getattr(safety_cfg, k) for k in dir(safety_cfg) if not k.startswith("_")}
+
+        engine = T2IEngine(
+            cache_root=cache.cache_root,
+            device=settings.model.device,
+            config={
+                "default_model": default_model,
+                "mock_generation": mock_flag,
+                "safety": safety_cfg,
+                "watermark_enabled": True,
+            },
+        )
+        return engine
     except Exception as e:
+        if mock_flag:
+            logging.error("T2I engine init failed, falling back to mock: %s", e)
+            return _MinimalT2I()
         raise RuntimeError(f"T2I engine init failed: {e}") from e
 
 
@@ -88,8 +193,14 @@ def _new_llm():
 def _new_vlm():
     try:
 
-        # return RealVLM()
-        return _MinimalVLM()
+        # Toggle mock via env; default mock to avoid heavy downloads unless user opts in
+        use_mock = os.getenv("VLM_MOCK", "1").lower() not in {"0", "false", "no"}
+        if use_mock:
+            return _MinimalVLM()
+
+        from core.vlm import get_vlm_engine
+
+        return get_vlm_engine()
     except Exception as e:
         raise RuntimeError(f"VLM engine init failed: {e}") from e
 

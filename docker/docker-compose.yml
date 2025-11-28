@@ -3,21 +3,21 @@ services:
   api:
     build: .
     environment:
-      - AI_CACHE_ROOT=/warehouse/cache
+      - AI_CACHE_ROOT=/warehouse
       - API_CORS_ORIGINS=http://localhost:3000
       - REDIS_URL=redis://redis:6379/0
     volumes:
-      - /warehouse/cache:/warehouse/cache
+      - ${AI_WAREHOUSE_HOST:-/mnt/c/AI_LLM_projects/ai_warehouse}:/warehouse
     ports: ["8000:8000"]
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000
     depends_on: [redis]
   worker:
     build: .
     environment:
-      - AI_CACHE_ROOT=/warehouse/cache
+      - AI_CACHE_ROOT=/warehouse
       - REDIS_URL=redis://redis:6379/0
     volumes:
-      - /warehouse/cache:/warehouse/cache
+      - ${AI_WAREHOUSE_HOST:-/mnt/c/AI_LLM_projects/ai_warehouse}:/warehouse
     command: celery -A workers.celery_app:celery_app worker --loglevel=INFO
     depends_on: [redis]
   redis:

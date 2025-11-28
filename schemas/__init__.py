@@ -5,6 +5,7 @@ from .vqa import *
 from .chat import *
 from .batch import *  # NEW
 from .monitoring import *  # NEW
+from .story import *  # NEW
 
 __all__ = [
     # Base schemas
@@ -34,4 +35,20 @@ __all__ = [
     "PerformanceReport",
     "QueueStats",
     "MonitoringDashboardData",
+    # Story schemas
+    "StorySessionCreateRequest",
+    "StoryTurnRequest",
+    "StoryTurnResponse",
+    "StorySessionInfo",
+    "StorySessionDetail",
+    "StoryContextSnapshot",
+    "StoryChoicePreview",
+    "StoryExportResponse",
+    "StoryImportRequest",
+    "StoryImportResponse",
+    "StoryMetricsResponse",
+    "StoryAgentActionRequest",
+    "StoryAgentActionResponse",
+    "StoryKnowledgeSearchRequest",
+    "StoryKnowledgeSearchResponse",
 ]

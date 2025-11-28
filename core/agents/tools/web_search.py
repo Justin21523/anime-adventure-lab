@@ -1,392 +1,172 @@
 # core/agent/tools/web_search.py
 """
 Web Search Tool
-Provides web search capabilities for agents (mock implementation)
+- 預設使用 mock 模式，避免外部 API 需求
+- 若提供 Brave API Key（BRAVE_API_KEY/BRAVE_SEARCH_API_KEY），可切換為真實查詢
 """
 
+from __future__ import annotations
+
 import logging
-import asyncio
-import random
+import os
 from typing import Dict, Any, List, Optional
-import time
+from dataclasses import dataclass, asdict
+import asyncio
+
+import requests
 
 logger = logging.getLogger(__name__)
 
+BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
+_OVERRIDE_API_KEY: Optional[str] = None
+_MOCK_ENABLED: bool = True
+_ENGINE_SINGLETON: Optional["WebSearchEngine"] = None
 
-class MockSearchResult:
-    """Mock search result for testing"""
 
-    def __init__(self, title: str, url: str, snippet: str, score: float = 1.0):
-        self.title = title
-        self.url = url
-        self.snippet = snippet
-        self.score = score
-        self.timestamp = time.time()
+def _get_api_key(api_key: Optional[str] = None) -> Optional[str]:
+    return (
+        api_key
+        or _OVERRIDE_API_KEY
+        or os.getenv("BRAVE_SEARCH_API_KEY")
+        or os.getenv("BRAVE_API_KEY")
+    )
+
+
+@dataclass
+class SearchResult:
+    title: str
+    url: str
+    snippet: str
+    score: float = 0.8
+    language: str = "en"
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "title": self.title,
-            "url": self.url,
-            "snippet": self.snippet,
-            "score": self.score,
-            "timestamp": self.timestamp,
-        }
+        return asdict(self)
 
 
 class WebSearchEngine:
-    """
-    Mock web search engine for development and testing
-    In production, replace with actual search API (Google, Bing, DuckDuckGo, etc.)
-    """
+    def __init__(self, mock_enabled: bool = True, api_key: Optional[str] = None, search_engine_type: str = "mock"):
+        self.mock_enabled = mock_enabled
+        self.api_key = api_key or _get_api_key(api_key)
+        self.search_engine_type = search_engine_type
+        self.history: List[Dict[str, Any]] = []
 
-    def __init__(self):
-        self.search_history: List[Dict[str, Any]] = []
-        self.mock_enabled = True
+    async def search(self, query: str, max_results: int = 5) -> List[SearchResult]:
+        if self.mock_enabled or not self.api_key:
+            return self._mock_search(query, max_results)
+        return await self._brave_search(query, max_results)
 
-        # Mock knowledge base for demo purposes
-        self.knowledge_base = {
-            "python": [
-                {
-                    "title": "Python.org - Official Website",
-                    "url": "https://python.org",
-                    "snippet": "Python is a programming language that lets you work quickly and integrate systems more effectively.",
-                },
-                {
-                    "title": "Python Tutorial - W3Schools",
-                    "url": "https://w3schools.com/python",
-                    "snippet": "Well organized and easy to understand Web building tutorials with lots of examples of how to use Python.",
-                },
-            ],
-            "machine learning": [
-                {
-                    "title": "Machine Learning - Wikipedia",
-                    "url": "https://en.wikipedia.org/wiki/Machine_learning",
-                    "snippet": "Machine learning is a method of data analysis that automates analytical model building.",
-                },
-                {
-                    "title": "Introduction to Machine Learning - Coursera",
-                    "url": "https://coursera.org/learn/machine-learning",
-                    "snippet": "Learn machine learning fundamentals from Andrew Ng at Stanford University.",
-                },
-            ],
-            "artificial intelligence": [
-                {
-                    "title": "What is Artificial Intelligence? - IBM",
-                    "url": "https://ibm.com/cloud/learn/what-is-artificial-intelligence",
-                    "snippet": "Artificial intelligence leverages computers and machines to mimic problem-solving capabilities.",
-                },
-                {
-                    "title": "AI Research - OpenAI",
-                    "url": "https://openai.com/research",
-                    "snippet": "OpenAI conducts AI research to ensure artificial general intelligence benefits humanity.",
-                },
-            ],
-            "weather": [
-                {
-                    "title": "Weather.com - Local Weather Forecast",
-                    "url": "https://weather.com",
-                    "snippet": "Get current weather conditions and forecasts for your location.",
-                },
-                {
-                    "title": "AccuWeather - Weather Forecasts",
-                    "url": "https://accuweather.com",
-                    "snippet": "Superior accuracy with AccuWeather RealFeel Temperature technology.",
-                },
-            ],
-            "news": [
-                {
-                    "title": "Latest News - BBC News",
-                    "url": "https://bbc.com/news",
-                    "snippet": "Breaking news, sport, TV, radio and a whole lot more from the BBC.",
-                },
-                {
-                    "title": "World News - CNN",
-                    "url": "https://cnn.com",
-                    "snippet": "View the latest news and breaking news today for world events.",
-                },
-            ],
-        }
-
-    async def search(
-        self,
-        query: str,
-        max_results: int = 5,
-        language: str = "en",
-        safe_search: bool = True,
-    ) -> List[MockSearchResult]:
-        """
-        Perform web search and return results
-
-        Args:
-            query: Search query string
-            max_results: Maximum number of results to return
-            language: Language preference for results
-            safe_search: Enable safe search filtering
-
-        Returns:
-            List of search results
-        """
-        logger.info(
-            f"Performing web search for: '{query}' (max_results: {max_results})"
-        )
-
-        # Record search in history
-        search_record = {
-            "query": query,
-            "max_results": max_results,
-            "language": language,
-            "safe_search": safe_search,
-            "timestamp": time.time(),
-        }
-        self.search_history.append(search_record)
-
-        if self.mock_enabled:
-            return await self._mock_search(query, max_results)
-        else:
-            # TODO: Implement actual web search API integration
-            return await self._real_search(query, max_results, language, safe_search)
-
-    async def _mock_search(
-        self, query: str, max_results: int
-    ) -> List[MockSearchResult]:
-        """Mock search implementation for testing"""
-        await asyncio.sleep(0.5)  # Simulate network delay
-
-        query_lower = query.lower()
-        results = []
-
-        # Find matching topics in knowledge base
-        for topic, topic_results in self.knowledge_base.items():
-            if any(word in query_lower for word in topic.split()):
-                for result_data in topic_results:
-                    # Calculate relevance score based on keyword matches
-                    score = self._calculate_relevance_score(query_lower, result_data)
-
-                    result = MockSearchResult(
-                        title=result_data["title"],
-                        url=result_data["url"],
-                        snippet=result_data["snippet"],
-                        score=score,
-                    )
-                    results.append(result)
-
-        # If no direct matches, generate generic results
-        if not results:
-            results = self._generate_generic_results(query)
-
-        # Sort by relevance score and limit results
-        results.sort(key=lambda x: x.score, reverse=True)
-        return results[:max_results]
-
-    def _calculate_relevance_score(
-        self, query: str, result_data: Dict[str, str]
-    ) -> float:
-        """Calculate relevance score for search result"""
-        score = 0.0
-        query_words = query.split()
-
-        # Check title matches
-        title_lower = result_data["title"].lower()
-        for word in query_words:
-            if word in title_lower:
-                score += 0.4
-
-        # Check snippet matches
-        snippet_lower = result_data["snippet"].lower()
-        for word in query_words:
-            if word in snippet_lower:
-                score += 0.2
-
-        # Add some randomness for variety
-        score += random.uniform(0, 0.3)
-
-        return min(score, 1.0)
-
-    def _generate_generic_results(self, query: str) -> List[MockSearchResult]:
-        """Generate generic search results for unknown queries"""
-        generic_results = [
-            {
-                "title": f"Search results for '{query}' - Example.com",
-                "url": f"https://example.com/search?q={query.replace(' ', '+')}",
-                "snippet": f"Find information about {query} and related topics on our comprehensive website.",
-            },
-            {
-                "title": f"{query.title()} - Wikipedia",
-                "url": f"https://en.wikipedia.org/wiki/{query.replace(' ', '_')}",
-                "snippet": f"Learn about {query} from the free encyclopedia that anyone can edit.",
-            },
-            {
-                "title": f"Everything about {query.title()}",
-                "url": f"https://knowledge-base.com/{query.replace(' ', '-')}",
-                "snippet": f"Comprehensive guide and information about {query} for beginners and experts.",
-            },
+    def _mock_search(self, query: str, max_results: int) -> List[SearchResult]:
+        base_results = [
+            SearchResult(title=f"{query} overview", url="https://example.com/overview", snippet=f"Summary about {query}", score=0.9),
+            SearchResult(title=f"{query} tutorial", url="https://example.com/tutorial", snippet=f"Tutorial on {query}", score=0.85),
+            SearchResult(title=f"{query} reference", url="https://example.com/reference", snippet=f"Reference for {query}", score=0.8),
         ]
-
-        results = []
-        for i, result_data in enumerate(generic_results):
-            result = MockSearchResult(
-                title=result_data["title"],
-                url=result_data["url"],
-                snippet=result_data["snippet"],
-                score=0.8 - (i * 0.1),  # Decreasing relevance
-            )
-            results.append(result)
-
+        results = base_results[:max_results]
+        self.history.append({"query": query, "results": len(results)})
         return results
 
-    async def _real_search(
-        self, query: str, max_results: int, language: str, safe_search: bool
-    ) -> List[MockSearchResult]:
-        """
-        Real web search implementation (placeholder)
+    async def _brave_search(self, query: str, max_results: int) -> List[SearchResult]:
+        resp = requests.get(
+            BRAVE_ENDPOINT,
+            headers={"X-Subscription-Token": self.api_key},
+            params={"q": query, "count": max_results, "country": "us"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            logger.warning("Brave search failed %s: %s", resp.status_code, resp.text)
+            return self._mock_search(query, max_results)
 
-        In production, integrate with:
-        - Google Custom Search API
-        - Bing Search API
-        - DuckDuckGo API
-        - SerpAPI
-        """
-        # TODO: Implement actual search API integration
-        logger.warning("Real web search not implemented, falling back to mock search")
-        return await self._mock_search(query, max_results)
+        data = resp.json()
+        web_results = data.get("web", {}).get("results", [])
+        formatted = [
+            SearchResult(
+                title=item.get("title", ""),
+                url=item.get("url", ""),
+                snippet=item.get("description", ""),
+                score=0.8,
+                language=item.get("language", "en"),
+            )
+            for item in web_results
+        ]
+        results = formatted[:max_results]
+        self.history.append({"query": query, "results": len(results)})
+        return results
 
-    def get_search_history(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get recent search history"""
-        return self.search_history[-limit:]
+    async def search_and_summarize(self, query: str, max_results: int = 5) -> Dict[str, Any]:
+        results = await self.search(query, max_results)
+        summary = "；".join([r.snippet for r in results])[:400] if results else ""
+        return {
+            "success": True,
+            "query": query,
+            "results": [r.to_dict() for r in results],
+            "results_count": len(results),
+            "summary": summary,
+        }
 
-    def clear_search_history(self):
-        """Clear search history"""
-        self.search_history.clear()
+    def get_search_history(self, max_items: int = 10) -> List[Dict[str, Any]]:
+        return self.history[-max_items:]
 
-
-# Global search engine instance
-_search_engine = None
+    def get_search_stats(self) -> Dict[str, Any]:
+        return {"total_searches": len(self.history), "last_query": self.history[-1]["query"] if self.history else None}
 
 
 def get_search_engine() -> WebSearchEngine:
-    """Get global search engine instance"""
-    global _search_engine
-    if _search_engine is None:
-        _search_engine = WebSearchEngine()
-    return _search_engine
+    global _ENGINE_SINGLETON
+    if _ENGINE_SINGLETON is None:
+        _ENGINE_SINGLETON = WebSearchEngine(mock_enabled=_MOCK_ENABLED, api_key=_get_api_key())
+    return _ENGINE_SINGLETON
 
 
-async def search(query: str, max_results: int = 5) -> Dict[str, Any]:
-    """
-    Main search function for agent tool usage
-
-    Args:
-        query: Search query
-        max_results: Maximum number of results
-
-    Returns:
-        Dictionary with search results and metadata
-    """
-    try:
-        if not query or not query.strip():
-            return {"success": False, "error": "Search query cannot be empty"}
-
-        search_engine = get_search_engine()
-        results = await search_engine.search(query.strip(), max_results)
-
-        # Format results for tool response
-        formatted_results = []
-        for result in results:
-            formatted_results.append(
-                {
-                    "title": result.title,
-                    "url": result.url,
-                    "snippet": result.snippet,
-                    "relevance_score": result.score,
-                }
-            )
-
-        return {
-            "success": True,
-            "query": query,
-            "results_count": len(formatted_results),
-            "results": formatted_results,
-            "summary": f"Found {len(formatted_results)} results for '{query}'",
-        }
-
-    except Exception as e:
-        logger.error(f"Web search failed: {e}")
-        return {"success": False, "error": f"Search failed: {str(e)}", "query": query}
+def configure_search_engine(mock_enabled: Optional[bool] = None, api_key: Optional[str] = None, search_engine_type: str = "mock") -> Dict[str, Any]:
+    global _MOCK_ENABLED, _OVERRIDE_API_KEY, _ENGINE_SINGLETON
+    if mock_enabled is not None:
+        _MOCK_ENABLED = mock_enabled
+    if api_key is not None:
+        _OVERRIDE_API_KEY = api_key
+    _ENGINE_SINGLETON = WebSearchEngine(mock_enabled=_MOCK_ENABLED, api_key=_get_api_key(api_key), search_engine_type=search_engine_type)
+    return {"success": True, "mock_enabled": _MOCK_ENABLED, "search_engine_type": search_engine_type}
 
 
-async def search_and_summarize(query: str, max_results: int = 3) -> Dict[str, Any]:
-    """
-    Search and provide a summarized answer
-
-    Args:
-        query: Search query
-        max_results: Maximum results to consider
-
-    Returns:
-        Dictionary with search results and summary
-    """
-    try:
-        search_result = await search(query, max_results)
-
-        if not search_result["success"]:
-            return search_result
-
-        results = search_result["results"]
-
-        # Create a summary from top results
-        summary_parts = []
-        for i, result in enumerate(results[:3]):
-            summary_parts.append(f"{i+1}. {result['title']}: {result['snippet']}")
-
-        summary = f"Top search results for '{query}':\n" + "\n".join(summary_parts)
-
-        return {
-            "success": True,
-            "query": query,
-            "summary": summary,
-            "detailed_results": results,
-            "source_count": len(results),
-        }
-
-    except Exception as e:
-        logger.error(f"Search and summarize failed: {e}")
-        return {
-            "success": False,
-            "error": f"Search and summarize failed: {str(e)}",
-            "query": query,
-        }
+async def search(query: str, max_results: int = 5, api_key: Optional[str] = None) -> Dict[str, Any]:
+    engine = get_search_engine()
+    results = await engine.search(query, max_results)
+    return {
+        "success": True,
+        "query": query,
+        "results": [r.to_dict() for r in results],
+        "results_count": len(results),
+    }
 
 
-def configure_search_engine(
-    mock_enabled: bool = True,
-    api_key: Optional[str] = None,
-    search_engine_type: str = "google",
+async def search_and_summarize(query: str, max_results: int = 5) -> Dict[str, Any]:
+    engine = get_search_engine()
+    return await engine.search_and_summarize(query, max_results)
+
+
+# Backward-compatible Brave API wrappers
+async def brave_search(query: str, max_results: int = 5, api_key: Optional[str] = None) -> Dict[str, Any]:
+    return await search(query, max_results=max_results, api_key=api_key)
+
+
+async def brave_search_summary(
+    query: str, max_results: int = 5, api_key: Optional[str] = None, llm_adapter=None
 ) -> Dict[str, Any]:
-    """
-    Configure the search engine settings
-
-    Args:
-        mock_enabled: Whether to use mock search
-        api_key: API key for real search service
-        search_engine_type: Type of search engine (google, bing, duckduckgo)
-
-    Returns:
-        Configuration status
-    """
-    try:
-        engine = get_search_engine()
-        engine.mock_enabled = mock_enabled
-
-        # TODO: Configure real search API when implemented
-        if not mock_enabled and not api_key:
-            logger.warning("Real search enabled but no API key provided")
-
-        return {
-            "success": True,
-            "mock_enabled": mock_enabled,
-            "search_engine_type": search_engine_type,
-            "message": "Search engine configured successfully",
-        }
-
-    except Exception as e:
-        return {"success": False, "error": f"Configuration failed: {str(e)}"}
+    result = await search(query, max_results=max_results, api_key=api_key)
+    if not result.get("success"):
+        return result
+    summary = ""
+    if llm_adapter and result.get("results"):
+        try:
+            snippets = "\n".join(
+                [f"{i+1}. {r.get('title')}: {r.get('snippet')}" for i, r in enumerate(result["results"])]
+            )
+            prompt = (
+                "You are a concise researcher. Summarize the following web results as bullet points:\n"
+                f"Query: {query}\nResults:\n{snippets}\nSummary:"
+            )
+            llm_summary = await llm_adapter.generate_text(prompt, max_tokens=180, temperature=0.3)
+            summary = llm_summary.strip()
+        except Exception as e:
+            logger.warning(f"LLM summary failed: {e}")
+    return {**result, "summary": summary}

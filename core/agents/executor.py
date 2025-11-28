@@ -7,7 +7,7 @@ Handles secure tool execution with timeout, error handling, and result formattin
 import logging
 import asyncio
 import time
-from typing import Dict, Any, Optional, Union, Callable
+from typing import Dict, Any, Optional, Union, Callable, List
 from dataclasses import dataclass
 import traceback
 import concurrent.futures
@@ -92,10 +92,19 @@ class AgentExecutor:
                     error=f"Tool '{tool_name}' not properly registered",
                     tool_name=tool_name,
                     parameters=parameters,
-                )
+            )
 
             # Validate parameters
-            if not self.registry.validate_parameters(tool_name, parameters):
+            try:
+                validated = self.registry.validate_parameters(tool_name, parameters)
+            except ValueError as exc:
+                return ExecutionResult(
+                    success=False,
+                    error=str(exc),
+                    tool_name=tool_name,
+                    parameters=parameters,
+                )
+            if validated is None:
                 return ExecutionResult(
                     success=False,
                     error=f"Invalid parameters for tool '{tool_name}'",
@@ -110,14 +119,19 @@ class AgentExecutor:
             logger.info(f"Executing tool '{tool_name}' with parameters: {parameters}")
 
             # Execute with timeout
-            if tool_metadata.is_async:
-                result = await asyncio.wait_for(
-                    self._execute_async_tool(tool_function, parameters), timeout=timeout
-                )
-            else:
-                result = await asyncio.wait_for(
-                    self._execute_sync_tool(tool_function, parameters), timeout=timeout
-                )
+            tool_coro = (
+                self._execute_async_tool(tool_function, validated)
+                if tool_metadata.is_async
+                else self._execute_sync_tool(tool_function, validated)
+            )
+            task = asyncio.create_task(tool_coro)
+            try:
+                result = await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+            except asyncio.TimeoutError:
+                if task.done():
+                    result = task.result()
+                else:
+                    raise
 
             execution_time = (time.time() - start_time) * 1000
 
@@ -266,7 +280,22 @@ class SafeExecutor:
                 self.tool_registry = ToolRegistry()
 
             # Validate parameters
-            validated_params = self.tool_registry.validate_parameters(tool, parameters)
+            try:
+                validated_params = self.tool_registry.validate_parameters(
+                    tool, parameters
+                )
+            except ValueError as exc:
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "tool_name": tool.name,
+                }
+            if validated_params is None:
+                return {
+                    "success": False,
+                    "error": f"Invalid parameters for tool '{tool.name}'",
+                    "tool_name": tool.name,
+                }
 
             # Get tool function
             tool_function = self.tool_registry.get_tool_function(tool)
@@ -310,9 +339,17 @@ class SafeExecutor:
         # Run in thread pool to avoid blocking
         future = loop.run_in_executor(self.executor, lambda: function(**parameters))
 
-        # Wait with timeout
-        result = await asyncio.wait_for(future, timeout=timeout)
-        return result
+        if timeout is None or timeout <= 0:
+            return await future
+
+        try:
+            # Shield to avoid cancelling the underlying work if the timeout fires
+            return await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
+        except asyncio.TimeoutError:
+            # If the work actually finished right at the timeout, return it; otherwise, re-raise
+            if future.done():
+                return future.result()
+            raise
 
     async def _execute_sandboxed(
         self, function: Callable, parameters: Dict[str, Any], timeout: int

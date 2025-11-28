@@ -5,10 +5,10 @@ LLaVA/Qwen-VL based image Q&A
 """
 
 import logging
-from fastapi import APIRouter, File, UploadFile, HTTPException, Form
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Depends
 from typing import List, Dict, Any, Optional
 
-from core.vlm.engine import get_vlm_engine
+from api.dependencies import get_vlm
 from core.exceptions import VLMError, ValidationError
 from schemas.vqa import VQARequest, VQAResponse, VQAParameters, BatchVQAResponse
 
@@ -23,6 +23,7 @@ async def visual_question_answering(
     max_length: int = Form(100, description="Maximum answer length"),
     temperature: float = Form(0.7, description="Generation temperature"),
     language: str = Form("auto", description="Response language (auto/en/zh)"),
+    vlm_engine=Depends(get_vlm),
 ):
     """Answer a question about an image"""
     try:
@@ -38,7 +39,6 @@ async def visual_question_answering(
         image_data = await image.read()
 
         # Get VLM engine and process
-        vlm_engine = get_vlm_engine()
         result = vlm_engine.vqa(
             image=image_data,
             question=question,
@@ -66,6 +66,26 @@ async def visual_question_answering(
         raise HTTPException(500, f"Visual question answering failed: {str(e)}")
 
 
+# Alias: /vlm/vqa
+@router.post("/vlm/vqa", response_model=VQAResponse)
+async def visual_question_answering_alias(
+    image: UploadFile = File(..., description="Image file"),
+    question: str = Form(..., description="Question about the image"),
+    max_length: int = Form(100, description="Maximum answer length"),
+    temperature: float = Form(0.7, description="Generation temperature"),
+    language: str = Form("auto", description="Response language (auto/en/zh)"),
+    vlm_engine=Depends(get_vlm),
+):
+    return await visual_question_answering(
+        image=image,
+        question=question,
+        max_length=max_length,
+        temperature=temperature,
+        language=language,
+        vlm_engine=vlm_engine,
+    )
+
+
 @router.post("/vqa/batch", response_model=BatchVQAResponse)
 async def batch_visual_question_answering(
     files: List[UploadFile] = File(..., description="Image files"),
@@ -73,6 +93,7 @@ async def batch_visual_question_answering(
     max_length: int = Form(100),
     temperature: float = Form(0.7),
     language: str = Form("auto"),
+    vlm_engine=Depends(get_vlm),
 ):
     """Answer questions about multiple images in batch"""
     try:
@@ -88,7 +109,6 @@ async def batch_visual_question_answering(
 
         # Process each pair
         results = []
-        vlm_engine = get_vlm_engine()
         successful_count = 0
         failed_count = 0
 
@@ -211,6 +231,7 @@ async def vqa_conversation(
     image: UploadFile = File(...),
     messages: str = Form(..., description="JSON array of conversation messages"),
     max_length: int = Form(150),
+    vlm_engine=Depends(get_vlm),
 ):
     """
     Multi-turn VQA conversation
@@ -259,8 +280,6 @@ async def vqa_conversation(
 
         # Read image and process VQA
         image_data = await image.read()
-        vlm_engine = get_vlm_engine()
-
         result = vlm_engine.vqa(
             image=image_data, question=enhanced_question, max_length=max_length
         )

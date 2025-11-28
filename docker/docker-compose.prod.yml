@@ -64,7 +64,7 @@ services:
       dockerfile: Dockerfile.api
     container_name: saga-api
     environment:
-      - AI_CACHE_ROOT=/warehouse/cache
+      - AI_CACHE_ROOT=/warehouse
       - DATABASE_URL=postgresql://saga:${POSTGRES_PASSWORD:-saga123}@postgres:5432/sagaforge
       - REDIS_URL=redis://redis:6379/0
       - MINIO_ENDPOINT=minio:9000
@@ -73,7 +73,7 @@ services:
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
       - API_CORS_ORIGINS=http://localhost:7860,http://localhost:3000
     volumes:
-      - ${AI_CACHE_ROOT:-./ai_warehouse/cache}:/warehouse/cache
+      - ${AI_WAREHOUSE_HOST:-/mnt/c/AI_LLM_projects/ai_warehouse}:/warehouse
       - ./configs:/app/configs:ro
       - ./worldpacks:/app/worldpacks:ro
     ports:
@@ -104,12 +104,12 @@ services:
       dockerfile: Dockerfile.worker
     container_name: saga-worker
     environment:
-      - AI_CACHE_ROOT=/warehouse/cache
+      - AI_CACHE_ROOT=/warehouse
       - DATABASE_URL=postgresql://saga:${POSTGRES_PASSWORD:-saga123}@postgres:5432/sagaforge
       - REDIS_URL=redis://redis:6379/0
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
     volumes:
-      - ${AI_CACHE_ROOT:-./ai_warehouse/cache}:/warehouse/cache
+      - ${AI_WAREHOUSE_HOST:-/mnt/c/AI_LLM_projects/ai_warehouse}:/warehouse
       - ./configs:/app/configs:ro
     depends_on:
       postgres:

@@ -17,16 +17,20 @@ from schemas.monitoring import (
     WorkerStatus,
     PerformanceReport,
     AlertStatus,
+    RecentAPIMetrics,
 )
 
 from core.performance.monitor import get_performance_monitor
 from core.utils import get_model_manager, get_cache_manager
+from core.agents.executor import AgentExecutor
+from core.rag.engine import get_rag_engine  # type: ignore
 from core.monitoring.metrics import MetricsCollector
 from core.monitoring.logger import structured_logger
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/monitoring", tags=["monitoring"])
 metrics_collector = MetricsCollector()
+rlog = logging.getLogger("monitoring_router")
 
 
 # Response models
@@ -68,6 +72,7 @@ class CacheStatsResponse(BaseModel):
     file_cache: Dict[str, Any]
     model_cache: Dict[str, Any]
     result_cache: Dict[str, Any]
+    recent_files: Optional[List[str]] = None
 
 
 @router.get("/metrics", response_model=SystemMetrics)
@@ -82,16 +87,19 @@ async def get_system_metrics():
         gpu_metrics = {}
         if torch.cuda.is_available():
             for i in range(torch.cuda.device_count()):
-                gpu_metrics[f"gpu_{i}"] = {
-                    "memory_used": torch.cuda.memory_allocated(i) / 1024**3,  # GB
-                    "memory_total": torch.cuda.get_device_properties(i).total_memory
-                    / 1024**3,
-                    "utilization": (
-                        torch.cuda.utilization(i)
-                        if hasattr(torch.cuda, "utilization")
-                        else 0
-                    ),
-                }
+                try:
+                    gpu_metrics[f"gpu_{i}"] = {
+                        "memory_used": torch.cuda.memory_allocated(i) / 1024**3,  # GB
+                        "memory_total": torch.cuda.get_device_properties(i).total_memory
+                        / 1024**3,
+                        "utilization": (
+                            torch.cuda.utilization(i)
+                            if hasattr(torch.cuda, "utilization")
+                            else 0
+                        ),
+                    }
+                except Exception:
+                    gpu_metrics[f"gpu_{i}"] = {"memory_used": 0, "memory_total": 0, "utilization": 0}
 
         # Disk usage
         disk = psutil.disk_usage("/")
@@ -185,8 +193,39 @@ async def health_check():
 
             redis_client.ping()
             health_status["components"]["redis"] = "healthy"
+            redis_ok = True
         except Exception as e:
             health_status["components"]["redis"] = f"unhealthy: {str(e)}"
+            health_status["status"] = "degraded"
+            redis_ok = False
+
+        # Check Celery broker/workers if Redis ok
+        if redis_ok:
+            try:
+                from workers.celery_app import celery_app
+
+                ping = celery_app.control.ping(timeout=0.5) or []
+                health_status["components"]["celery_workers"] = (
+                    f"online ({len(ping)} responders)" if ping else "no responders"
+                )
+                if not ping:
+                    health_status["status"] = "degraded"
+            except Exception as e:
+                health_status["components"]["celery_workers"] = f"unhealthy: {str(e)}"
+                health_status["status"] = "degraded"
+
+        # Check RAG engine availability
+        try:
+            rag_engine = get_rag_engine()
+            stats = rag_engine.get_stats()
+            rag_ok = stats.get("total_documents", 0) > 0
+            health_status["components"]["rag"] = (
+                "healthy" if rag_ok else "empty_index"
+            )
+            if not rag_ok:
+                health_status["status"] = "degraded"
+        except Exception as e:
+            health_status["components"]["rag"] = f"unhealthy: {str(e)}"
             health_status["status"] = "degraded"
 
         # Check GPU availability
@@ -256,14 +295,45 @@ async def get_memory_stats():
         raise HTTPException(status_code=500, detail=f"Memory stats failed: {e}")
 
 
+@router.get("/agents")
+async def get_agent_runtime():
+    """Get agent runtime executor stats (tool availability, active executions)."""
+    try:
+        executor = AgentExecutor()
+        return {
+            "available_tools": executor.registry.list_tools(),
+            "active_executions": executor.get_active_executions(),
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Failed to get agent runtime: {e}")
+        raise HTTPException(status_code=500, detail=f"Agent runtime failed: {e}")
+
+
+@router.get("/rag")
+async def get_rag_stats():
+    """Get RAG engine stats (documents, index size, embedding model)."""
+    try:
+        rag = get_rag_engine()
+        stats = rag.get_stats()
+        return {"success": True, "stats": stats}
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Failed to get RAG stats: {e}")
+        raise HTTPException(status_code=500, detail=f"RAG stats failed: {e}")
+
+
 @router.get("/cache", response_model=CacheStatsResponse)
 async def get_cache_stats():
     """Get cache usage statistics"""
     try:
         cache_manager = get_cache_manager()
         stats = cache_manager.get_cache_stats()
+        # Add small recent file listing to help debug cache pressure
+        recent_files: List[str] = []
+        for key in ["file_cache", "model_cache", "result_cache"]:
+            files = stats.get(key, {}).get("files") or []
+            recent_files.extend(files[:3])
 
-        return CacheStatsResponse(**stats)
+        return CacheStatsResponse(**stats, recent_files=recent_files or None)
 
     except Exception as e:
         logger.error(f"Failed to get cache stats: {e}")
@@ -338,11 +408,32 @@ async def get_active_alerts():
                 )
             )
 
+        # Optional webhook push
+        try:
+            metrics_collector._maybe_send_alert(  # type: ignore[attr-defined]
+                title="Active alerts summary",
+                text=f"{len(alerts)} alerts active",
+                level="warning" if alerts else "info",
+                extras={"count": len(alerts)},
+            )
+        except Exception:
+            pass
+
         return alerts
 
     except Exception as e:
         structured_logger.error(f"Failed to get alerts: {e}")
         return []
+
+
+@router.get("/api/recent", response_model=RecentAPIMetrics)
+async def recent_api_metrics(limit: int = 20):
+    """Return recent API latency/error sample from metrics DB."""
+    try:
+        return metrics_collector.get_recent_api_metrics(limit=limit)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Failed to read recent API metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Example usage:

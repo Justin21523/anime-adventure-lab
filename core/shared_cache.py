@@ -4,14 +4,16 @@ Shared Model/Data Warehouse Bootstrap
 Ensures consistent cache directory structure across all modules
 """
 
+import json
 import os
 import pathlib
-import torch
-from typing import Dict, Any, Optional, Union
-from datetime import datetime, timedelta
-import logging
-from pathlib import Path
 import sys
+import logging
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, Optional, Union
+
+import torch
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
@@ -23,9 +25,22 @@ class SharedCache:
     """Manages shared model and data warehouse directories"""
 
     def __init__(self, cache_root: Optional[str] = None):
-        self.cache_root = cache_root or os.getenv(
-            "AI_CACHE_ROOT", "../ai_warehouse/cache"
+        raw_root = cache_root or os.getenv(
+            "AI_CACHE_ROOT", "/mnt/c/AI_LLM_projects/ai_warehouse"
         )
+        root_path = Path(raw_root).expanduser()
+
+        # Backward compatibility: if someone passes the old .../cache path, lift one level
+        if root_path.name == "cache":
+            root_path = root_path.parent
+
+        self.root = root_path
+        self.root.mkdir(parents=True, exist_ok=True)
+
+        self.cache_root = Path(self.root)  # keep legacy attribute name as Path
+        self.cache_dir = self.cache_root / "cache"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
         self._memory_cache: Dict[str, Any] = {}
         self.app_dirs = {}
         self._setup_environment()
@@ -33,12 +48,14 @@ class SharedCache:
 
     def _setup_environment(self) -> None:
         """Setup HuggingFace and PyTorch cache directories"""
+        hf_root = self.cache_dir / "hf"
         cache_mappings = {
-            "HF_HOME": f"{self.cache_root}/hf",
-            "TRANSFORMERS_CACHE": f"{self.cache_root}/hf/transformers",
-            "HF_DATASETS_CACHE": f"{self.cache_root}/hf/datasets",
-            "HUGGINGFACE_HUB_CACHE": f"{self.cache_root}/hf/hub",
-            "TORCH_HOME": f"{self.cache_root}/torch",
+            "AI_CACHE_ROOT": str(self.cache_root),  # expose normalized root
+            "HF_HOME": str(hf_root),
+            "TRANSFORMERS_CACHE": str(hf_root / "transformers"),
+            "HF_DATASETS_CACHE": str(hf_root / "datasets"),
+            "HUGGINGFACE_HUB_CACHE": str(hf_root / "hub"),
+            "TORCH_HOME": str(self.cache_dir / "torch"),
         }
 
         for env_key, cache_path in cache_mappings.items():
@@ -47,46 +64,57 @@ class SharedCache:
 
     def _create_directories(self) -> None:
         """Create application-specific directories"""
+        models_root = self.root / "models"
+        datasets_root = self.root / "datasets"
+        outputs_root = self.root / "outputs"
+        rag_root = self.root / "rag"
+        worldpacks_root = self.root / "worldpacks"
+
         self.app_dirs = {
             # Model Registry file
-            "TRAIN_REGISTRY": f"{self.cache_root}/train/model_registry.json",
+            "TRAIN_REGISTRY": str(self.root / "train" / "model_registry.json"),
             # Models
-            "MODELS_SD": f"{self.cache_root}/models/sd",
-            "MODELS_SDXL": f"{self.cache_root}/models/sdxl",
-            "MODELS_CONTROLNET": f"{self.cache_root}/models/controlnet",
-            "MODELS_LORA": f"{self.cache_root}/models/lora",
-            "MODELS_IPADAPTER": f"{self.cache_root}/models/ipadapter",
-            "MODELS_LLM": f"{self.cache_root}/models/llm",
-            "MODELS_VLM": f"{self.cache_root}/models/vlm",
-            "MODELS_TEXT2IMAGE": f"{self.cache_root}/models/text2image",
-            "MODELS_TEXT2VIDEO": f"{self.cache_root}/models/text2video",
-            "MODELS_TTS": f"{self.cache_root}/models/tts",
-            "MODELS_ENHANCEMENT": f"{self.cache_root}/models/enhancement",
-            "MODELS_TAGGING": f"{self.cache_root}/models/tagging",
-            "MODELS_EMBEDDING": f"{self.cache_root}/models/embedding",
-            "MODELS_SAFETY": f"{self.cache_root}/models/safety",
-            "MODELS_AUDIO": f"{self.cache_root}/models/audio",
-            "MODELS_CLIP": f"{self.cache_root}/models/clip",
+            "MODELS_SD": str(models_root / "stable-diffusion"),
+            "MODELS_SDXL": str(models_root / "stable-diffusion" / "xl"),
+            "MODELS_CONTROLNET": str(models_root / "controlnet"),
+            "MODELS_LORA": str(models_root / "stable-diffusion" / "lora"),
+            "MODELS_IPADAPTER": str(models_root / "ipadapter"),
+            "MODELS_LLM": str(models_root / "llm"),
+            "MODELS_VLM": str(models_root / "vlm"),
+            "MODELS_TEXT2IMAGE": str(models_root / "stable-diffusion"),
+            "MODELS_TEXT2VIDEO": str(models_root / "video"),
+            "MODELS_TTS": str(models_root / "audio"),
+            "MODELS_ENHANCEMENT": str(models_root / "enhancement"),
+            "MODELS_TAGGING": str(models_root / "tagging"),
+            "MODELS_EMBEDDING": str(models_root / "embeddings"),
+            "MODELS_SAFETY": str(models_root / "safety"),
+            "MODELS_AUDIO": str(models_root / "audio"),
+            "MODELS_CLIP": str(models_root / "clip"),
             # Datasets
-            "DATASETS_RAW": f"{self.cache_root}/datasets/raw",
-            "DATASETS_PROCESSED": f"{self.cache_root}/datas`ets/processed",
-            "DATASETS_METADATA": f"{self.cache_root}/datasets/metadata",
+            "DATASETS_RAW": str(datasets_root / "raw"),
+            "DATASETS_PROCESSED": str(datasets_root / "processed"),
+            "DATASETS_METADATA": str(datasets_root / "metadata"),
             # Outputs
-            "OUTPUT_DIR": f"{self.cache_root}/outputs/saga-forge",
-            "OUTPUT_BATCH": f"{self.cache_root}/outputs/batch",
-            "OUTPUT_TRAINUBG": f"{self.cache_root}/outputs/tranining",
-            "OUTPUT_GAMES": f"{self.cache_root}/outputs/games",
-            "OUTPUT_LORA": f"{self.cache_root}/outputs/lora",
-            "OUTPUT_RAG": f"{self.cache_root}/outputs/rag",
+            "OUTPUT_DIR": str(outputs_root / "saga-forge"),
+            "OUTPUT_BATCH": str(outputs_root / "batch"),
+            "OUTPUT_TRAINING": str(outputs_root / "training"),
+            "OUTPUT_GAMES": str(outputs_root / "games"),
+            "OUTPUT_LORA": str(outputs_root / "lora"),
+            "OUTPUT_RAG": str(outputs_root / "rag"),
             # RAG
-            "RAG_INDEX": f"{self.cache_root}/rag/indexes",
-            "RAG_DOCS": f"{self.cache_root}/rag/documents",
-            "RAG_EMBEDDINGS": f"{self.cache_root}/rag/embeddings",
-            "WORLDPACKS": f"{self.cache_root}/worldpacks",
+            "RAG_INDEX": str(rag_root / "indexes"),
+            "RAG_DOCS": str(rag_root / "documents"),
+            "RAG_EMBEDDINGS": str(rag_root / "embeddings"),
+            "RAG_VECTOR_STORE": str(rag_root / "knowledge_base" / "vector_store"),
+            "WORLDPACKS": str(worldpacks_root),
+            # Cache root (HF/torch cache lives under root/cache)
+            "CACHE_DIR": str(self.cache_dir),
         }
 
         for dir_path in self.app_dirs.values():
-            pathlib.Path(dir_path).mkdir(parents=True, exist_ok=True)
+            path_obj = pathlib.Path(dir_path)
+            target_dir = path_obj.parent if path_obj.suffix else path_obj
+            target_dir.mkdir(parents=True, exist_ok=True)
 
     def get_path(self, key: str) -> str:
         """Get directory path by key"""
@@ -266,6 +294,7 @@ class SharedCache:
             "directories": self.app_dirs,
             "gpu_info": self.get_gpu_info(),
             "env_vars": {
+                "AI_CACHE_ROOT": os.environ.get("AI_CACHE_ROOT"),
                 "HF_HOME": os.environ.get("HF_HOME"),
                 "TORCH_HOME": os.environ.get("TORCH_HOME"),
                 "CUDA_VISIBLE_DEVICES": os.environ.get(
@@ -304,6 +333,12 @@ def bootstrap_cache(cache_root: Optional[str] = None) -> SharedCache:
         )
 
     return cache
+
+
+# Legacy alias for tests
+def setup_shared_cache(cache_root: Optional[str] = None) -> SharedCache:
+    """Initialize shared cache (alias for bootstrap_cache)."""
+    return bootstrap_cache(cache_root)
 
 
 if __name__ == "__main__":

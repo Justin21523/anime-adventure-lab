@@ -26,7 +26,7 @@ services:
     container_name: multi_modal_api
     restart: unless-stopped
     environment:
-      - AI_CACHE_ROOT=/warehouse/cache
+      - AI_CACHE_ROOT=/warehouse
       - API_PREFIX=/api/v1
       - DEVICE=auto
       - REDIS_URL=redis://redis:6379/0
@@ -35,7 +35,7 @@ services:
       - ENABLE_METRICS=true
       - LOG_LEVEL=INFO
     volumes:
-      - /mnt/ai_warehouse/cache:/warehouse/cache
+      - ${AI_WAREHOUSE_HOST:-/mnt/c/AI_LLM_projects/ai_warehouse}:/warehouse
       - ../configs:/app/configs:ro
       - ../logs:/app/logs
     ports:
@@ -65,13 +65,13 @@ services:
     container_name: multi_modal_worker_vision
     restart: unless-stopped
     environment:
-      - AI_CACHE_ROOT=/warehouse/cache
+      - AI_CACHE_ROOT=/warehouse
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - LOG_LEVEL=INFO
     volumes:
-      - /mnt/ai_warehouse/cache:/warehouse/cache
+      - ${AI_WAREHOUSE_HOST:-/mnt/c/AI_LLM_projects/ai_warehouse}:/warehouse
       - ../configs:/app/configs:ro
       - ../logs:/app/logs
     command: python scripts/start_worker.py --queues vision --concurrency 1 --loglevel INFO
@@ -93,13 +93,13 @@ services:
     container_name: multi_modal_worker_text
     restart: unless-stopped
     environment:
-      - AI_CACHE_ROOT=/warehouse/cache
+      - AI_CACHE_ROOT=/warehouse
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - LOG_LEVEL=INFO
     volumes:
-      - /mnt/ai_warehouse/cache:/warehouse/cache
+      - ${AI_WAREHOUSE_HOST:-/mnt/c/AI_LLM_projects/ai_warehouse}:/warehouse
       - ../configs:/app/configs:ro
       - ../logs:/app/logs
     command: python scripts/start_worker.py --queues text --concurrency 2 --loglevel INFO
@@ -114,13 +114,13 @@ services:
     container_name: multi_modal_worker_training
     restart: unless-stopped
     environment:
-      - AI_CACHE_ROOT=/warehouse/cache
+      - AI_CACHE_ROOT=/warehouse
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - LOG_LEVEL=INFO
     volumes:
-      - /mnt/ai_warehouse/cache:/warehouse/cache
+      - ${AI_WAREHOUSE_HOST:-/mnt/c/AI_LLM_projects/ai_warehouse}:/warehouse
       - ../configs:/app/configs:ro
       - ../logs:/app/logs
     command: python scripts/start_worker.py --queues training --concurrency 1 --loglevel INFO
@@ -159,11 +159,11 @@ services:
     container_name: multi_modal_metrics
     restart: unless-stopped
     environment:
-      - AI_CACHE_ROOT=../ai_warehouse/cache
+      - AI_CACHE_ROOT=/warehouse
       - REDIS_URL=redis://redis:6379/0
       - LOG_LEVEL=INFO
     volumes:
-      - /mnt/ai_warehouse/cache:/warehouse/cache
+      - ${AI_WAREHOUSE_HOST:-/mnt/c/AI_LLM_projects/ai_warehouse}:/warehouse
       - ../configs:/app/configs:ro
       - ../logs:/app/logs
     command: python scripts/monitoring_setup.py --daemon --interval 30

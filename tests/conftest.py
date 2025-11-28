@@ -19,7 +19,7 @@ sys.path.insert(0, str(backend_dir))
 
 # Mock environment variables before importing app
 test_env = {
-    "AI_CACHE_ROOT": "/tmp/test_cache",
+    "AI_CACHE_ROOT": "/tmp/test_warehouse",
     "API_PREFIX": "/api/v1",
     "ALLOWED_ORIGINS": "http://localhost:3000",
     "DEVICE": "cpu",
@@ -45,14 +45,14 @@ def event_loop():
 @pytest.fixture(scope="session")
 def test_cache_dir():
     """Create temporary cache directory"""
-    cache_dir = Path(tempfile.mkdtemp(prefix="test_cache_"))
+    cache_dir = Path(tempfile.mkdtemp(prefix="test_warehouse_"))
 
     # Create required subdirectories
     subdirs = [
-        "hf/transformers",
-        "hf/datasets",
-        "hf/hub",
-        "torch",
+        "cache/hf/transformers",
+        "cache/hf/datasets",
+        "cache/hf/hub",
+        "cache/torch",
         "models/lora",
         "models/blip2",
         "models/qwen",
@@ -61,7 +61,8 @@ def test_cache_dir():
         "datasets/raw",
         "datasets/processed",
         "datasets/metadata",
-        "outputs/multi-modal-lab",
+        "outputs/saga-forge",
+        "outputs/batch",
     ]
 
     for subdir in subdirs:

@@ -5,11 +5,12 @@ Enables agents to interact with story/game systems for dynamic narrative generat
 """
 
 import logging
+import time
 from typing import Dict, Any, List, Optional, Union
 from dataclasses import dataclass
 import asyncio
 
-from .base_agent import BaseAgent, SimpleReasoningAgent
+from .base_agent import AgentResponse, BaseAgent, SimpleReasoningAgent
 from .multi_step_processor import MultiStepProcessor
 
 logger = logging.getLogger(__name__)
@@ -54,12 +55,10 @@ class StoryAgent(SimpleReasoningAgent):
     Integrates with game systems to provide intelligent story responses
     """
 
-    def __init__(self, **kwargs):
-        super().__init__(
-            name="story_agent",
-            description="Intelligent story and narrative agent",
-            **kwargs,
-        )
+    def __init__(self, name: str = "story_agent", description: str = "Intelligent story and narrative agent", **kwargs):
+        kwargs.setdefault("name", name)
+        kwargs.setdefault("description", description)
+        super().__init__(**kwargs)
         self.story_contexts: Dict[str, StoryContext] = {}
 
     async def process_story_action(
@@ -110,11 +109,14 @@ class StoryAgent(SimpleReasoningAgent):
             result = await self.execute_task(
                 task_description=task_description, context=story_context_data
             )
+            payload = (
+                result.dict() if isinstance(result, AgentResponse) else result
+            )
 
-            if result["success"]:
+            if payload.get("success"):
                 # Parse the story response
                 story_response = self._parse_story_response(
-                    result["result"], story_context, player_action
+                    payload.get("result", ""), story_context, player_action
                 )
 
                 # Update story history
@@ -131,13 +133,15 @@ class StoryAgent(SimpleReasoningAgent):
                     "success": True,
                     "story_response": story_response,
                     "updated_context": story_context,
-                    "agent_steps": result.get("steps_taken", 0),
-                    "tools_used": result.get("tools_used", []),
+                    "agent_steps": payload.get("steps_taken")
+                    or len(payload.get("tools_used", [])),
+                    "tools_used": payload.get("tools_used", []),
                 }
             else:
                 return {
                     "success": False,
-                    "error": result.get("error", "Story processing failed"),
+                    "error": payload.get("error_message")
+                    or payload.get("error", "Story processing failed"),
                     "fallback_response": self._generate_fallback_response(
                         story_context, player_action
                     ),
@@ -263,18 +267,20 @@ class StoryAgent(SimpleReasoningAgent):
             task_description=task_description,
             context={"story_mode": True, "scene_generation": True},
         )
+        payload = result.dict() if isinstance(result, AgentResponse) else result
 
-        if result["success"]:
+        if payload.get("success"):
             return {
                 "success": True,
-                "scene_description": result["result"],
+                "scene_description": payload.get("result", ""),
                 "scene_type": scene_type,
                 "generated_for": story_context.current_scene,
             }
         else:
             return {
                 "success": False,
-                "error": result.get("error", "Scene generation failed"),
+                "error": payload.get("error_message")
+                or payload.get("error", "Scene generation failed"),
                 "fallback_description": f"You find yourself in {story_context.current_scene}.",
             }
 
@@ -292,6 +298,7 @@ class StoryAgentManager:
 
         # Register story agent types
         self._initialize_story_agents()
+        self._register_agents_with_processor()
 
     def _initialize_story_agents(self):
         """Initialize different types of story agents"""
@@ -319,6 +326,11 @@ class StoryAgentManager:
             name="action_agent",
             description="Processes combat, action sequences, and skill checks",
         )
+
+    def _register_agents_with_processor(self):
+        """Expose story agents to the shared multi-step processor."""
+        for name, agent in self.agents.items():
+            self.multi_step_processor.register_agent(name, agent)
 
     async def process_complex_story_scenario(
         self,
@@ -454,4 +466,13 @@ class StoryAgentManager:
         return list(self.active_stories.keys())
 
 
-import time
+# Singleton accessors
+_story_agent_manager: Optional[StoryAgentManager] = None
+
+
+def get_story_agent_manager() -> StoryAgentManager:
+    """Get global story agent manager instance."""
+    global _story_agent_manager
+    if _story_agent_manager is None:
+        _story_agent_manager = StoryAgentManager()
+    return _story_agent_manager

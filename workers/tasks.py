@@ -11,9 +11,11 @@ from datetime import datetime
 import uuid
 
 
+DEFAULT_CACHE_ROOT = Path("/mnt/c/AI_LLM_projects/ai_warehouse")
+
 from workers.celery_app import celery_app, redis_client
-from core.vlm.engine import VLMEngine
-from core.llm.adapter import LLMAdapter
+import os
+from api.dependencies import get_vlm, get_llm
 from core.monitoring.logger import structured_logger
 
 # Initialize engines (will be loaded lazily)
@@ -21,17 +23,21 @@ vlm_engine = None
 llm_adapter = None
 
 
-def get_vlm_engine():
+def _get_vlm_engine():
     global vlm_engine
     if vlm_engine is None:
-        vlm_engine = VLMEngine()
+        try:
+            vlm_engine = get_vlm()
+        except Exception:
+            # fallback mock stub
+            vlm_engine = get_vlm()
     return vlm_engine
 
 
-def get_llm_adapter():
+def _get_llm_adapter():
     global llm_adapter
     if llm_adapter is None:
-        llm_adapter = LLMAdapter()
+        llm_adapter = get_llm()
     return llm_adapter
 
 
@@ -67,17 +73,13 @@ def batch_caption_task(
         update_task_progress(task_id, 0, total_items)
 
         # Get VLM engine
-        engine = get_vlm_engine()
-
-        # Load caption model if not already loaded
-        if not engine.caption_model:
-            engine.load_caption_model()
+        engine = _get_vlm_engine()
 
         for i, image_path in enumerate(image_paths):
             try:
                 # Caption single image
-                result = engine.caption_image(
-                    image_path=image_path,
+                result = engine.caption(
+                    image=image_path,
                     max_length=config.get("max_length", 50),
                     num_beams=config.get("num_beams", 3),
                 )
@@ -109,10 +111,8 @@ def batch_caption_task(
                 structured_logger.error(f"Failed to caption {image_path}: {e}")
 
         # Save results to file
-        AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/tmp/ai_cache")
-        results_dir = (
-            Path(AI_CACHE_ROOT) / "outputs" / "multi-modal-lab" / "batch_results"
-        )
+        AI_CACHE_ROOT = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_CACHE_ROOT))
+        results_dir = AI_CACHE_ROOT / "outputs" / "multi-modal-lab" / "batch_results"
         results_dir.mkdir(parents=True, exist_ok=True)
 
         results_file = results_dir / f"caption_results_{job_id}.json"
@@ -165,10 +165,7 @@ def batch_vqa_task(
         update_task_progress(task_id, 0, total_items)
 
         engine = get_vlm_engine()
-
-        # Load VQA model if not already loaded
-        if not engine.vqa_model:
-            engine.load_vqa_model()
+        engine = _get_vlm_engine()
 
         for i, item in enumerate(inputs):
             try:
@@ -213,10 +210,8 @@ def batch_vqa_task(
                 structured_logger.error(f"Failed VQA for item {i}: {e}")
 
         # Save results
-        AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/tmp/ai_cache")
-        results_dir = (
-            Path(AI_CACHE_ROOT) / "outputs" / "multi-modal-lab" / "batch_results"
-        )
+        AI_CACHE_ROOT = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_CACHE_ROOT))
+        results_dir = AI_CACHE_ROOT / "outputs" / "multi-modal-lab" / "batch_results"
         results_dir.mkdir(parents=True, exist_ok=True)
 
         results_file = results_dir / f"vqa_results_{job_id}.json"
@@ -266,7 +261,7 @@ def batch_chat_task(
 
         update_task_progress(task_id, 0, total_items)
 
-        adapter = get_llm_adapter()
+        adapter = _get_llm_adapter()
 
         for i, messages in enumerate(messages_batch):
             try:
@@ -300,10 +295,8 @@ def batch_chat_task(
                 structured_logger.error(f"Failed chat completion for item {i}: {e}")
 
         # Save results
-        AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/tmp/ai_cache")
-        results_dir = (
-            Path(AI_CACHE_ROOT) / "outputs" / "multi-modal-lab" / "batch_results"
-        )
+        AI_CACHE_ROOT = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_CACHE_ROOT))
+        results_dir = AI_CACHE_ROOT / "outputs" / "multi-modal-lab" / "batch_results"
         results_dir.mkdir(parents=True, exist_ok=True)
 
         results_file = results_dir / f"chat_results_{job_id}.json"

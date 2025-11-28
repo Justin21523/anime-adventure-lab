@@ -2,6 +2,7 @@
 import json
 import hashlib
 import pickle
+import os
 from pathlib import Path
 from typing import Any, Optional, Dict, List
 from dataclasses import dataclass, asdict
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CacheConfig:
     redis_url: str = "redis://localhost:6379/1"
-    disk_cache_dir: str = "../ai_warehouse/cache/pipeline_cache"
+    disk_cache_dir: str = ""  # resolved at runtime
     embedding_cache_ttl: int = 3600 * 24 * 7  # 1 week
     image_cache_ttl: int = 3600 * 24 * 3  # 3 days
     max_disk_cache_gb: float = 5.0
@@ -28,7 +29,15 @@ class CacheManager:
 
     def __init__(self, config: CacheConfig):
         self.config = config
-        self.disk_cache_dir = Path(config.disk_cache_dir)
+        if config.disk_cache_dir:
+            disk_dir = config.disk_cache_dir
+        else:
+            root = Path(
+                os.getenv("AI_CACHE_ROOT", "/mnt/c/AI_LLM_projects/ai_warehouse")
+            )
+            disk_dir = root / "cache" / "pipeline_cache"
+
+        self.disk_cache_dir = Path(disk_dir)
         self.disk_cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Redis connection for fast access

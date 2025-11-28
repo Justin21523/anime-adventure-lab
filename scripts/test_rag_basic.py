@@ -17,13 +17,17 @@ sys.path.insert(0, str(backend_path))
 # Shared cache bootstrap
 import torch
 
-AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/mnt/ai_warehouse/cache")
+DEFAULT_WAREHOUSE = Path("/mnt/c/AI_LLM_projects/ai_warehouse")
+AI_CACHE_ROOT = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_WAREHOUSE))
+CACHE_ROOT = AI_CACHE_ROOT / "cache"
+
 for k, v in {
-    "HF_HOME": f"{AI_CACHE_ROOT}/hf",
-    "TRANSFORMERS_CACHE": f"{AI_CACHE_ROOT}/hf/transformers",
-    "HF_DATASETS_CACHE": f"{AI_CACHE_ROOT}/hf/datasets",
-    "HUGGINGFACE_HUB_CACHE": f"{AI_CACHE_ROOT}/hf/hub",
-    "TORCH_HOME": f"{AI_CACHE_ROOT}/torch",
+    "AI_CACHE_ROOT": str(AI_CACHE_ROOT),
+    "HF_HOME": f"{CACHE_ROOT}/hf",
+    "TRANSFORMERS_CACHE": f"{CACHE_ROOT}/hf/transformers",
+    "HF_DATASETS_CACHE": f"{CACHE_ROOT}/hf/datasets",
+    "HUGGINGFACE_HUB_CACHE": f"{CACHE_ROOT}/hf/hub",
+    "TORCH_HOME": f"{CACHE_ROOT}/torch",
 }.items():
     os.environ[k] = v
     Path(v).mkdir(parents=True, exist_ok=True)

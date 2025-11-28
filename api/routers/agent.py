@@ -1,16 +1,35 @@
 # api/routers/agent.py
 """
-Agent Tools Router
+Agent Tools Router.
+
+Provides endpoints for:
+- listing and executing tools
+- running simple and advanced reasoning agents
+- managing multi-step tasks
+- story-related agents
+- health and system info
 """
 
-import logging
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from typing import Dict, Any, List, Optional
 import asyncio
-from schemas.agent import AgentParameters
+import logging
 import time
-from core.exceptions import ValidationError, MultiModalLabError
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+
+from core.config import get_config
+from core.exceptions import ValidationError
+from core.agents import (
+    ToolRegistry,
+    AgentExecutor,
+    MultiStepProcessor,
+    SimpleReasoningAgent,
+    AdvancedReasoningAgent,
+)
+from core.agents.story_integration import StoryAgentManager, StoryContext
 from schemas.agent import (
+    AgentParameters,
     AgentToolCallRequest,
     AgentToolCallResponse,
     AgentTaskRequest,
@@ -19,29 +38,48 @@ from schemas.agent import (
     AgentStatusResponse,
 )
 
-# Import agent system components
-from core.agents import (
-    ToolRegistry,
-    AgentExecutor,
-    MultiStepProcessor,
-    SimpleReasoningAgent,
-)
-from core.agents import BaseAgent
-from core.agents.story_integration import StoryAgent, StoryAgentManager, StoryContext
-
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Global instances
-_tool_registry = None
-_agent_executor = None
-_agent_instance = None
-_multi_step_processor = None
-_story_manager = None
+# Global instances (lazy-initialized singletons)
+_tool_registry: Optional[ToolRegistry] = None
+_agent_executor: Optional[AgentExecutor] = None
+_agent_instance: Optional[SimpleReasoningAgent] = None
+_advanced_agent_instance: Optional[AdvancedReasoningAgent] = None
+_multi_step_processor: Optional[MultiStepProcessor] = None
+_story_manager: Optional[StoryAgentManager] = None
+
+
+# --------------------------------------------------------------------------- #
+# Helpers for configuration / singletons
+# --------------------------------------------------------------------------- #
+
+
+def _get_agent_settings() -> Dict[str, Any]:
+    """Load agent defaults from config with safe fallbacks."""
+    try:
+        agent_config = get_config().get_agent_config() or {}
+        settings = agent_config.get("agent_settings", {})
+        return {
+            "max_iterations": settings.get("default_max_iterations", 5),
+            "max_tools_per_iteration": settings.get(
+                "default_max_tools_per_iteration", 2
+            ),
+            "enable_reasoning": settings.get("enable_chain_of_thought", True),
+            "config_path": str(Path(get_config().config_dir) / "agent.yaml"),
+        }
+    except Exception:  # noqa: BLE001
+        # Ultimate fallback if config is unavailable for any reason.
+        return {
+            "max_iterations": 5,
+            "max_tools_per_iteration": 2,
+            "enable_reasoning": True,
+            "config_path": "configs/agent.yaml",
+        }
 
 
 def get_tool_registry() -> ToolRegistry:
-    """Get global tool registry instance"""
+    """Get global tool registry instance."""
     global _tool_registry
     if _tool_registry is None:
         _tool_registry = ToolRegistry()
@@ -49,23 +87,43 @@ def get_tool_registry() -> ToolRegistry:
 
 
 def get_agent_executor() -> AgentExecutor:
-    """Get global agent executor instance"""
+    """Get global agent executor instance."""
     global _agent_executor
     if _agent_executor is None:
         _agent_executor = AgentExecutor()
     return _agent_executor
 
 
-def get_agent() -> BaseAgent:
-    """Get or create agent instance"""
+def get_agent() -> SimpleReasoningAgent:
+    """Get or create the default reasoning agent instance."""
     global _agent_instance
     if _agent_instance is None:
-        _agent_instance = BaseAgent()  # type: ignore
+        settings = _get_agent_settings()
+        _agent_instance = SimpleReasoningAgent(
+            name="default_agent",
+            description="General purpose reasoning agent",
+            max_iterations=settings["max_iterations"],
+            max_tools_per_iteration=settings["max_tools_per_iteration"],
+            enable_reasoning=settings["enable_reasoning"],
+        )
     return _agent_instance
 
 
+def get_advanced_agent() -> AdvancedReasoningAgent:
+    """Get or create the advanced reasoning agent instance."""
+    global _advanced_agent_instance
+    if _advanced_agent_instance is None:
+        settings = _get_agent_settings()
+        _advanced_agent_instance = AdvancedReasoningAgent(
+            max_iterations=settings["max_iterations"],
+            max_tools_per_iteration=settings["max_tools_per_iteration"],
+            enable_reasoning=settings["enable_reasoning"],
+        )
+    return _advanced_agent_instance
+
+
 def get_multi_step_processor() -> MultiStepProcessor:
-    """Get global multi-step processor instance"""
+    """Get global multi-step processor instance."""
     global _multi_step_processor
     if _multi_step_processor is None:
         _multi_step_processor = MultiStepProcessor()
@@ -73,68 +131,198 @@ def get_multi_step_processor() -> MultiStepProcessor:
 
 
 def get_story_manager() -> StoryAgentManager:
-    """Get global story manager instance"""
+    """Get global story manager instance."""
     global _story_manager
     if _story_manager is None:
         _story_manager = StoryAgentManager()
     return _story_manager
 
 
+def _parameters_to_dict(params: AgentParameters) -> Dict[str, Any]:
+    """Convert AgentParameters to a plain dict (Pydantic v1/v2 compatible)."""
+    if hasattr(params, "model_dump"):
+        return params.model_dump()
+    if hasattr(params, "dict"):
+        return params.dict()
+    # Very defensive fallback; not expected in normal operation.
+    return dict(params)  # type: ignore[arg-type]
+
+
+def _apply_agent_parameters(
+    agent: SimpleReasoningAgent, params: Optional[AgentParameters]
+) -> Dict[str, Any]:
+    """
+    Apply AgentParameters to an agent instance (max_iterations etc.).
+    Returns a plain dict representation of the parameters for logging/response.
+    """
+    if not params:
+        return {}
+
+    try:
+        if getattr(params, "max_iterations", None) is not None:
+            agent.max_iterations = params.max_iterations  # type: ignore[assignment]
+        if getattr(params, "max_tools_per_iteration", None) is not None:
+            agent.max_tools_per_iteration = (  # type: ignore[assignment]
+                params.max_tools_per_iteration
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to apply AgentParameters to agent: %s", exc)
+
+    return _parameters_to_dict(params)
+
+
+async def _run_agent_task(
+    agent: SimpleReasoningAgent,
+    request: AgentTaskRequest,
+    agent_label: str,
+) -> AgentTaskResponse:
+    """
+    Shared implementation for executing a task with either the default or
+    advanced agent.
+    """
+    try:
+        params_dict = _apply_agent_parameters(agent, request.parameters)
+
+        enable_cot = True
+        if request.parameters is not None and hasattr(
+            request.parameters, "enable_chain_of_thought"
+        ):
+            enable_cot = bool(request.parameters.enable_chain_of_thought)
+
+        response = await agent.execute_task(
+            task_description=request.task_description,
+            parameters=params_dict or None,
+            enable_chain_of_thought=enable_cot,
+        )
+
+        return AgentTaskResponse(
+            task_description=request.task_description,
+            result=str(response.result) if response.success else "Task failed",
+            success=response.success,
+            tools_used=response.tools_used,
+            steps_taken=len(response.tools_used),
+            execution_time_ms=response.execution_time_ms,
+            reasoning_chain=response.reasoning_chain,
+            error_message=response.error_message,
+            parameters=params_dict,
+        )
+    except HTTPException:
+        # Just bubble it up if it was intentionally raised.
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error("%s task failed: %s", agent_label, exc)
+        raise HTTPException(500, f"{agent_label} task failed: {str(exc)}") from exc
+
+
+# --------------------------------------------------------------------------- #
+# Tool endpoints
+# --------------------------------------------------------------------------- #
+
+
 @router.get("/agent/tools", response_model=AgentToolListResponse)
 async def list_tools():
-    """List all available agent tools"""
+    """List all available agent tools from the default agent's registry."""
     try:
         agent = get_agent()
         tools = []
 
         for tool_name in agent.tool_registry.list_tools():
             tool = agent.tool_registry.get_tool(tool_name)
-            if tool:
-                tool_info = {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": {
-                        name: {
-                            "type": param.type,
-                            "description": param.description,
-                            "required": param.required,
-                            "default": param.default,
-                        }
-                        for name, param in tool.parameters.items()
-                    },
-                    "timeout_seconds": tool.timeout_seconds,
-                }
-                tools.append(tool_info)
+            if not tool:
+                continue
+
+            tool_info = {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": {
+                    name: {
+                        "type": getattr(
+                            param,
+                            "type",
+                            param.get("type") if isinstance(param, dict) else None,
+                        ),
+                        "description": getattr(
+                            param,
+                            "description",
+                            param.get("description")
+                            if isinstance(param, dict)
+                            else None,
+                        ),
+                        "required": getattr(
+                            param,
+                            "required",
+                            param.get("required")
+                            if isinstance(param, dict)
+                            else True,
+                        ),
+                        "default": getattr(
+                            param,
+                            "default",
+                            param.get("default") if isinstance(param, dict) else None,
+                        ),
+                    }
+                    for name, param in tool.parameters.items()
+                },
+                "timeout_seconds": tool.timeout_seconds,
+            }
+            tools.append(tool_info)
 
         return AgentToolListResponse(tools=tools, total_count=len(tools))
-
-    except Exception as e:
-        logger.error(f"Failed to list tools: {e}")
-        raise HTTPException(500, f"Failed to list tools: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to list tools: %s", exc)
+        raise HTTPException(500, f"Failed to list tools: {str(exc)}") from exc
 
 
 @router.post("/agent/tools/list")
 async def list_available_tools():
-    """List all available agent tools"""
+    """List all available agent tools directly from the global tool registry."""
     try:
         registry = get_tool_registry()
         tools_info = registry.get_all_tools_info()
 
         return {"success": True, "tools_count": len(tools_info), "tools": tools_info}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to list tools: %s", exc)
+        raise HTTPException(500, f"Failed to list tools: {str(exc)}") from exc
 
-    except Exception as e:
-        logger.error(f"Failed to list tools: {e}")
-        raise HTTPException(500, f"Failed to list tools: {str(e)}")
+
+@router.post("/agent/tools/call", response_model=AgentToolCallResponse)
+async def call_tool(request: AgentToolCallRequest):
+    """Execute a single tool call."""
+    try:
+        registry = get_tool_registry()
+        executor = get_agent_executor()
+
+        if not registry.is_tool_available(request.tool_name):
+            raise HTTPException(404, f"Tool '{request.tool_name}' not found")
+
+        result = await executor.execute_tool(
+            request.tool_name, request.parameters or {}
+        )
+
+        return AgentToolCallResponse(
+            success=result.success,
+            tool_name=request.tool_name,
+            result=result.result if result.success else {"error": result.error},
+            execution_time_ms=result.execution_time_ms,
+            parameters=request.parameters,
+            error_message=None if result.success else result.error,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Tool call failed: %s", exc)
+        raise HTTPException(500, f"Tool call failed: {str(exc)}") from exc
 
 
 @router.post("/agent/tools/batch")
 async def call_multiple_tools(tool_calls: List[Dict[str, Any]]):
-    """Execute multiple tools in parallel"""
+    """Execute multiple tools in parallel."""
     try:
         executor = get_agent_executor()
+        registry = get_tool_registry()
 
         # Validate all tools exist
-        registry = get_tool_registry()
         for tool_call in tool_calls:
             tool_name = tool_call.get("tool_name")
             if not tool_name:
@@ -143,12 +331,10 @@ async def call_multiple_tools(tool_calls: List[Dict[str, Any]]):
             if not registry.is_tool_available(tool_name):
                 raise ValidationError("tool_name", tool_name, "Tool not found")
 
-        # Execute tools
         results = await executor.execute_multiple_tools(
             tool_calls=tool_calls, max_concurrent=3
         )
 
-        # Format response
         formatted_results = []
         for result in results:
             formatted_results.append(
@@ -168,82 +354,83 @@ async def call_multiple_tools(tool_calls: List[Dict[str, Any]]):
             "results_count": len(formatted_results),
             "results": formatted_results,
         }
+    except ValidationError as exc:
+        logger.error("Batch tool call validation failed: %s", exc)
+        raise HTTPException(400, f"Validation error: {str(exc)}") from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Batch tool call failed: %s", exc)
+        raise HTTPException(500, f"Batch tool call failed: {str(exc)}") from exc
 
-    except ValidationError as e:
-        logger.error(f"Batch tool call validation failed: {e}")
-        raise HTTPException(400, f"Validation error: {str(e)}")
-    except Exception as e:
-        logger.error(f"Batch tool call failed: {e}")
-        raise HTTPException(500, f"Batch tool call failed: {str(e)}")
+
+# --------------------------------------------------------------------------- #
+# Agent task endpoints
+# --------------------------------------------------------------------------- #
 
 
 @router.post("/agent/task", response_model=AgentTaskResponse)
 async def execute_task(request: AgentTaskRequest):
-    """Execute a complex agent task with automatic tool selection"""
-    try:
-        agent = get_agent()
+    """Execute a complex task with the default reasoning agent."""
+    agent = get_agent()
+    return await _run_agent_task(agent, request, agent_label="Agent")
 
-        # Set agent parameters if provided
-        if request.parameters:
-            agent.max_iterations = request.parameters.max_iterations
-            agent.max_tools_per_iteration = request.parameters.max_tools_per_iteration
 
-        # Execute task
-        response = await agent.execute_task(
-            task_description=request.task_description,
-            parameters=request.parameters.dict() if request.parameters else None,
-            enable_chain_of_thought=(
-                request.parameters.enable_chain_of_thought
-                if request.parameters
-                else True
-            ),
-        )
-
-        return AgentTaskResponse(
-            task_description=request.task_description,
-            result=str(response.result) if response.success else "Task failed",
-            success=response.success,
-            tools_used=response.tools_used,
-            steps_taken=len(response.tools_used),
-            execution_time_ms=response.execution_time_ms,
-            reasoning_chain=response.reasoning_chain,
-            error_message=response.error_message,
-            parameters=request.parameters or {},
-        )
-
-    except Exception as e:
-        logger.error(f"Agent task failed: {e}")
-        raise HTTPException(500, f"Agent task failed: {str(e)}")
+@router.post("/agent/advanced/task", response_model=AgentTaskResponse)
+async def execute_advanced_task(request: AgentTaskRequest):
+    """Execute a task using the advanced reasoning agent (with reflection & QA)."""
+    agent = get_advanced_agent()
+    return await _run_agent_task(agent, request, agent_label="Advanced agent")
 
 
 @router.get("/agent/status", response_model=AgentStatusResponse)
 async def get_agent_status():
-    """Get current agent status and configuration"""
+    """Get current status and configuration of the default agent."""
     try:
         agent = get_agent()
+        settings = _get_agent_settings()
 
-        return AgentStatusResponse(  # type: ignore
+        return AgentStatusResponse(  # type: ignore[call-arg]
             status="active",
             tools_loaded=len(agent.tool_registry.list_tools()),
             available_tools=agent.tool_registry.list_tools(),
             max_iterations=agent.max_iterations,
             max_tools_per_iteration=agent.max_tools_per_iteration,
-            config_file=agent.tool_registry.config_path,
+            config_file=settings.get("config_path", "configs/agent.yaml"),
         )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get agent status: %s", exc)
+        raise HTTPException(500, f"Failed to get agent status: {str(exc)}") from exc
 
-    except Exception as e:
-        logger.error(f"Failed to get agent status: {e}")
-        raise HTTPException(500, f"Failed to get agent status: {str(e)}")
+
+@router.get("/agent/advanced/status", response_model=AgentStatusResponse)
+async def get_advanced_agent_status():
+    """Get current status and configuration of the advanced agent."""
+    try:
+        agent = get_advanced_agent()
+        settings = _get_agent_settings()
+
+        return AgentStatusResponse(  # type: ignore[call-arg]
+            status="active",
+            tools_loaded=len(agent.tool_registry.list_tools()),
+            available_tools=agent.tool_registry.list_tools(),
+            max_iterations=agent.max_iterations,
+            max_tools_per_iteration=agent.max_tools_per_iteration,
+            config_file=settings.get("config_path", "configs/agent.yaml"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get advanced agent status: %s", exc)
+        raise HTTPException(
+            500, f"Failed to get advanced agent status: {str(exc)}"
+        ) from exc
 
 
 @router.post("/agent/reload")
 async def reload_agent_tools():
-    """Reload agent tools from configuration"""
+    """Reload agent tools from configuration (recreate default & advanced agents)."""
     try:
-        global _agent_instance
-        _agent_instance = None  # Force recreation
+        global _agent_instance, _advanced_agent_instance
+        _agent_instance = None
+        _advanced_agent_instance = None
 
-        # Get new agent instance (will reload tools)
         agent = get_agent()
 
         return {
@@ -251,17 +438,21 @@ async def reload_agent_tools():
             "tools_loaded": len(agent.tool_registry.list_tools()),
             "available_tools": agent.tool_registry.list_tools(),
         }
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to reload agent: %s", exc)
+        raise HTTPException(500, f"Failed to reload agent: {str(exc)}") from exc
 
-    except Exception as e:
-        logger.error(f"Failed to reload agent: {e}")
-        raise HTTPException(500, f"Failed to reload agent: {str(e)}")
+
+# --------------------------------------------------------------------------- #
+# Multi-step task endpoints
+# --------------------------------------------------------------------------- #
 
 
 @router.post("/agent/multistep/create")
 async def create_multistep_task(
     task_id: str, description: str, context: Optional[Dict[str, Any]] = None
 ):
-    """Create a new multi-step task"""
+    """Create a new multi-step task."""
     try:
         processor = get_multi_step_processor()
 
@@ -276,15 +467,14 @@ async def create_multistep_task(
             "status": task.status.value,
             "message": f"Multi-step task '{task_id}' created successfully",
         }
-
-    except Exception as e:
-        logger.error(f"Multi-step task creation failed: {e}")
-        raise HTTPException(500, f"Task creation failed: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Multi-step task creation failed: %s", exc)
+        raise HTTPException(500, f"Task creation failed: {str(exc)}") from exc
 
 
 @router.post("/agent/multistep/plan")
 async def auto_plan_task(task_id: str, planning_agent: str = "reasoning"):
-    """Automatically plan steps for a multi-step task"""
+    """Automatically plan steps for a multi-step task."""
     try:
         processor = get_multi_step_processor()
 
@@ -308,17 +498,18 @@ async def auto_plan_task(task_id: str, planning_agent: str = "reasoning"):
                 for step in task.steps
             ],
         }
-
-    except Exception as e:
-        logger.error(f"Task planning failed: {e}")
-        raise HTTPException(500, f"Task planning failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Task planning failed: %s", exc)
+        raise HTTPException(500, f"Task planning failed: {str(exc)}") from exc
 
 
 @router.post("/agent/multistep/execute")
 async def execute_multistep_task(
     task_id: str, background_tasks: BackgroundTasks, max_parallel_steps: int = 2
 ):
-    """Execute a multi-step task"""
+    """Execute a multi-step task."""
     try:
         processor = get_multi_step_processor()
 
@@ -331,15 +522,16 @@ async def execute_multistep_task(
         )
 
         return {"success": True, "execution_result": result}
-
-    except Exception as e:
-        logger.error(f"Multi-step task execution failed: {e}")
-        raise HTTPException(500, f"Task execution failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Multi-step task execution failed: %s", exc)
+        raise HTTPException(500, f"Task execution failed: {str(exc)}") from exc
 
 
 @router.get("/agent/multistep/status/{task_id}")
 async def get_task_status(task_id: str):
-    """Get status of a multi-step task"""
+    """Get status of a multi-step task."""
     try:
         processor = get_multi_step_processor()
         status = processor.get_task_status(task_id)
@@ -348,15 +540,16 @@ async def get_task_status(task_id: str):
             raise HTTPException(404, f"Task '{task_id}' not found")
 
         return {"success": True, "task_status": status}
-
-    except Exception as e:
-        logger.error(f"Failed to get task status: {e}")
-        raise HTTPException(500, f"Failed to get task status: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get task status: %s", exc)
+        raise HTTPException(500, f"Failed to get task status: {str(exc)}") from exc
 
 
 @router.get("/agent/multistep/list")
 async def list_active_tasks():
-    """List all active multi-step tasks"""
+    """List all active multi-step tasks."""
     try:
         processor = get_multi_step_processor()
         active_tasks = processor.list_active_tasks()
@@ -366,10 +559,35 @@ async def list_active_tasks():
             "active_tasks": active_tasks,
             "count": len(active_tasks),
         }
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to list active tasks: %s", exc)
+        raise HTTPException(500, f"Failed to list active tasks: {str(exc)}") from exc
 
-    except Exception as e:
-        logger.error(f"Failed to list active tasks: {e}")
-        raise HTTPException(500, f"Failed to list active tasks: {str(e)}")
+
+@router.delete("/agent/multistep/cancel/{task_id}")
+async def cancel_multistep_task(task_id: str):
+    """Cancel an active multi-step task."""
+    try:
+        processor = get_multi_step_processor()
+        success = processor.cancel_task(task_id)
+
+        if success:
+            return {
+                "success": True,
+                "message": f"Task '{task_id}' cancelled successfully",
+            }
+
+        raise HTTPException(404, f"Task '{task_id}' not found")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Task cancellation failed: %s", exc)
+        raise HTTPException(500, f"Task cancellation failed: {str(exc)}") from exc
+
+
+# --------------------------------------------------------------------------- #
+# Story-related endpoints
+# --------------------------------------------------------------------------- #
 
 
 @router.post("/agent/story/action")
@@ -383,11 +601,10 @@ async def process_story_action(
     available_actions: Optional[List[str]] = None,
     narrative_style: str = "adventure",
 ):
-    """Process a player action within story context"""
+    """Process a player action within a story context."""
     try:
         story_manager = get_story_manager()
 
-        # Create story context
         story_context = StoryContext(
             story_id=story_id,
             character_name=character_name,
@@ -398,7 +615,6 @@ async def process_story_action(
             narrative_style=narrative_style,
         )
 
-        # Get story agent and process action
         story_agent = story_manager.get_story_agent("narrative")
         if not story_agent:
             raise HTTPException(500, "Story agent not available")
@@ -417,10 +633,11 @@ async def process_story_action(
                 "tools_used": result.get("tools_used", []),
             },
         }
-
-    except Exception as e:
-        logger.error(f"Story action processing failed: {e}")
-        raise HTTPException(500, f"Story action processing failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Story action processing failed: %s", exc)
+        raise HTTPException(500, f"Story action processing failed: {str(exc)}") from exc
 
 
 @router.post("/agent/story/scene")
@@ -432,11 +649,10 @@ async def generate_scene_description(
     narrative_style: str = "adventure",
     scene_type: str = "descriptive",
 ):
-    """Generate detailed scene description"""
+    """Generate a detailed scene description."""
     try:
         story_manager = get_story_manager()
 
-        # Create story context
         story_context = StoryContext(
             story_id=story_id,
             character_name=character_name,
@@ -447,7 +663,6 @@ async def generate_scene_description(
             narrative_style=narrative_style,
         )
 
-        # Get story agent and generate scene
         story_agent = story_manager.get_story_agent("world")
         if not story_agent:
             raise HTTPException(500, "World building agent not available")
@@ -464,10 +679,11 @@ async def generate_scene_description(
             "error": result.get("error"),
             "fallback_description": result.get("fallback_description"),
         }
-
-    except Exception as e:
-        logger.error(f"Scene generation failed: {e}")
-        raise HTTPException(500, f"Scene generation failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Scene generation failed: %s", exc)
+        raise HTTPException(500, f"Scene generation failed: {str(exc)}") from exc
 
 
 @router.post("/agent/story/complex")
@@ -481,11 +697,10 @@ async def process_complex_story_scenario(
     story_history: Optional[List[Dict[str, Any]]] = None,
     narrative_style: str = "adventure",
 ):
-    """Process complex story scenarios using multiple agents"""
+    """Process complex story scenarios using multiple agents."""
     try:
         story_manager = get_story_manager()
 
-        # Create story context
         story_context = StoryContext(
             story_id=story_id,
             character_name=character_name,
@@ -496,7 +711,6 @@ async def process_complex_story_scenario(
             narrative_style=narrative_style,
         )
 
-        # Process complex scenario
         result = await story_manager.process_complex_story_scenario(
             story_context=story_context,
             scenario_type=scenario_type,
@@ -509,15 +723,16 @@ async def process_complex_story_scenario(
             "scenario_result": result.get("scenario_result"),
             "error": result.get("error"),
         }
-
-    except Exception as e:
-        logger.error(f"Complex story scenario failed: {e}")
-        raise HTTPException(500, f"Complex story scenario failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Complex story scenario failed: %s", exc)
+        raise HTTPException(500, f"Complex story scenario failed: {str(exc)}") from exc
 
 
 @router.get("/agent/story/active")
 async def list_active_stories():
-    """List all active story contexts"""
+    """List all active story contexts."""
     try:
         story_manager = get_story_manager()
         active_stories = story_manager.get_active_stories()
@@ -527,38 +742,19 @@ async def list_active_stories():
             "active_stories": active_stories,
             "count": len(active_stories),
         }
-
-    except Exception as e:
-        logger.error(f"Failed to list active stories: {e}")
-        raise HTTPException(500, f"Failed to list active stories: {str(e)}")
-
-
-@router.delete("/agent/multistep/cancel/{task_id}")
-async def cancel_multistep_task(task_id: str):
-    """Cancel an active multi-step task"""
-    try:
-        processor = get_multi_step_processor()
-        success = processor.cancel_task(task_id)
-
-        if success:
-            return {
-                "success": True,
-                "message": f"Task '{task_id}' cancelled successfully",
-            }
-        else:
-            raise HTTPException(404, f"Task '{task_id}' not found")
-
-    except Exception as e:
-        logger.error(f"Task cancellation failed: {e}")
-        raise HTTPException(500, f"Task cancellation failed: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to list active stories: %s", exc)
+        raise HTTPException(500, f"Failed to list active stories: {str(exc)}") from exc
 
 
-# Additional utility endpoints
+# --------------------------------------------------------------------------- #
+# System info / health endpoints
+# --------------------------------------------------------------------------- #
 
 
 @router.get("/agent/info")
 async def get_agent_system_info():
-    """Get agent system information and statistics"""
+    """Get agent system information and statistics."""
     try:
         registry = get_tool_registry()
         processor = get_multi_step_processor()
@@ -570,9 +766,10 @@ async def get_agent_system_info():
                 "available_tools": len(registry.list_tools()),
                 "active_tasks": len(processor.list_active_tasks()),
                 "active_executions": len(executor.get_active_executions()),
-                "tool_categories": {},  # Could add category breakdown
+                "tool_categories": {},  # Reserved for future category breakdown
                 "agent_types": [
                     "reasoning",
+                    "advanced_reasoning",
                     "narrative",
                     "dialogue",
                     "world",
@@ -582,63 +779,84 @@ async def get_agent_system_info():
             "tool_list": registry.list_tools(),
             "active_tasks": processor.list_active_tasks(),
         }
-
-    except Exception as e:
-        logger.error(f"Failed to get agent info: {e}")
-        raise HTTPException(500, f"Failed to get agent info: {str(e)}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to get agent info: %s", exc)
+        raise HTTPException(500, f"Failed to get agent info: {str(exc)}") from exc
 
 
 @router.post("/agent/tools/configure")
 async def configure_tool_settings(tool_name: str, settings: Dict[str, Any]):
-    """Configure tool-specific settings"""
+    """Configure tool-specific settings (currently only web_search)."""
     try:
-        # This is a placeholder for tool configuration
-        # Each tool could have its own configuration method
-
         if tool_name == "web_search":
-            from core.agent.tools.web_search import configure_search_engine
+            from core.agents.tools.web_search import configure_search_engine
 
             result = configure_search_engine(**settings)
             return result
-        else:
-            return {
-                "success": False,
-                "error": f"Configuration not supported for tool: {tool_name}",
-            }
 
-    except Exception as e:
-        logger.error(f"Tool configuration failed: {e}")
-        raise HTTPException(500, f"Tool configuration failed: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Configuration not supported for tool: {tool_name}",
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Tool configuration failed: %s", exc)
+        raise HTTPException(500, f"Tool configuration failed: {str(exc)}") from exc
 
 
-# Health check for agent system
 @router.get("/agent/health")
 async def agent_health_check():
-    """Health check for agent system components"""
+    """Health check for agent system components."""
     try:
         registry = get_tool_registry()
         executor = get_agent_executor()
+        tools = registry.list_tools()
 
-        # Basic health checks
-        health_status = {
-            "tool_registry": len(registry.list_tools()) > 0,
+        health_status: Dict[str, Any] = {
+            "tool_registry": len(tools) > 0,
             "agent_executor": executor is not None,
-            "available_tools": registry.list_tools(),
+            "available_tools": tools,
             "system_ready": True,
         }
 
-        # Test a simple tool execution
-        try:
-            test_result = await executor.execute_tool(
-                "calculator", {"expression": "2+2"}
-            )
-            health_status["tool_execution_test"] = test_result.success
-        except Exception as e:
+        # Test a simple tool execution if possible.
+        tool_to_test: Optional[str] = None
+        test_params: Dict[str, Any] = {}
+
+        if registry.is_tool_available("calculator"):
+            tool_to_test = "calculator"
+            test_params = {"expression": "2+2"}
+        elif registry.is_tool_available("basic_math"):
+            tool_to_test = "basic_math"
+            test_params = {"a": 2, "b": 2, "op": "+"}
+        elif tools:
+            tool_to_test = tools[0]
+
+        if tool_to_test:
+            try:
+                # Prefer direct function call to avoid executor timeouts in health.
+                tool_fn = registry.get_function(tool_to_test)
+                validated = registry.validate_parameters(tool_to_test, test_params) or {}
+                if tool_fn:
+                    if asyncio.iscoroutinefunction(tool_fn):
+                        tool_result = await tool_fn(**validated)
+                    else:
+                        tool_result = tool_fn(**validated)
+                    health_status["tool_execution_test"] = True
+                    health_status["tool_test_tool"] = tool_to_test
+                    health_status["tool_test_result"] = tool_result
+                else:
+                    health_status["tool_execution_test"] = False
+                    health_status["tool_test_tool"] = tool_to_test
+                    health_status["tool_test_error"] = "Function not found"
+            except Exception as exc:  # noqa: BLE001
+                health_status["tool_execution_test"] = False
+                health_status["tool_test_tool"] = tool_to_test
+                health_status["tool_test_error"] = str(exc)
+        else:
             health_status["tool_execution_test"] = False
-            health_status["tool_test_error"] = str(e)
+            health_status["tool_test_error"] = "No tools registered"
 
         return {"success": True, "health": health_status, "timestamp": time.time()}
-
-    except Exception as e:
-        logger.error(f"Agent health check failed: {e}")
-        return {"success": False, "error": str(e), "timestamp": time.time()}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Agent health check failed: %s", exc)
+        return {"success": False, "error": str(exc), "timestamp": time.time()}

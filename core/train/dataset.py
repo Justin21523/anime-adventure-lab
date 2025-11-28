@@ -11,21 +11,55 @@ import numpy as np
 from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader
-from datasets import load_dataset, Dataset as HFDataset
+try:
+    from datasets import load_dataset, Dataset as HFDataset  # type: ignore
+    _datasets_available = True
+except ImportError:  # pragma: no cover - optional dependency fallback
+    _datasets_available = False
+
+    class HFDataset:  # minimal stub to satisfy type hints
+        pass
+
+    def load_dataset(*args, **kwargs):  # type: ignore
+        raise ImportError(
+            "datasets 庫未安裝，若需要真實訓練/資料載入請先安裝 `pip install datasets`"
+        )
 from dataclasses import asdict
 from transformers import CLIPTokenizer
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
+try:
+    import albumentations as A  # type: ignore
+    from albumentations.pytorch import ToTensorV2  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency fallback
+    A = None  # type: ignore
+
+    class ToTensorV2:  # type: ignore
+        def __call__(self, x):
+            return x
 
 from ..config import get_config
 from ..utils.image import ImageProcessor, get_image_processor
 from ..utils.text import TextProcessor, get_text_processor
-from ..exceptions import (
-    DatasetError,
-    ValidationError,
-    DatasetLoadError,
-    DatasetNotFoundError,
-)
+try:
+    from ..exceptions import (
+        DatasetError,
+        ValidationError,
+        DatasetLoadError,
+        DatasetNotFoundError,
+    )
+except Exception:  # pragma: no cover - 後備定義，避免缺少類型時導致匯入失敗
+    class DatasetError(Exception):
+        ...
+
+    class DatasetLoadError(DatasetError):
+        def __init__(self, path: str, message: str):
+            super().__init__(f"{path}: {message}")
+
+    class DatasetNotFoundError(DatasetError):
+        def __init__(self, path: str):
+            super().__init__(f"Dataset not found: {path}")
+
+    class ValidationError(Exception):
+        ...
 from .config import TrainingConfig, DatasetConfig
 
 logger = logging.getLogger(__name__)
@@ -176,8 +210,11 @@ class TrainingDataset(Dataset):
         except Exception as e:
             raise DatasetLoadError(self.config.path, f"HF dataset loading failed: {e}")
 
-    def _setup_augmentations(self) -> Optional[A.Compose]:
+    def _setup_augmentations(self) -> Optional[Any]:
         """Setup image augmentations"""
+        if A is None:
+            logger.warning("albumentations 未安裝，略過影像增強")
+            return None
         try:
             # Fix: Proper parameter types for albumentations
             transforms = A.Compose(

@@ -11,8 +11,8 @@ import psutil
 from pathlib import Path
 from datetime import datetime, timedelta
 import smtplib
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 
 class TestMonitor:

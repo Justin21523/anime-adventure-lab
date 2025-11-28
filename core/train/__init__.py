@@ -38,18 +38,27 @@ from .evaluators import (
     get_tag_evaluator,
 )
 
-from .lora_trainer import (
-    LoRATrainer,
-    TrainingManager,
-    create_lora_trainer,
-    train_lora_from_config,
-    AnimeDataset,
-)
+try:
+    from .lora_trainer import (
+        LoRATrainer,
+        TrainingManager,
+        create_lora_trainer,
+        train_lora_from_config,
+        AnimeDataset,
+    )
+except Exception:  # pragma: no cover - optional heavy dependencies
+    LoRATrainer = None  # type: ignore
+    TrainingManager = None  # type: ignore
+    create_lora_trainer = None  # type: ignore
+    train_lora_from_config = None  # type: ignore
+    AnimeDataset = None  # type: ignore
 
 from .registry import (
     ModelRegistry,
     get_model_registry,
 )
+from .job_manager import TrainJobManager
+from .executor import TrainingExecutor
 
 
 __all__ = [
@@ -85,6 +94,8 @@ __all__ = [
     # Registry classes
     "ModelRegistry",
     "get_model_registry",
+    "TrainJobManager",
+    "TrainingExecutor",
     # Training classes (may not be available)
     "LoRATrainer",
     "TrainingManager",

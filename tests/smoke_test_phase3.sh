@@ -22,7 +22,8 @@ redis-cli ping
 
 # 4. Create required directories
 mkdir -p logs
-mkdir -p /mnt/ai_warehouse/cache/outputs/multi-modal-lab/batch_results
+WAREHOUSE_ROOT=${AI_CACHE_ROOT:-/mnt/c/AI_LLM_projects/ai_warehouse}
+mkdir -p "$WAREHOUSE_ROOT"/outputs/multi-modal-lab/batch_results
 
 # tests/smoke_test_phase3.sh
 

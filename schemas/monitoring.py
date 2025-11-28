@@ -105,3 +105,11 @@ class MonitoringDashboardData(BaseModel):
     active_alerts: List[AlertStatus] = Field(..., description="Active system alerts")
     queue_stats: List[QueueStats] = Field(..., description="Queue statistics")
     recent_jobs: List[BatchJobResponse] = Field(..., description="Recent batch jobs")
+
+
+class RecentAPIMetrics(BaseModel):
+    """Recent API metrics summary"""
+
+    recent: List[Dict[str, Any]] = Field(default_factory=list, description="Recent API calls")
+    avg_latency_ms: float = Field(0, description="Average latency of the sample")
+    error_count: int = Field(0, description="Number of errors in the sample")

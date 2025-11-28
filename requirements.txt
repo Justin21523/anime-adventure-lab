@@ -26,7 +26,7 @@ faiss-cpu>=1.7.4
 rank-bm25>=0.2.2
 
 # Chinese Processing
-opencc-python-reimplemented>=1.1.6
+opencc-python-reimplemented>=0.1.7
 pypinyin>=0.48.0
 
 # Image Processing

@@ -31,6 +31,10 @@ class BatchJobRequest(BaseModel):
     priority: Optional[int] = Field(
         default=5, ge=1, le=10, description="Job priority (1=highest)"
     )
+    simulate: bool = Field(
+        default=False,
+        description="Run synchronously without Celery (useful for testing/offline).",
+    )
 
     class Config:
         schema_extra = {

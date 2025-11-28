@@ -206,9 +206,21 @@ def calculate(expression: str) -> Dict[str, Any]:
     if isinstance(result, str) and result.startswith("Error:"):
         return {"success": False, "error": result, "expression": expression}
     else:
+        if isinstance(result, bool):
+            result_type = "bool"
+        elif isinstance(result, int):
+            result_type = "int"
+        elif isinstance(result, float):
+            result_type = "float"
+        elif isinstance(result, Decimal):
+            result_type = "decimal"
+        else:
+            result_type = type(result).__name__
+
         return {
             "success": True,
             "result": result,
+            "type": result_type,
             "expression": expression,
             "formatted_result": f"{expression} = {result}",
         }

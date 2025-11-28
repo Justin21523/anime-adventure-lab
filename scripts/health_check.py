@@ -71,8 +71,9 @@ def check_dependencies():
 
 def check_cache_directory():
     """檢查快取目錄"""
-    cache_root = os.getenv("AI_CACHE_ROOT", "/tmp/test_cache")
-    cache_path = Path(cache_root)
+    default_root = Path("/mnt/c/AI_LLM_projects/ai_warehouse")
+    cache_root = Path(os.getenv("AI_CACHE_ROOT", default_root))
+    cache_path = cache_root / "cache"
 
     print(f"📁 快取目錄: {cache_root}")
 

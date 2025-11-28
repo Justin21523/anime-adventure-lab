@@ -5,7 +5,14 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-from ..exceptions import RegistryError, ValidationError
+try:
+    from ..exceptions import RegistryError, ValidationError
+except Exception:  # pragma: no cover - fallback
+    class RegistryError(Exception):
+        ...
+
+    class ValidationError(Exception):
+        ...
 from core.shared_cache import get_shared_cache
 
 

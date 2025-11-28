@@ -63,32 +63,48 @@ class ValidationResponse(BaseModel):
     errors: List[str]
 
 
+class TextBatchRequest(BaseModel):
+    texts: List[str]
+    check_toxicity: bool = True
+    check_blocked_terms: bool = True
+    check_sensitive_data: bool = True
+
+
+class TextBatchResponse(BaseModel):
+    total: int
+    unsafe: int
+    results: List[TextSafetyResponse]
+
+
 @router.post("/check", response_model=SafetyCheckResponse)
 async def check_content_safety(request: SafetyCheckRequest):
     """Check content for safety violations"""
     try:
-        # Mock safety check
-        blocked_terms = ["violent", "nsfw", "hate"]
-        detected_issues = []
+        cf = get_content_filter()
+        text_result = cf.check_text_safety(request.content)
+        safe = text_result["is_safe"]
+        risk_level = "low" if safe else "high" if len(text_result["violations"]) > 1 else "medium"
 
-        content_lower = request.content.lower()
-        for term in blocked_terms:
-            if term in content_lower:
-                detected_issues.append(f"Contains blocked term: {term}")
+        # Optional image check if provided
+        image_issues = []
+        if request.image_base64:
+            image_result = cf.check_image_safety(cf.image_processor.load_image_from_base64(request.image_base64))  # type: ignore
+            if not image_result["is_safe"]:
+                image_issues.append("NSFW/unsafe image detected")
+                safe = False
+                risk_level = "high"
 
-        safe = len(detected_issues) == 0
-        risk_level = "low" if safe else "high" if len(detected_issues) > 1 else "medium"
-
+        detected = text_result["violations"] + image_issues
         recommendations = []
         if not safe:
-            recommendations.append("Remove flagged content")
-            recommendations.append("Review content guidelines")
+            recommendations.append("Remove or rewrite flagged content")
+            recommendations.append("Follow safety and content guidelines")
 
         return SafetyCheckResponse(  # type: ignore
             safe=safe,
             risk_level=risk_level,
-            detected_issues=detected_issues,
-            confidence=0.95,
+            detected_issues=detected,
+            confidence=text_result.get("confidence", 0.8),
             recommendations=recommendations,
         )
 
@@ -100,8 +116,8 @@ async def check_content_safety(request: SafetyCheckRequest):
 async def check_text_safety(request: TextSafetyRequest):
     """Check text content for safety violations"""
     try:
-        content_filter = get_content_filter()
-        result = content_filter.check_text_safety(request.text)
+        cf = get_content_filter()
+        result = cf.check_text_safety(request.text)
 
         return TextSafetyResponse(
             is_safe=result["is_safe"],
@@ -119,8 +135,6 @@ async def check_text_safety(request: TextSafetyRequest):
 async def check_image_safety(request: ImageSafetyRequest):
     """Check image content for safety violations"""
     try:
-        content_filter = get_content_filter()
-
         # Load image from base64
         import base64
         from io import BytesIO
@@ -129,7 +143,8 @@ async def check_image_safety(request: ImageSafetyRequest):
         image_data = base64.b64decode(request.image_data)
         image = Image.open(BytesIO(image_data))
 
-        result = content_filter.check_image_safety(image)
+        cf = get_content_filter()
+        result = cf.check_image_safety(image)
 
         return ImageSafetyResponse(
             is_safe=result["is_safe"],
@@ -210,3 +225,44 @@ async def validate_input(request: ValidationRequest):
     except Exception as e:
         logger.error(f"Input validation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Validation failed: {e}")
+
+
+@router.post("/text/batch", response_model=TextBatchResponse)
+async def check_text_batch(request: TextBatchRequest):
+    """Batch text safety checking (for agents/LLM outputs)."""
+    try:
+        results: List[TextSafetyResponse] = []
+        unsafe = 0
+        cf = get_content_filter()
+
+        for text in request.texts:
+            res = cf.check_text_safety(text)
+            result_obj = TextSafetyResponse(
+                is_safe=res["is_safe"],
+                violations=res["violations"],
+                confidence=res["confidence"],
+                filtered_text=res["filtered_text"],
+            )
+            results.append(result_obj)
+            if not res["is_safe"]:
+                unsafe += 1
+
+        return TextBatchResponse(total=len(request.texts), unsafe=unsafe, results=results)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Batch text safety failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Batch safety failed: {e}")
+
+
+@router.get("/status")
+async def safety_status():
+    """Return safety system readiness (models, blocked terms count)."""
+    try:
+        cf = get_content_filter()
+        return {
+            "blocked_terms": len(cf.blocked_terms),
+            "text_classifier_loaded": cf.text_classifier is not None,
+            "nsfw_classifier_loaded": cf.nsfw_classifier is not None,
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Safety status failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Safety status failed: {e}")
