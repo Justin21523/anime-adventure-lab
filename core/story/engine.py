@@ -27,6 +27,7 @@ from .story_system import (
     ContextualChoice,
     EnhancedNarrativeGenerator,
 )
+from .memory_manager import get_memory_manager, StoryMemoryManager
 from ..exceptions import GameError, SessionNotFoundError, InvalidChoiceError
 from ..config import get_config
 from ..shared_cache import get_shared_cache
@@ -617,6 +618,21 @@ class StoryEngine:
                 player_input, narrative_result["main_narrative"], choice_id
             )
 
+            # Record turn in memory manager
+            try:
+                memory_manager = get_memory_manager(session_id)
+                await memory_manager.record_turn(
+                    turn_number=session.turn_count,
+                    player_input=player_input,
+                    narrative_response=narrative_result["main_narrative"],
+                    scene_id=context_memory.current_scene.scene_id if context_memory.current_scene else None,
+                    choices_made=[choice_id] if choice_id else [],
+                    flags_changed={},  # TODO: Track flag changes
+                    stats_changed={}   # TODO: Track stat changes
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record turn in memory: {e}")
+
             # Save session
             self._save_session(session)
 
@@ -732,6 +748,21 @@ class StoryEngine:
 
             # Add to history
             session.add_to_history(player_input, narrative_response, choice_id)
+
+            # Record turn in memory manager
+            try:
+                memory_manager = get_memory_manager(session_id)
+                await memory_manager.record_turn(
+                    turn_number=session.turn_count,
+                    player_input=player_input,
+                    narrative_response=narrative_response,
+                    scene_id=session.current_state.scene_id,
+                    choices_made=[choice_id] if choice_id else [],
+                    flags_changed={},  # TODO: Track flag changes
+                    stats_changed={}   # TODO: Track stat changes
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record turn in memory: {e}")
 
             # Save session
             self._save_session(session)

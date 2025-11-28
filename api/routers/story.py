@@ -65,6 +65,27 @@ def _safe_rag_search(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
         return []
 
 
+async def _retrieve_story_context(
+    session_id: str,
+    query: str,
+    top_k: int = 5
+) -> Dict[str, Any]:
+    """Retrieve story context using memory manager"""
+    try:
+        from core.story.memory_manager import get_memory_manager
+
+        memory_manager = get_memory_manager(session_id)
+        context = await memory_manager.retrieve_relevant_context(
+            query=query,
+            max_results=top_k,
+            include_short_term=True
+        )
+        return context
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Story context retrieval skipped: %s", exc)
+        return {"short_term": [], "summaries": [], "rag_results": []}
+
+
 def _filter_text(text: str) -> str:
     """Run safety filter to avoid unsafe prompts."""
     try:
