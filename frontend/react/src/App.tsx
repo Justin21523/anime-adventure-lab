@@ -1,16 +1,18 @@
-import { useState } from 'react'
+import { useState, lazy, Suspense } from 'react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { queryClient } from './config/query.config'
 import { useSessionStore } from './stores/sessionStore'
 import { Button } from './components/ui/button'
-import { SessionList } from './features/story/components/SessionList'
-import { NewStoryForm } from './features/story/components/NewStoryForm'
-import { StoryGameScreen } from './features/story/components/StoryGameScreen'
-import { RAGManagement } from './features/rag/components/RAGManagement'
-import { BatchMonitor } from './features/batch/components/BatchMonitor'
-import { AgentSystem } from './features/agent/components/AgentSystem'
-import { T2IManagement } from './features/t2i/components/T2IManagement'
+
+// Lazy load feature components for better performance
+const SessionList = lazy(() => import('./features/story/components/SessionList').then(m => ({ default: m.SessionList })))
+const NewStoryForm = lazy(() => import('./features/story/components/NewStoryForm').then(m => ({ default: m.NewStoryForm })))
+const StoryGameScreen = lazy(() => import('./features/story/components/StoryGameScreen').then(m => ({ default: m.StoryGameScreen })))
+const RAGManagement = lazy(() => import('./features/rag/components/RAGManagement').then(m => ({ default: m.RAGManagement })))
+const BatchMonitor = lazy(() => import('./features/batch/components/BatchMonitor').then(m => ({ default: m.BatchMonitor })))
+const AgentSystem = lazy(() => import('./features/agent/components/AgentSystem').then(m => ({ default: m.AgentSystem })))
+const T2IManagement = lazy(() => import('./features/t2i/components/T2IManagement').then(m => ({ default: m.T2IManagement })))
 
 type Route = 'home' | 'new-story' | 'game' | 'rag' | 'batch' | 'agent' | 't2i'
 
@@ -35,6 +37,16 @@ function App() {
   const handleCancelNewStory = () => {
     setRoute('home')
   }
+
+  // Loading fallback component
+  const LoadingFallback = () => (
+    <div className="flex items-center justify-center min-h-screen">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+        <p className="text-slate-400">載入中...</p>
+      </div>
+    </div>
+  )
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -87,36 +99,38 @@ function App() {
           </nav>
         )}
 
-        {/* 路由內容 */}
-        {route === 'home' && (
-          <div className="container mx-auto p-8">
-            <SessionList
-              onSelectSession={handleSelectSession}
-              onNewSession={handleNewStory}
-            />
-          </div>
-        )}
+        {/* 路由內容 - Wrapped with Suspense for code splitting */}
+        <Suspense fallback={<LoadingFallback />}>
+          {route === 'home' && (
+            <div className="container mx-auto p-8">
+              <SessionList
+                onSelectSession={handleSelectSession}
+                onNewSession={handleNewStory}
+              />
+            </div>
+          )}
 
-        {route === 'new-story' && (
-          <div className="container mx-auto p-8">
-            <NewStoryForm
-              onSuccess={handleStoryCreated}
-              onCancel={handleCancelNewStory}
-            />
-          </div>
-        )}
+          {route === 'new-story' && (
+            <div className="container mx-auto p-8">
+              <NewStoryForm
+                onSuccess={handleStoryCreated}
+                onCancel={handleCancelNewStory}
+              />
+            </div>
+          )}
 
-        {route === 'game' && currentSessionId && (
-          <StoryGameScreen sessionId={currentSessionId} />
-        )}
+          {route === 'game' && currentSessionId && (
+            <StoryGameScreen sessionId={currentSessionId} />
+          )}
 
-        {route === 'rag' && <RAGManagement />}
+          {route === 'rag' && <RAGManagement />}
 
-        {route === 'batch' && <BatchMonitor />}
+          {route === 'batch' && <BatchMonitor />}
 
-        {route === 'agent' && <AgentSystem />}
+          {route === 'agent' && <AgentSystem />}
 
-        {route === 't2i' && <T2IManagement />}
+          {route === 't2i' && <T2IManagement />}
+        </Suspense>
       </div>
 
       {/* React Query DevTools (only in development) */}
