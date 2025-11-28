@@ -11,6 +11,23 @@ from .monitor import (
     RequestMetrics,
 )
 
+from .cache_manager import CacheManager, CacheConfig
+
+from .quantization import (
+    QuantizationManager,
+    QuantizationConfig,
+    QuantizationMode,
+    create_quantization_config,
+    get_quantization_manager,
+)
+
+from .batch_optimizer import (
+    BatchProcessor,
+    BatchConfig,
+    BatchStrategy,
+    BatchMetrics,
+)
+
 _performance_monitor = None
 
 
@@ -31,6 +48,7 @@ def get_performance_monitor() -> PerformanceMonitor:
 
 
 __all__ = [
+    # Monitoring
     "gpu_available",
     "PerformanceMonitor",
     "SystemMonitor",
@@ -39,4 +57,18 @@ __all__ = [
     "SystemMetrics",
     "RequestMetrics",
     "get_performance_monitor",
+    # Caching
+    "CacheManager",
+    "CacheConfig",
+    # Quantization
+    "QuantizationManager",
+    "QuantizationConfig",
+    "QuantizationMode",
+    "create_quantization_config",
+    "get_quantization_manager",
+    # Batch optimization
+    "BatchProcessor",
+    "BatchConfig",
+    "BatchStrategy",
+    "BatchMetrics",
 ]
