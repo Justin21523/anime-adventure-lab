@@ -6,6 +6,7 @@ import { CharacterSheet } from './CharacterSheet'
 import { SceneVisualizer, SceneVisualizerSkeleton } from './SceneVisualizer'
 import { MemoryIndicator } from './MemoryIndicator'
 import { RecentMemories } from './RecentMemories'
+import { AgentActionsPanel } from './AgentActionsPanel'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useUiStore } from '@/stores/uiStore'
@@ -86,6 +87,20 @@ export function StoryGameScreen({ sessionId }: StoryGameScreenProps) {
           <h2 className="text-lg font-semibold text-white mb-2">記憶狀態</h2>
           <MemoryIndicator memoryStats={session.memory_stats} />
         </div>
+
+        {/* Agent 行動 */}
+        {session.agent_actions && session.agent_actions.tool_results.length > 0 && (
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+              </span>
+              Agent 行動
+            </h2>
+            <AgentActionsPanel agentActions={session.agent_actions} />
+          </div>
+        )}
 
         {/* 最近記憶 */}
         {session.memory_context && (
