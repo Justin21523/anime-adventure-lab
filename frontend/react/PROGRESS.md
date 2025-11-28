@@ -346,3 +346,117 @@ npm run dev
 
 **Last Updated**: 2025-11-28
 **Status**: ✅ 🎉 **COMPLETE** - All 9 weeks finished! Production ready React frontend.
+
+---
+
+## 🚀 Story-Driven Integration Progress (Post-Migration)
+
+### Phase 1: T2I Scene Image Generation ✅ COMPLETE
+
+**Timeline**: 2025-11-28 (Week 1-2)
+**Status**: ✅ 100% Complete - Backend + Frontend Integration
+
+#### Week 1: Backend Integration ✅
+- [x] Create T2I integration layer (`core/story/t2i_integration.py`)
+  - Auto-trigger detection (scene transitions, major events, keywords)
+  - Scene context to T2I prompt conversion
+  - SceneImageResult dataclass
+  - Singleton pattern with lazy loading
+  - Graceful error handling
+- [x] Create story prompt generator (`core/t2i/story_prompt_generator.py`)
+  - Scene context → anime-style T2I prompts
+  - Time-of-day lighting mappings
+  - Atmosphere descriptors
+  - Location templates
+  - Prompt modification support
+- [x] Extend API schemas (`schemas/story.py`)
+  - SceneImage model (image_url, prompt, negative_prompt, generation_time, seed, width, height)
+  - Extended StoryTurnResponse with optional scene_image field
+- [x] Update API router (`api/routers/story.py`)
+  - `_generate_scene_image()` helper function
+  - Integrated in `process_story_turn` endpoint
+  - Integrated in `create_story_session` endpoint
+- [x] Create comprehensive tests (`tests/test_t2i_story_integration.py`)
+  - 100% mock-based (no GPU usage) ⚠️
+  - Trigger detection tests
+  - Scene generation tests
+  - Prompt generation tests
+  - Error handling tests
+
+#### Week 2: Frontend Integration ✅
+- [x] Create SceneVisualizer component
+  - Main component with image display
+  - Loading skeleton with spinner
+  - Error state component
+  - Generation time and seed badges
+  - Expandable metadata section
+- [x] Create Badge UI component (`components/ui/badge.tsx`)
+  - Variants: default, secondary, destructive, outline
+  - shadcn/ui compatible
+- [x] Update StoryGameScreen with three-column layout
+  - Left: Scene image (w-96, scrollable)
+  - Center: Narrative + Input (flex-1)
+  - Right: Character sheet (w-80)
+- [x] Update frontend types to match backend
+  - SceneImage interface
+  - StoryTurnResponse structure
+  - StorySession with scene_image field
+- [x] Fix useStorySession hook
+  - Proper cache invalidation after turn execution
+
+#### Technical Details
+
+**Auto-Trigger Logic**:
+- Scene transitions (`scene_transition: true`)
+- Major story events (`is_major_event: true`)
+- Trigger keywords: 進入/到達/來到/看見/發現 (Chinese), enter/arrive/reach/see/discover (English)
+
+**Generation Settings**:
+- Default: 768×768, 25 steps, CFG scale 7.0
+- Anime style with quality tags
+- Safety negative prompts (no NSFW)
+
+**GPU Safety**: ⚠️ All tests use mocks - NO real model loading during tests
+
+#### Files Created/Modified (Phase 1)
+
+**Backend (5 files)**:
+- `core/story/t2i_integration.py` (NEW)
+- `core/t2i/story_prompt_generator.py` (NEW)
+- `schemas/story.py` (MODIFIED - added SceneImage)
+- `api/routers/story.py` (MODIFIED - integrated T2I generation)
+- `tests/test_t2i_story_integration.py` (NEW)
+
+**Frontend (5 files)**:
+- `frontend/react/src/components/ui/badge.tsx` (NEW)
+- `frontend/react/src/features/story/components/SceneVisualizer.tsx` (NEW)
+- `frontend/react/src/features/story/components/StoryGameScreen.tsx` (MODIFIED - three-column layout)
+- `frontend/react/src/features/story/types/story.types.ts` (MODIFIED - added SceneImage)
+- `frontend/react/src/features/story/hooks/useStorySession.ts` (MODIFIED - cache invalidation)
+
+#### Commits
+- `33cc26e` - feat(story): implement T2I scene image generation integration (Phase 1 Week 1)
+- `a6daabf` - feat(frontend): implement SceneVisualizer with T2I integration (Phase 1 Week 2)
+
+---
+
+### Next Steps: Phase 2 (RAG Auto Memory System)
+
+**Timeline**: Week 3-4
+**Goal**: Automatic story memory management with RAG
+
+#### Planned Tasks
+- [ ] Create memory manager (`core/story/memory_manager.py`)
+  - Three-layer memory: short-term (deque) → mid-term (summaries) → long-term (vectors)
+  - Automatic turn recording
+  - Context-aware retrieval
+- [ ] Create context retrieval module (`core/rag/context_retrieval.py`)
+  - Session-filtered search
+  - Relevance scoring
+- [ ] Integrate memory manager into story engine
+  - Record turns automatically
+  - Inject relevant context into LLM prompts
+- [ ] Add memory UI indicator in frontend
+  - Memory status badge
+  - Recent memories display
+
