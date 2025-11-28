@@ -13,6 +13,37 @@ export interface SceneImage {
   height: number
 }
 
+export interface MemoryStats {
+  short_term_count: number
+  summaries_count: number
+  total_turns_covered: number
+  turns_since_last_summary: number
+  rag_available: boolean
+}
+
+export interface ShortTermMemory {
+  turn: number
+  action: string
+  result: string
+  scene?: string
+}
+
+export interface MemorySummary {
+  turn_range: string
+  summary: string
+  key_events: string[]
+}
+
+export interface StoryMemoryContext {
+  short_term: ShortTermMemory[]
+  summaries: MemorySummary[]
+  rag_results: Array<{
+    content: string
+    score: number
+    metadata: Record<string, any>
+  }>
+}
+
 export interface StorySession {
   session_id: string
   player_name: string
@@ -28,6 +59,8 @@ export interface StorySession {
   created_at: string
   updated_at: string
   scene_image?: SceneImage | null
+  memory_stats?: MemoryStats | null
+  memory_context?: StoryMemoryContext | null
 }
 
 export interface StoryChoice {

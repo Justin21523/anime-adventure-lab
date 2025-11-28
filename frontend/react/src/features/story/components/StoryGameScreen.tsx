@@ -4,6 +4,8 @@ import { NarrativeDisplay } from './NarrativeDisplay'
 import { PlayerInput } from './PlayerInput'
 import { CharacterSheet } from './CharacterSheet'
 import { SceneVisualizer, SceneVisualizerSkeleton } from './SceneVisualizer'
+import { MemoryIndicator } from './MemoryIndicator'
+import { RecentMemories } from './RecentMemories'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useUiStore } from '@/stores/uiStore'
@@ -67,15 +69,33 @@ export function StoryGameScreen({ sessionId }: StoryGameScreenProps) {
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-slate-900 to-slate-800">
-      {/* 左側：場景圖像 */}
-      <div className="w-96 p-6 border-r border-slate-700 overflow-y-auto">
-        <div className="mb-4">
+      {/* 左側：場景圖像 + 記憶系統 */}
+      <div className="w-96 p-6 border-r border-slate-700 overflow-y-auto space-y-4">
+        {/* 場景圖像 */}
+        <div>
           <h2 className="text-lg font-semibold text-white mb-2">場景圖像</h2>
+          {isExecuting ? (
+            <SceneVisualizerSkeleton />
+          ) : (
+            <SceneVisualizer sceneImage={session.scene_image} showMetadata={true} />
+          )}
         </div>
-        {isExecuting ? (
-          <SceneVisualizerSkeleton />
-        ) : (
-          <SceneVisualizer sceneImage={session.scene_image} showMetadata={true} />
+
+        {/* 記憶狀態指示器 */}
+        <div>
+          <h2 className="text-lg font-semibold text-white mb-2">記憶狀態</h2>
+          <MemoryIndicator memoryStats={session.memory_stats} />
+        </div>
+
+        {/* 最近記憶 */}
+        {session.memory_context && (
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-2">最近記憶</h2>
+            <RecentMemories
+              shortTerm={session.memory_context.short_term}
+              summaries={session.memory_context.summaries}
+            />
+          </div>
         )}
       </div>
 
