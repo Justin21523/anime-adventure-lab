@@ -19,8 +19,24 @@ def _get_rag_engine():
         return None
 
 
-async def rag_search(query: str, top_k: int = 5) -> Dict[str, Any]:
-    """Search RAG index and return snippets."""
+async def rag_search(session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Search RAG index and return snippets
+
+    Args:
+        session_id: Story session ID (for filtering)
+        params: Dictionary with:
+            - query: str - Search query
+            - top_k: int (optional) - Number of results (default 5)
+            - filter_session: bool (optional) - Filter by session ID (default True)
+
+    Returns:
+        Dictionary with search results
+    """
+    query = params.get("query", "")
+    top_k = params.get("top_k", 5)
+    filter_session = params.get("filter_session", True)
+
     if not query or not query.strip():
         return {"success": False, "error": "Query cannot be empty"}
 
@@ -29,7 +45,10 @@ async def rag_search(query: str, top_k: int = 5) -> Dict[str, Any]:
         return {"success": False, "error": "RAG engine unavailable"}
 
     try:
-        results = rag_engine.search(query.strip(), top_k=top_k)
+        # Build filter if needed
+        filter_metadata = {"session_id": session_id} if filter_session else None
+
+        results = rag_engine.search(query.strip(), top_k=top_k, filter_metadata=filter_metadata)
         formatted = []
         for r in results:
             formatted.append(
