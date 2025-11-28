@@ -56,6 +56,8 @@ export const CACHE_KEYS = {
     all: ['t2i'] as const,
     generations: () => ['t2i', 'generations'] as const,
     generation: (id: string) => ['t2i', 'generation', id] as const,
+    history: (sessionId?: string) =>
+      sessionId ? (['t2i', 'history', sessionId] as const) : (['t2i', 'history'] as const),
     loras: () => ['t2i', 'loras'] as const,
     controlnets: () => ['t2i', 'controlnets'] as const,
   },
