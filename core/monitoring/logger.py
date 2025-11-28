@@ -22,7 +22,16 @@ class StructuredLogger:
         # Setup log directory
         AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/tmp/ai_cache")
         log_dir = Path(AI_CACHE_ROOT) / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            writable = os.access(log_dir, os.W_OK)
+        except PermissionError:
+            writable = False
+
+        if not writable:
+            # Fallback to tmp when cache root is not writable (e.g., read-only mounts)
+            log_dir = Path("/tmp/ai_cache/logs")
+            log_dir.mkdir(parents=True, exist_ok=True)
 
         # Console handler with JSON formatter
         console_handler = logging.StreamHandler(sys.stdout)

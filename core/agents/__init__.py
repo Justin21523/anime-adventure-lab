@@ -9,25 +9,34 @@ from .base_agent import (
     AgentState,
     AgentMemory,
     BaseAgent,
-    AgentState,
     SimpleReasoningAgent,
 )
-from .tool_registry import ToolRegistry, register_tool, tool
+from .advanced_reasoning import AdvancedReasoningAgent
+from .tool_registry import ToolRegistry, register_tool
 from .executor import SafeExecutor, AgentExecutor, ExecutionResult
 from .multi_step_processor import MultiStepProcessor
+from .story_integration import (
+    StoryAgentManager,
+    StoryAgent,
+    StoryContext,
+    get_story_agent_manager,
+)
 
 __all__ = [
     "AgentResponse",
     "AgentState",
     "AgentMemory",
     "BaseAgent",
-    "AgentState",
     "SimpleReasoningAgent",
+    "AdvancedReasoningAgent",
     "ToolRegistry",
     "register_tool",
-    "tool",
     "SafeExecutor",
     "AgentExecutor",
     "ExecutionResult",
     "MultiStepProcessor",
+    "StoryAgentManager",
+    "StoryAgent",
+    "StoryContext",
+    "get_story_agent_manager",
 ]

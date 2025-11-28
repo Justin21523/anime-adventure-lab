@@ -8,7 +8,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.test
     environment:
-      - AI_CACHE_ROOT=/tmp/test_cache
+      - AI_CACHE_ROOT=/tmp/test_warehouse
       - API_PREFIX=/api/v1
       - ALLOWED_ORIGINS=http://localhost:3000
       - DEVICE=cpu
@@ -18,7 +18,7 @@ services:
       - ./backend:/app/backend
       - ./tests:/app/tests
       - ./test_results:/app/test_results
-      - test_cache:/tmp/test_cache
+      - test_warehouse:/tmp/test_warehouse
     ports:
       - "8001:8000"  # 避免與開發環境衝突
     command: >
@@ -44,44 +44,7 @@ services:
       - "5433:5432"
 
 volumes:
-  test_cache:
+  test_warehouse:
   test_db_data:
 
----
-# docker/Dockerfile.test
-FROM python:3.10-slim
 
-WORKDIR /app
-
-# 安裝系統依賴
-RUN apt-get update && apt-get install -y \
-    curl \
-    git \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# 複製依賴文件
-COPY requirements.txt requirements-test.txt ./
-
-# 安裝 Python 依賴
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir -r requirements-test.txt
-
-# 複製代碼
-COPY backend/ backend/
-COPY tests/ tests/
-COPY scripts/ scripts/
-COPY configs/ configs/
-
-# 創建快取目錄
-RUN mkdir -p /tmp/test_cache/{hf,torch,models,datasets,outputs}
-
-# 設置環境變數
-ENV PYTHONPATH=/app/backend
-ENV AI_CACHE_ROOT=/tmp/test_cache
-
-# 健康檢查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python scripts/health_check.py || exit 1
-
-CMD ["python", "-m", "pytest", "tests/", "-v"]

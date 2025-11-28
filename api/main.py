@@ -43,6 +43,7 @@ from api.routers import (
     llm_router,
     lora_router,
     monitoring_router,
+    performance_router,
     safety_router,
     story_router,
     t2i_router,
@@ -176,6 +177,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router, prefix=API_PREFIX, tags=["Admin"])
     app.include_router(batch_router, prefix=API_PREFIX, tags=["Batch"])
     app.include_router(monitoring_router, prefix=API_PREFIX, tags=["Monitoring"])
+    app.include_router(performance_router, prefix=API_PREFIX, tags=["Performance"])
     app.include_router(safety_router, prefix=API_PREFIX, tags=["Safety"])
 
     # Training and export routers

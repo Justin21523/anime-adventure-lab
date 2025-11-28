@@ -10,11 +10,12 @@ import asyncio
 import logging
 from pathlib import Path
 import base64
-import json
-from datetime import datetime
 import io
+import json
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
+from types import SimpleNamespace
 
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import (
     StableDiffusionPipeline,
@@ -50,6 +51,8 @@ class T2IEngine:
         self.cache_root = Path(cache_root)
         self.device = self._resolve_device(device)
         self.config = config or {}
+        # Default to real generation; can be overridden with config/mock env
+        self.mock_generation = bool(self.config.get("mock_generation", False))
 
         # Initialize all required attributes
         self.current_model_id = None
@@ -64,7 +67,7 @@ class T2IEngine:
         }
 
         self.current_pipeline = None
-        self.pipeline = None  # ADD THIS LINE - alias for current_pipeline
+        self.pipeline = None  # alias for current_pipeline
 
         # Optimization settings
         self.optimization_settings = {
@@ -145,6 +148,16 @@ class T2IEngine:
         try:
             start_time = time.time()
 
+            # In mock mode we skip heavyweight loading but still update bookkeeping
+            if self.mock_generation:
+                self.current_model_id = model_id
+                self.current_pipeline = SimpleNamespace(mock=True, model_id=model_id)
+                self.loaded_model = model_id
+                self._sync_pipeline_references()
+                self.model_config_manager.set_model_loaded(model_id, True)
+                logger.info(f"Mock T2I pipeline ready for model: {model_id}")
+                return True
+
             # Check if model is already loaded
             if self.current_model_id == model_id and self.current_pipeline is not None:
                 logger.info(f"Model {model_id} already loaded")
@@ -204,9 +217,13 @@ class T2IEngine:
         start_time = time.time()
 
         try:
-            # Ensure model is loaded
-            if self.current_pipeline is None:
-                await self.initialize()
+            target_model = request.get("model_id") or request.get("model")
+
+            # Ensure model is loaded (in mock mode this is a lightweight noop)
+            if self.current_pipeline is None or (
+                target_model and target_model != self.current_model_id
+            ):
+                await self.initialize(target_model)  # type: ignore
 
             # Process and validate prompt
             processed_prompt = self.prompt_processor.process(request.get("prompt", ""))
@@ -215,44 +232,34 @@ class T2IEngine:
             )
 
             # Safety check on prompt
-            safety_result = self.safety_engine.check_prompt(processed_prompt)
-            if not safety_result["is_safe"]:
-                raise ValueError(
-                    f"Prompt safety violation: {safety_result['violations']}"
-                )
+            safety_result = (
+                self.safety_engine.check_prompt_safety(processed_prompt)
+                if self.safety_engine
+                else {"is_safe": True}
+            )
+            if not safety_result.get("is_safe", True):
+                raise ValueError("Prompt safety violation detected")
 
             # Prepare generation parameters
             generation_params = self._prepare_generation_params(
                 request, processed_prompt, processed_negative
             )
 
-            # Load LoRAs if specified
+            # Load LoRAs if specified (skipped in mock mode)
             lora_info = []
-            if request.get("lora_configs"):
+            if request.get("lora_configs") and not self.mock_generation:
                 lora_info = await self._apply_loras(request["lora_configs"])
 
-            # Setup ControlNet if specified
+            # Setup ControlNet if specified (skipped in mock mode)
             controlnet_info = None
-            if request.get("controlnet_config"):
+            if request.get("controlnet_config") and not self.mock_generation:
                 controlnet_info = await self._setup_controlnet(
                     request["controlnet_config"]
                 )
                 generation_params.update(controlnet_info["params"])
 
-            # Generate images (mock for now - replace with real pipeline call)
+            # Generate images (mock-friendly)
             images = await self._generate_images(generation_params)
-
-            # Generate images (simplified for now)
-            with torch.autocast(
-                self.device.split(":")[0] if ":" in self.device else self.device
-            ):
-                # Mock generation for now - replace with real pipeline call
-                mock_image = Image.new(
-                    "RGB",
-                    (generation_params["width"], generation_params["height"]),
-                    color="red",
-                )
-                images = [mock_image]
 
             # Post-process images (safety check, watermarking)
             processed_images = []
@@ -276,9 +283,15 @@ class T2IEngine:
             self._update_generation_stats(generation_time)
 
             # Log generation event
-            self.compliance_logger.log_generation(
-                response["metadata"]["output_paths"][0], request, safety_result
-            )
+            if self.compliance_logger:
+                try:
+                    self.compliance_logger.log_generation(
+                        response["metadata"]["output_paths"][0],
+                        request,
+                        safety_result,
+                    )
+                except Exception as log_err:
+                    logger.debug(f"Compliance log skipped: {log_err}")
 
             return response
 
@@ -288,21 +301,33 @@ class T2IEngine:
 
         finally:
             # Cleanup LoRAs after generation
-            if request.get("lora_configs"):
+            if request.get("lora_configs") and not self.mock_generation:
                 self.lora_manager.unload_all_loras(self.current_pipeline)
 
     async def _generate_images(self, params: Dict[str, Any]) -> List[Image.Image]:
         """Generate images using the pipeline"""
         try:
-            # For now, create mock images - replace with real pipeline call
+            if not self.mock_generation and self.current_pipeline is not None:
+                with torch.autocast(
+                    self.device.split(":")[0] if ":" in self.device else self.device
+                ):
+                    result = self.current_pipeline(**params)  # type: ignore
+                images = list(getattr(result, "images", []))  # type: ignore
+                if not images:
+                    raise RuntimeError("Pipeline returned no images")
+                return images
+            elif not self.mock_generation:
+                raise RuntimeError("Pipeline not initialized")
+
+            # Mock generation path
             width = params.get("width", 768)
             height = params.get("height", 768)
             num_images = params.get("num_images_per_prompt", 1)
 
-            images = []
+            images: List[Image.Image] = []
             for i in range(num_images):
-                # Create a colorful mock image instead of solid color
                 import random
+                from PIL import ImageDraw, ImageFont
 
                 color = (
                     random.randint(50, 255),
@@ -311,13 +336,10 @@ class T2IEngine:
                 )
                 mock_image = Image.new("RGB", (width, height), color=color)
 
-                # Add some text to make it look generated
-                from PIL import ImageDraw, ImageFont
-
                 draw = ImageDraw.Draw(mock_image)
                 try:
                     font = ImageFont.load_default()
-                except:
+                except Exception:
                     font = None
 
                 if font:
@@ -329,7 +351,6 @@ class T2IEngine:
                     x = (width - text_width) // 2
                     y = (height - text_height) // 2
 
-                    # Draw text with background
                     draw.rectangle(
                         [x - 10, y - 5, x + text_width + 10, y + text_height + 5],
                         fill=(255, 255, 255, 180),
@@ -338,8 +359,7 @@ class T2IEngine:
 
                 images.append(mock_image)
 
-            # Simulate generation time
-            await asyncio.sleep(0.1)  # Short delay to simulate processing
+            await asyncio.sleep(0.05)  # Short delay to simulate processing
 
             return images
 
@@ -354,7 +374,8 @@ class T2IEngine:
         params = {
             "prompt": prompt,
             "negative_prompt": negative_prompt,
-            "num_inference_steps": request.get("num_inference_steps", 20),
+            "num_inference_steps": request.get("num_inference_steps")
+            or request.get("steps", 20),
             "guidance_scale": request.get("guidance_scale", 7.5),
             "width": request.get("width", 768),
             "height": request.get("height", 768),
@@ -397,35 +418,100 @@ class T2IEngine:
         control_image = controlnet_config["image"]
         conditioning_scale = controlnet_config.get("conditioning_scale", 1.0)
 
-        # Load ControlNet model
-        controlnet_model = self.controlnet_manager.load_controlnet(controlnet_type)
+        if not self.controlnet_manager:
+            logger.warning("ControlNet manager not available, skipping ControlNet setup")
+            return {"model": None, "params": {}, "info": {"status": "skipped"}}
+
+        try:
+            controlnet_model = self.controlnet_manager.load_controlnet(controlnet_type)
+
+            if isinstance(control_image, str):
+                if control_image.startswith("data:"):
+                    control_image = self._decode_base64_image(control_image)
+                else:
+                    control_image = Image.open(control_image)
+
+            processed_control = self.controlnet_manager.preprocess_control_image(
+                control_image, controlnet_type
+            )
+
+            # If we have a base pipeline, wrap it with ControlNet
+            if self.current_pipeline and not isinstance(
+                self.current_pipeline, StableDiffusionControlNetPipeline
+            ):
+                self.current_pipeline = self.controlnet_manager.create_controlnet_pipeline(
+                    self.current_pipeline, controlnet_type
+                )
+                self.current_pipeline = self.memory_optimizer.optimize_pipeline(  # type: ignore
+                    self.current_pipeline
+                )
+                self._sync_pipeline_references()
+
+            return {
+                "model": controlnet_model,
+                "params": {
+                    "image": processed_control,
+                    "controlnet_conditioning_scale": conditioning_scale,
+                },
+                "info": {
+                    "type": controlnet_type,
+                    "conditioning_scale": conditioning_scale,
+                    "status": "loaded",
+                },
+            }
+        except Exception as e:
+            logger.error(f"ControlNet setup failed: {e}")
+            return {
+                "model": None,
+                "params": {},
+                "info": {
+                    "type": controlnet_type,
+                    "conditioning_scale": conditioning_scale,
+                    "status": "failed",
+                    "error": str(e),
+                },
+            }
+
+    def _decode_base64_image(self, base64_string: str) -> Image.Image:
+        """Decode base64 image string that may include a data URI header."""
+        _, data = base64_string.split(",", 1)
+        image_data = base64.b64decode(data)
+        return Image.open(io.BytesIO(image_data))
 
     async def _post_process_image(
         self, image: Image.Image, request: Dict, safety_result: Dict
     ) -> Dict:
-        """Post-process generated image with safety and watermarking"""
-        # Safety check on generated image
-        image_safety = self.safety_engine.check_image(image)
+        """Post-process generated image with safety checks and attribution."""
+        image_safety: Dict[str, Any] = {}
+        if self.safety_engine:
+            try:
+                image_safety = self.safety_engine.check_image_safety(image)
+                if not image_safety.get("is_safe", True):
+                    safety_result.update(image_safety)
+                    image = image_safety.get("processed_image", image)
+            except Exception as e:
+                logger.warning(f"Image safety check failed: {e}")
 
-        if not image_safety["is_safe"]:
-            # Apply blur or replacement image
-            image = self.safety_engine.apply_safety_filter(image)
-            safety_result.update(image_safety)
+        metadata: Optional[Dict[str, Any]] = None
+        if self.attribution_manager:
+            try:
+                image, metadata = self.attribution_manager.process_generated_image(
+                    image,
+                    generation_params=request,
+                    model_info={"name": self.current_model_id or "mock-model"},
+                    add_visible_watermark=self.config.get("watermark_enabled", True),
+                )
+            except Exception as e:
+                logger.debug(f"Watermarking skipped: {e}")
 
-        # Add watermark
-        if self.config.get("watermark_enabled", True):
-            attribution_text = self._generate_attribution_text(request)
-            image = self.attribution_manager.add_watermark(image, attribution_text)
-
-        # Save image with metadata
         output_path = await self._save_image_with_metadata(
-            image, request, safety_result
+            image, request, safety_result, metadata
         )
 
         return {
             "image": image,
             "output_path": output_path,
-            "safety_result": safety_result,
+            "safety_result": {**safety_result, **image_safety},
         }
 
     def _generate_attribution_text(self, request: Dict) -> str:
@@ -437,10 +523,13 @@ class T2IEngine:
         return base_text
 
     async def _save_image_with_metadata(
-        self, image: Image.Image, request: Dict, safety_result: Dict
+        self,
+        image: Image.Image,
+        request: Dict,
+        safety_result: Dict,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Save image with comprehensive metadata"""
-        # Generate output path
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_dir = (
             self.cache_root
@@ -454,25 +543,33 @@ class T2IEngine:
             output_dir / f"{timestamp}_{hash(str(request)) & 0x7FFFFFFF:08x}.png"
         )
 
-        # Create comprehensive metadata
-        metadata = {
+        base_metadata = metadata or {
             "generated_by": "CharaForge T2I System",
             "generation_timestamp": datetime.now().isoformat(),
-            "model_used": self.current_model_id,
             "generation_params": request,
-            "safety_result": safety_result,
+            "attribution": {"models": [], "sources": [], "licenses": []},
+            "model_used": self.current_model_id,
         }
+        base_metadata["safety_result"] = safety_result
 
-        # Save image
-        image.save(output_path)
+        saved_path = output_path
+        try:
+            if self.attribution_manager:
+                saved = self.attribution_manager.save_with_attribution(
+                    image, output_path, base_metadata, format="PNG"
+                )
+                saved_path = Path(saved)
+            else:
+                image.save(output_path)
+                metadata_path = output_path.with_suffix(".json")
+                with open(metadata_path, "w", encoding="utf-8") as f:
+                    json.dump(base_metadata, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.warning(f"Failed to embed attribution metadata: {e}")
+            image.save(output_path)
 
-        # Save separate metadata JSON
-        metadata_path = output_path.with_suffix(".json")
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
-
-        logger.info(f"Image saved: {output_path}")
-        return str(output_path)
+        logger.info(f"Image saved: {saved_path}")
+        return str(saved_path)
 
     async def _prepare_response(
         self,
@@ -502,7 +599,7 @@ class T2IEngine:
                 "model_used": self.current_model_id,
                 "parameters": params,
                 "loras_applied": lora_info,
-                "controlnet_used": controlnet_info,
+                "controlnet_used": controlnet_info["info"] if controlnet_info else None,
                 "output_paths": output_paths,
                 "device": self.device,
                 "safety_checks": "passed",

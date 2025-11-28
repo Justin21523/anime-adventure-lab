@@ -27,9 +27,10 @@ class TestSharedCache:
         cache = get_shared_cache()
 
         # 檢查關鍵路徑是否存在
+        assert (test_cache_dir / "cache" / "hf").exists()
         assert (test_cache_dir / "models" / "lora").exists()
         assert (test_cache_dir / "datasets" / "raw").exists()
-        assert (test_cache_dir / "outputs" / "multi-modal-lab").exists()
+        assert (test_cache_dir / "outputs" / "saga-forge").exists()
 
 
 class TestConfig:

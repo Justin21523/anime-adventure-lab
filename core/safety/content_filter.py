@@ -7,6 +7,7 @@ Implements NSFW detection, sensitive content filtering and safety validation
 import logging
 import re
 import hashlib
+import os
 from typing import List, Dict, Any, Optional, Set, Tuple, Union
 from pathlib import Path
 import torch
@@ -42,6 +43,16 @@ class ContentFilter:
         self.blocked_terms = self._load_blocked_terms()
         self.sensitive_patterns = self._compile_patterns()
 
+    def _has_cached_model(self, model_id: str) -> bool:
+        """Check whether a HF model already exists locally to avoid downloads."""
+        cache_home = Path(
+            os.environ.get("HF_HOME")
+            or os.environ.get("HUGGINGFACE_HUB_CACHE")
+            or Path.home() / ".cache" / "huggingface"
+        )
+        model_dir = cache_home / "hub" / f"models--{model_id.replace('/', '--')}"
+        return model_dir.exists()
+
     def _detect_faces(self, image: Image.Image) -> int:
         """Basic face detection using OpenCV"""
         try:
@@ -67,12 +78,38 @@ class ContentFilter:
 
     def _load_safety_models(self):
         """Load NSFW detection and safety models"""
+        offline_requested = (
+            os.environ.get("HF_HUB_OFFLINE", "0") == "1"
+            or os.environ.get("SAFETY_OFFLINE", "0") == "1"
+            or getattr(self.config.safety, "offline_mode", False)
+        )
+        allow_stub = getattr(self.config.safety, "allow_stub_filters", True)
+        model_kwargs: Dict[str, Any] = {}
+
+        if offline_requested:
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            model_kwargs["local_files_only"] = True
+            missing_models = [
+                mid
+                for mid in ["Falconsai/nsfw_image_detection", "unitary/toxic-bert"]
+                if not self._has_cached_model(mid)
+            ]
+            if missing_models and allow_stub:
+                logger.info(
+                    "Safety offline mode enabled; skipping model downloads for %s",
+                    ", ".join(missing_models),
+                )
+                self.nsfw_classifier = None
+                self.text_classifier = None
+                return
+
         try:
             # NSFW image classifier
             self.nsfw_classifier = pipeline(
                 "image-classification",
                 model="Falconsai/nsfw_image_detection",
                 device=0 if torch.cuda.is_available() else -1,
+                **model_kwargs,
             )
 
             # Text safety classifier (optional)
@@ -81,6 +118,7 @@ class ContentFilter:
                     "text-classification",
                     model="unitary/toxic-bert",
                     device=0 if torch.cuda.is_available() else -1,
+                    **model_kwargs,
                 )
             else:
                 self.text_classifier = None
@@ -89,8 +127,11 @@ class ContentFilter:
 
         except Exception as e:
             logger.warning(f"⚠️ Failed to load safety models: {e}")
-            self.nsfw_classifier = None
-            self.text_classifier = None
+            if allow_stub:
+                self.nsfw_classifier = None
+                self.text_classifier = None
+            else:
+                raise
 
     def _load_blocked_terms(self) -> Set[str]:
         """Load blocked terms from config or file"""
@@ -118,17 +159,19 @@ class ContentFilter:
         blocked_terms.update(default_blocked)
 
         # Load from config file if exists
-        blocked_file = Path(self.config.safety.blocked_terms_file)  # type: ignore
-        if blocked_file.exists():
-            try:
-                with open(blocked_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        term = line.strip().lower()
-                        if term and not term.startswith("#"):
-                            blocked_terms.add(term)
-                logger.info(f"📝 Loaded {len(blocked_terms)} blocked terms")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to load blocked terms file: {e}")
+        blocked_path = getattr(self.config.safety, "blocked_terms_file", None)
+        if blocked_path:
+            blocked_file = Path(blocked_path)
+            if blocked_file.exists():
+                try:
+                    with open(blocked_file, "r", encoding="utf-8") as f:
+                        for line in f:
+                            term = line.strip().lower()
+                            if term and not term.startswith("#"):
+                                blocked_terms.add(term)
+                    logger.info(f"📝 Loaded {len(blocked_terms)} blocked terms")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to load blocked terms file: {e}")
 
         return blocked_terms
 

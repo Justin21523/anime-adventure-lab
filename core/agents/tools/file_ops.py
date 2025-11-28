@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Optional, Union
 import mimetypes
 import hashlib
 from datetime import datetime
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +26,15 @@ class SafeFileOperations:
 
     def __init__(self, allowed_dirs: Optional[List[str]] = None):
         # Default allowed directories (relative to current working directory)
-        self.allowed_dirs = allowed_dirs or [
+        default_allowed = [
             ".",
             "./data",
             "./temp",
             "./outputs",
             "./cache",
+            tempfile.gettempdir(),
         ]
+        self.allowed_dirs = allowed_dirs or default_allowed
 
         # Convert to absolute paths
         self.allowed_paths = []
@@ -94,6 +97,7 @@ class SafeFileOperations:
             return {
                 "path": file_path,
                 "name": os.path.basename(file_path),
+                "type": "directory" if os.path.isdir(file_path) else "file",
                 "size": stat.st_size,
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
                 "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
@@ -161,8 +165,10 @@ def list_files(path: str = ".", pattern: str = "*") -> Dict[str, Any]:
                 continue
 
             if file_info["is_dir"]:
+                file_info["type"] = "directory"
                 dir_list.append(file_info)
             else:
+                file_info["type"] = "file"
                 file_list.append(file_info)
 
         # Sort by name
@@ -171,12 +177,15 @@ def list_files(path: str = ".", pattern: str = "*") -> Dict[str, Any]:
 
         return {
             "success": True,
+            "operation": "list",
             "path": path,
             "pattern": pattern,
             "directories": dir_list,
             "files": file_list,
             "total_dirs": len(dir_list),
             "total_files": len(file_list),
+            "total_items": len(dir_list) + len(file_list),
+            "items": dir_list + file_list,
             "summary": f"Found {len(dir_list)} directories and {len(file_list)} files in {path}",
         }
 
@@ -238,6 +247,7 @@ def read_file(
 
                 return {
                     "success": True,
+                    "operation": "read",
                     "file_path": file_path,
                     "content": content,
                     "lines_read": len(lines),
@@ -253,6 +263,7 @@ def read_file(
 
                 return {
                     "success": True,
+                    "operation": "read",
                     "file_path": file_path,
                     "content": f"<Binary file - {len(data)} bytes shown>",
                     "binary_preview": data.hex()[:200],  # First 100 bytes as hex
@@ -322,6 +333,7 @@ def write_file(
 
         return {
             "success": True,
+            "operation": "write",
             "file_path": file_path,
             "bytes_written": content_size,
             "lines_written": content.count("\n") + 1,
@@ -356,7 +368,12 @@ def file_exists(file_path: str) -> Dict[str, Any]:
 
         exists = os.path.exists(file_path)
 
-        result = {"success": True, "file_path": file_path, "exists": exists}
+        result = {
+            "success": True,
+            "operation": "exists",
+            "file_path": file_path,
+            "exists": exists,
+        }
 
         if exists:
             file_info = file_ops._get_file_info(file_path)
@@ -406,6 +423,7 @@ def delete_file(file_path: str, confirm: bool = False) -> Dict[str, Any]:
 
         return {
             "success": True,
+            "operation": "delete",
             "file_path": file_path,
             "deleted_file_info": file_info,
             "message": f"Successfully deleted {file_path}",
@@ -457,6 +475,7 @@ def create_directory(dir_path: str, parents: bool = True) -> Dict[str, Any]:
 
         return {
             "success": True,
+            "operation": "create_dir",
             "dir_path": dir_path,
             "dir_info": dir_info,
             "message": f"Successfully created directory: {dir_path}",
@@ -465,3 +484,39 @@ def create_directory(dir_path: str, parents: bool = True) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Directory creation failed: {e}")
         return {"success": False, "error": f"Directory creation failed: {str(e)}"}
+
+
+def execute(operation: str, path: str, **kwargs) -> Dict[str, Any]:
+    """Unified entrypoint for simple file ops (向後兼容)."""
+    op = operation.lower()
+    if op in {"list", "ls"}:
+        pattern = kwargs.get("pattern", "*")
+        return list_files(path, pattern=pattern)
+    if op in {"read", "cat"}:
+        encoding = kwargs.get("encoding", "utf-8")
+        max_lines = kwargs.get("max_lines", 1000)
+        return read_file(path, encoding=encoding, max_lines=max_lines)
+    if op in {"write"}:
+        content = kwargs.get("content", "")
+        encoding = kwargs.get("encoding", "utf-8")
+        overwrite = kwargs.get("overwrite", False)
+        return write_file(
+            path,
+            content,
+            encoding=encoding,
+            overwrite=overwrite,
+        )
+    if op in {"exists", "check"}:
+        return file_exists(path)
+    if op in {"delete", "rm"}:
+        confirm = kwargs.get("confirm", False)
+        return delete_file(path, confirm=confirm)
+    if op in {"create_dir", "mkdir"}:
+        parents = kwargs.get("parents", True)
+        return create_directory(path, parents=parents)
+    if op in {"info", "stat"}:
+        info = SafeFileOperations()._get_file_info(path)
+        if "error" in info:
+            return {"success": False, "operation": "info", "error": info["error"]}
+        return {"success": True, "operation": "info", **info}
+    return {"success": False, "error": f"Unsupported operation: {operation}"}

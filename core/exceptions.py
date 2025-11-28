@@ -337,6 +337,13 @@ class StoryEngineError(MultiModalLabError):
         super().__init__(message, error_code)
 
 
+class StorySystemError(StoryEngineError):
+    """Story system initialization/validation errors"""
+
+    def __init__(self, message: str, error_code: str = "STORY_SYSTEM_ERROR"):
+        super().__init__(message, error_code)
+
+
 class CharacterError(StoryEngineError):
     """Character-related errors"""
 

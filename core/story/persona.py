@@ -137,10 +137,23 @@ class GamePersona:
     def from_dict(cls, data: Dict[str, Any]) -> "GamePersona":
         """Create persona from dictionary"""
         # Convert enum fields
-        persona_type = PersonaType(data.get("persona_type", "npc"))
-        emotional_state = EmotionalState(data.get("current_emotional_state", "neutral"))
+        persona_type_raw = data.get("persona_type", "npc")
+        try:
+            persona_type = PersonaType(persona_type_raw)
+        except ValueError:
+            logger.warning("Unknown persona type %s, fallback to npc", persona_type_raw)
+            persona_type = PersonaType.NPC
+
+        def _safe_emotion(value: str) -> EmotionalState:
+            try:
+                return EmotionalState(value)
+            except ValueError:
+                logger.warning("Unknown emotional state %s, fallback to neutral", value)
+                return EmotionalState.NEUTRAL
+
+        emotional_state = _safe_emotion(data.get("current_emotional_state", "neutral"))
         emotional_triggers = {
-            k: EmotionalState(v) for k, v in data.get("emotional_triggers", {}).items()
+            k: _safe_emotion(v) for k, v in data.get("emotional_triggers", {}).items()
         }
 
         return cls(

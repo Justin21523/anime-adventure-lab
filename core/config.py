@@ -125,6 +125,14 @@ class SafetyConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="SAFETY_")
 
+    # Offline / stub settings
+    offline_mode: bool = Field(
+        default=True, description="Skip downloading safety models when offline"
+    )
+    allow_stub_filters: bool = Field(
+        default=True, description="Allow stub safety filters when models unavailable"
+    )
+
     # NSFW 相關設定
     enable_nsfw_filter: bool = Field(default=True, description="Enable NSFW detection")
     nsfw_threshold: float = Field(default=0.7, description="NSFW detection threshold")
@@ -211,7 +219,9 @@ class CacheConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="CACHE_")
 
-    root: str = Field(default="../ai_warehouse/cache", env="AI_CACHE_ROOT")  # type: ignore
+    root: str = Field(
+        default="/mnt/c/AI_LLM_projects/ai_warehouse", env="AI_CACHE_ROOT"
+    )  # type: ignore
     redis_enable: bool = Field(default=True, description="REDIS enable")
     redis_url: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")  # type: ignore
     celery_broker_url: str = Field(
@@ -236,6 +246,19 @@ class AppConfig:
         # Initialize component configs
         self.api = APIConfig()
         self.model = ModelConfig()
+        # Backward compatibility: alias for model config
+        self.models = self.model
+        # Ensure precision attribute exists for legacy callers (ModelConfig is frozen)
+        if not hasattr(self.model, "precision"):
+            object.__setattr__(
+                self.model, "precision", getattr(self.model, "torch_dtype", "fp16")
+            )
+        # Provide a minimal performance namespace expected by some modules
+        from types import SimpleNamespace
+
+        self.performance = getattr(
+            self, "performance", SimpleNamespace(use_8bit=False, use_4bit=False)
+        )
         self.safety = SafetyConfig()
         self.rag = RAGConfig()
         self.database = DatabaseConfig()

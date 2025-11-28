@@ -727,37 +727,113 @@ class EnhancedLLMAdapter:
 
 
 # Global enhanced adapter instance
-_enhanced_llm_adapter: Optional[EnhancedLLMAdapter] = None
+_enhanced_llm_adapter: Optional["LLMAdapter"] = None
+
+
+class LLMAdapter(EnhancedLLMAdapter):
+    """Backward-compatible adapter wrapper used by API/workers."""
+
+    def __init__(self, model_name: str = "microsoft/DialoGPT-medium", use_mock=None, **kwargs):
+        super().__init__()
+        self.model_name = model_name
+        self.use_mock = use_mock
+        self._kwargs = kwargs
+        self._llm = self._create_llm()
+
+    def _create_llm(self) -> Union[EnhancedTransformersLLM, MockLLMAdapter]:
+        """Instantiate underlying LLM (mock when GPU unavailable)."""
+        use_mock = (
+            self.use_mock
+            if self.use_mock is not None
+            else (not torch.cuda.is_available() or self._kwargs.get("mock", False))
+        )
+
+        if use_mock or self.model_name == "mock":
+            return MockLLMAdapter("mock")
+
+        from .model_loader import ModelLoadConfig
+
+        load_config = ModelLoadConfig(model_name=self.model_name, **self._kwargs)  # type: ignore
+        return EnhancedTransformersLLM(self.model_name, load_config)
+
+    def chat_completion(
+        self,
+        messages: List[Union[ChatMessage, Dict[str, str]]],
+        max_length: int = 512,
+        temperature: float = 0.7,
+        model_name: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Return dict-style response for legacy callers."""
+        response = self.chat(
+            messages=messages,
+            max_length=max_length,
+            temperature=temperature,
+            model_name=model_name,
+            **kwargs,
+        )
+        return {
+            "message": response.content,
+            "model_used": response.model_name,
+            "usage": response.usage,
+        }
+
+    def chat(
+        self,
+        messages: List[Union[ChatMessage, Dict[str, str]]],
+        max_length: int = 512,
+        temperature: float = 0.7,
+        model_name: Optional[str] = None,
+        **kwargs,
+    ) -> LLMResponse:
+        """Proxy to underlying LLM chat interface."""
+        if model_name and model_name != self.model_name:
+            self.model_name = model_name
+            self._llm = self._create_llm()
+
+        if hasattr(self._llm, "load_model"):
+            try:
+                self._llm.load_model()  # type: ignore
+            except Exception:
+                # Fall back to mock if real load fails
+                self._llm = MockLLMAdapter("mock")
+
+        return self._llm.chat(messages=messages, max_length=max_length, temperature=temperature, **kwargs)  # type: ignore
+
+    def generate_text(self, prompt: str, max_tokens: int = 256, temperature: float = 0.7, **kwargs) -> str:
+        """Simple text generation helper."""
+        if hasattr(self._llm, "load_model"):
+            try:
+                self._llm.load_model()  # type: ignore
+            except Exception:
+                self._llm = MockLLMAdapter("mock")
+        return self._llm.generate(prompt, max_length=max_tokens, temperature=temperature, **kwargs)  # type: ignore
+
+    def list_loaded_models(self) -> List[str]:
+        if hasattr(self._llm, "is_available") and self._llm.is_available():  # type: ignore
+            return [getattr(self._llm, "model_name", self.model_name)]
+        return []
+
+    def unload_all(self) -> bool:
+        if hasattr(self._llm, "unload_model"):
+            try:
+                self._llm.unload_model()  # type: ignore
+            except Exception:
+                return False
+        return True
 
 
 def get_llm_adapter(
     model_name: str = "microsoft/DialoGPT-medium", use_mock: bool = None, **kwargs  # type: ignore
-) -> Union[EnhancedTransformersLLM, MockLLMAdapter]:
+) -> LLMAdapter:
     """Get or create LLM adapter instance"""
     global _enhanced_llm_adapter
 
-    # Auto-detect mock mode based on environment
-    if use_mock is None:
-        use_mock = (
-            not torch.cuda.is_available()
-            or model_name == "mock"
-            or kwargs.get("mock", False)
-        )
-
     if _enhanced_llm_adapter is None or _enhanced_llm_adapter.model_name != model_name:
-        if use_mock:
-            _enhanced_llm_adapter = MockLLMAdapter(model_name)  # type: ignore
-            logger.info(f"Created mock LLM adapter for: {model_name}")
-        else:
-            from .model_loader import ModelLoadConfig
+        _enhanced_llm_adapter = LLMAdapter(model_name=model_name, use_mock=use_mock, **kwargs)
+        logger.info(f"Created LLM adapter for: {model_name} (mock={use_mock})")
 
-            # Create load config from kwargs
-            load_config = ModelLoadConfig(model_name=model_name, **kwargs)
-
-            _enhanced_llm_adapter = EnhancedTransformersLLM(model_name, load_config)  # type: ignore
-            logger.info(f"Created enhanced LLM adapter for: {model_name}")
-
-    return _enhanced_llm_adapter  # type: ignore
+    return _enhanced_llm_adapter
 
 
 def reset_llm_adapter():
@@ -765,7 +841,15 @@ def reset_llm_adapter():
     global _enhanced_llm_adapter
 
     if _enhanced_llm_adapter and hasattr(_enhanced_llm_adapter, "unload_model"):
-        _enhanced_llm_adapter.unload_model()  # type: ignore
+        try:
+            _enhanced_llm_adapter.unload_model(  # type: ignore[arg-type]
+                getattr(_enhanced_llm_adapter, "model_name", None) or "unknown"
+            )
+        except TypeError:
+            try:
+                _enhanced_llm_adapter.unload_model()  # type: ignore
+            except Exception:
+                pass
 
     _enhanced_llm_adapter = None
     logger.info("LLM adapter reset")

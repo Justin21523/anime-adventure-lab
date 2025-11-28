@@ -24,8 +24,8 @@ git clone https://github.com/your-org/saga-forge.git
 cd saga-forge
 
 # 2. 建立共用模型倉儲
-mkdir -p ../ai_warehouse/cache
-export AI_CACHE_ROOT="$(pwd)/../ai_warehouse/cache"
+mkdir -p /mnt/c/AI_LLM_projects/ai_warehouse/cache
+export AI_CACHE_ROOT="/mnt/c/AI_LLM_projects/ai_warehouse"
 
 # 3. 複製環境配置
 cp .env.example .env
@@ -35,7 +35,7 @@ cp .env.example .env
 **關鍵環境變數 (.env)**
 ```bash
 # 必填
-AI_CACHE_ROOT=/path/to/ai_warehouse/cache
+AI_CACHE_ROOT=/mnt/c/AI_LLM_projects/ai_warehouse
 POSTGRES_PASSWORD=your_secure_password
 MINIO_PASSWORD=your_minio_password
 
@@ -62,8 +62,8 @@ curl http://localhost:8000/monitoring/health
 **開發環境**
 ```bash
 # 安裝 Python 依賴
-conda create -n adventure-lab python=3.10 -y
-conda activate adventure-lab
+conda create -n ai_env python=3.10 -y
+conda activate ai_env
 pip install -r requirements.txt
 
 # 啟動基礎服務
@@ -244,7 +244,7 @@ docker-compose down && docker-compose up -d
 gunzip < backup_20241201.sql.gz | docker-compose exec -T postgres psql -U saga sagaforge
 
 # 恢復模型檔案
-rsync -av /backup/ai_warehouse/ /path/to/ai_warehouse/
+rsync -av /backup/ai_warehouse/ /mnt/c/AI_LLM_projects/ai_warehouse/
 ```
 
 ---
@@ -620,7 +620,7 @@ docker-compose logs api
 ```bash
 # 備份當前版本
 docker-compose down
-cp -r ai_warehouse ai_warehouse_backup
+cp -r /mnt/c/AI_LLM_projects/ai_warehouse /mnt/c/AI_LLM_projects/ai_warehouse_backup
 
 # 拉取新版本
 git pull origin main
@@ -765,7 +765,7 @@ grep "ERROR" logs/api.log | tail -20
 watch -n 1 nvidia-smi
 
 # 檢查磁碟使用率
-df -h /path/to/ai_warehouse
+df -h /mnt/c/AI_LLM_projects/ai_warehouse
 ```
 
 ---
@@ -953,7 +953,7 @@ class CustomLLMAdapter(LLMAdapter):
 # configs/presets/my_style.yaml
 style_id: "my_custom_style"
 base_model: "stabilityai/stable-diffusion-xl-base-1.0"
-lora_path: "../ai_warehouse/models/lora/my_style"
+lora_path: "/mnt/c/AI_LLM_projects/ai_warehouse/models/lora/my_style"
 lora_scale: 0.8
 trigger_words: ["my_style", "custom_art"]
 negative_prompt: "low quality, blurry"
@@ -1007,7 +1007,7 @@ find ./backups -name "backup_*.sql.gz" -mtime +30 -delete
 **模型與快取備份**
 ```bash
 # 同步模型倉儲到備份位置
-rsync -av --progress /path/to/ai_warehouse/ /backup/ai_warehouse/
+rsync -av --progress /mnt/c/AI_LLM_projects/ai_warehouse/ /backup/ai_warehouse/
 
 # 或使用 MinIO 的跨區域複製
 mc mirror local/models s3/backup-bucket/models

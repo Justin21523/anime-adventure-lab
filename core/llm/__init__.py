@@ -18,6 +18,7 @@ from .adapter import (
     EnhancedTransformersLLM,
     QwenLLM,
     LlamaLLM,
+    LLMAdapter,
     EnhancedLLMAdapter,
     get_llm_adapter,
     get_enhanced_llm_adapter,
@@ -47,6 +48,7 @@ __all__ = [
     "QwenLLM",
     "LlamaLLM",
     # Main adapter
+    "LLMAdapter",
     "EnhancedLLMAdapter",
     "get_llm_adapter",
     "get_enhanced_llm_adapter",

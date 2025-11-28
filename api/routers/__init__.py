@@ -19,6 +19,7 @@ from .finetune import router as finetune_router
 from .llm import router as llm_router
 from .lora import router as lora_router
 from .monitoring import router as monitoring_router
+from .performance import router as performance_router
 from .safety import router as safety_router
 from .story import router as story_router
 from .t2i import router as t2i_router
@@ -40,6 +41,7 @@ __all__ = [
     "llm_router",
     "lora_router",
     "monitoring_router",
+    "performance_router",
     "safety_router",
     "story_router",
     "t2i_router",

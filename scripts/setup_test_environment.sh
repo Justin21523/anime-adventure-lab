@@ -17,7 +17,7 @@ NC='\033[0m'
 # 檢查 Python 版本
 echo -e "${BLUE}檢查 Python 版本...${NC}"
 PYTHON_VERSION=$(python --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
-REQUIRED_VERSION="3.9"
+REQUIRED_VERSION="3.10"
 
 if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$PYTHON_VERSION" | sort -V | head -n1)" = "$REQUIRED_VERSION" ]; then
     echo -e "${GREEN}✅ Python 版本符合要求: $PYTHON_VERSION${NC}"
@@ -26,18 +26,11 @@ else
     exit 1
 fi
 
-# 創建虛擬環境
-if [ ! -d "venv" ]; then
-    echo -e "${BLUE}創建虛擬環境...${NC}"
-    python -m venv venv
-    echo -e "${GREEN}✅ 虛擬環境已創建${NC}"
-else
-    echo -e "${YELLOW}⚠️ 虛擬環境已存在${NC}"
+# 確認 conda 環境
+if [ "${CONDA_DEFAULT_ENV:-}" != "ai_env" ]; then
+    echo -e "${RED}❌ 請先啟動 conda 環境 ai_env，再執行本腳本${NC}"
+    exit 1
 fi
-
-# 激活虛擬環境
-echo -e "${BLUE}激活虛擬環境...${NC}"
-source venv/bin/activate || source venv/Scripts/activate
 
 # 升級 pip
 echo -e "${BLUE}升級 pip...${NC}"
@@ -48,18 +41,20 @@ echo -e "${BLUE}安裝測試依賴...${NC}"
 pip install -r requirements.txt
 pip install -r requirements-test.txt
 
-# 設置測試快取目錄
-TEST_CACHE_DIR="${AI_CACHE_ROOT:-/tmp/test_cache}"
-echo -e "${BLUE}設置測試快取目錄: $TEST_CACHE_DIR${NC}"
+# 設置測試倉庫目錄
+WAREHOUSE_ROOT="${AI_CACHE_ROOT:-/mnt/c/AI_LLM_projects/ai_warehouse}"
+CACHE_ROOT="${WAREHOUSE_ROOT}/cache"
+echo -e "${BLUE}設置測試倉庫: $WAREHOUSE_ROOT${NC}"
 
-mkdir -p "$TEST_CACHE_DIR"/{hf,torch,models,datasets,outputs}
-mkdir -p "$TEST_CACHE_DIR"/models/{lora,blip2,qwen,llava,embeddings}
-mkdir -p "$TEST_CACHE_DIR"/datasets/{raw,processed,metadata}
-mkdir -p "$TEST_CACHE_DIR"/outputs/multi-modal-lab
+mkdir -p "$CACHE_ROOT"/hf/{transformers,datasets,hub}
+mkdir -p "$CACHE_ROOT"/torch
+mkdir -p "$WAREHOUSE_ROOT"/models/{lora,blip2,qwen,llava,embeddings}
+mkdir -p "$WAREHOUSE_ROOT"/datasets/{raw,processed,metadata}
+mkdir -p "$WAREHOUSE_ROOT"/outputs/{multi-modal-lab,tests}
 
 # 設置環境變數
 echo -e "${BLUE}設置環境變數...${NC}"
-export AI_CACHE_ROOT="$TEST_CACHE_DIR"
+export AI_CACHE_ROOT="$WAREHOUSE_ROOT"
 export API_PREFIX="/api/v1"
 export ALLOWED_ORIGINS="http://localhost:3000,http://localhost:7860"
 export DEVICE="cpu"
@@ -67,7 +62,7 @@ export DEBUG="true"
 
 # 創建 .env.test 文件
 cat > .env.test << EOF
-AI_CACHE_ROOT=$TEST_CACHE_DIR
+AI_CACHE_ROOT=$WAREHOUSE_ROOT
 API_PREFIX=/api/v1
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:7860
 DEVICE=cpu

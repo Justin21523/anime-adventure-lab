@@ -21,9 +21,9 @@ class QueueManager:
     async def get_queue_stats(self) -> Dict[str, Any]:
         """Get statistics for all queues"""
         try:
-            from ...jobs.worker import celery_app
+            from workers.celery_app import celery_app
 
-            inspect = celery_app.control.inspect()
+            inspect = celery_app.control.inspect(timeout=0.5)
             active_tasks = inspect.active() or {}
             scheduled_tasks = inspect.scheduled() or {}
 

@@ -14,7 +14,13 @@ NC='\033[0m' # No Color
 # Configuration
 TEST_DIR="tests"
 BACKEND_DIR="backend"
-CACHE_DIR="${AI_CACHE_ROOT:-/tmp/test_cache}"
+CACHE_ROOT="${AI_CACHE_ROOT:-/tmp/test_warehouse}"
+CACHE_DIR="${CACHE_ROOT}/cache"
+
+# Environment guard
+if [ "${CONDA_DEFAULT_ENV:-}" != "ai_env" ]; then
+    echo -e "${YELLOW}⚠️ Recommended conda env 'ai_env' not detected (CONDA_DEFAULT_ENV=${CONDA_DEFAULT_ENV:-unset})${NC}"
+fi
 
 echo -e "${BLUE}🧪 Multi-Modal Lab Backend Test Runner${NC}"
 echo "=================================================="
@@ -22,11 +28,13 @@ echo "=================================================="
 # Create test cache if not exists
 if [ ! -d "$CACHE_DIR" ]; then
     echo -e "${YELLOW}📁 Creating test cache directory: $CACHE_DIR${NC}"
-    mkdir -p "$CACHE_DIR"/{hf,torch,models,datasets,outputs}
+    mkdir -p "$CACHE_DIR"/hf/{transformers,datasets,hub}
+    mkdir -p "$CACHE_DIR"/torch
+    mkdir -p "$CACHE_ROOT"/{models,datasets,outputs}
 fi
 
 # Export test environment
-export AI_CACHE_ROOT="$CACHE_DIR"
+export AI_CACHE_ROOT="$CACHE_ROOT"
 export PYTEST_CURRENT_TEST=""
 
 # Function to run tests with timeout
@@ -105,8 +113,8 @@ main() {
 cleanup() {
     echo -e "\n${YELLOW}🧹 Cleaning up test artifacts...${NC}"
     # Clean test cache if it's in tmp
-    if [[ "$CACHE_DIR" == "/tmp/"* ]]; then
-        rm -rf "$CACHE_DIR"
+    if [[ "$CACHE_ROOT" == "/tmp/"* ]]; then
+        rm -rf "$CACHE_ROOT"
         echo -e "${GREEN}✅ Test cache cleaned${NC}"
     fi
 }

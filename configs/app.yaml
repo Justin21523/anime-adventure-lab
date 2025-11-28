@@ -14,7 +14,7 @@ api:
   timeout_seconds: 300
 
 cache:
-  ai_cache_root: "/mnt/ai_warehouse/cache"
+  ai_cache_root: "/mnt/c/AI_LLM_projects/ai_warehouse"
   model_cache_ttl: 3600 # seconds
   max_cache_size_gb: 20
 

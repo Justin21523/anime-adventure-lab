@@ -6,10 +6,10 @@ BLIP-2 based image description generation
 
 import logging
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, File, UploadFile, HTTPException, Form
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Depends, Body
 from fastapi.responses import JSONResponse
 
-from core.vlm.engine import get_vlm_engine
+from api.dependencies import get_vlm
 from core.exceptions import VLMError, ImageProcessingError
 from schemas.caption import (
     CaptionRequest,
@@ -29,6 +29,7 @@ async def generate_caption(
     num_beams: int = Form(3, description="Number of beams for generation"),
     temperature: float = Form(0.7, description="Generation temperature"),
     language: str = Form("en", description="Caption language (en/zh)"),
+    vlm_engine=Depends(get_vlm),
 ):
     """Generate caption for an image"""
     try:
@@ -40,7 +41,6 @@ async def generate_caption(
         image_data = await image.read()
 
         # Get VLM engine and process
-        vlm_engine = get_vlm_engine()
         result = vlm_engine.caption(
             image=image_data,
             max_length=max_length,
@@ -76,6 +76,68 @@ async def generate_caption(
         raise HTTPException(500, f"Caption generation failed: {str(e)}")
 
 
+# Alias 路由以符合 E2E 測試期望 (/vlm/caption)
+@router.post("/vlm/caption", response_model=CaptionResponse)
+async def generate_caption_vlm_alias(
+    image: UploadFile = File(...),
+    max_length: int = Form(50),
+    num_beams: int = Form(3),
+    temperature: float = Form(0.7),
+    language: str = Form("en"),
+    vlm_engine=Depends(get_vlm),
+):
+    return await generate_caption(
+        image=image,
+        max_length=max_length,
+        num_beams=num_beams,
+        temperature=temperature,
+        language=language,
+        vlm_engine=vlm_engine,
+    )
+
+
+@router.post("/vlm/check_consistency")
+async def check_image_consistency(
+    payload: Dict[str, Any] = Body(None),
+    image_path: Optional[str] = Form(None),
+    expected_tags: Optional[List[str]] = Form(None),
+    world_id: Optional[str] = Form(None),
+    vlm_engine=Depends(get_vlm),
+):
+    """
+    簡易一致性檢查：使用 caption 生成文字後計算標籤匹配率。
+    回傳 score (0~1) 以及命中的標籤。
+    """
+    try:
+        # 若透過 JSON 傳遞，從 payload 讀取
+        payload = payload or {}
+        img_path = image_path or payload.get("image_path")
+        tags = expected_tags or payload.get("expected_tags") or []
+        world_id = world_id or payload.get("world_id")
+
+        if not img_path:
+            raise HTTPException(400, "image_path is required")
+
+        caption_result = vlm_engine.caption(img_path, max_length=60, num_beams=3, temperature=0.7)
+        caption_text = caption_result.get("caption", "")
+
+        matched = [tag for tag in tags if str(tag).lower() in caption_text.lower()]
+        score = len(matched) / max(len(tags), 1)
+
+        return {
+            "image_path": img_path,
+            "expected_tags": tags,
+            "matched_tags": matched,
+            "consistency_score": round(score, 3),
+            "caption": caption_text,
+            "model_used": caption_result.get("model_used"),
+            "world_id": world_id,
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.error("Consistency check failed: %s", e)
+        raise HTTPException(500, f"Consistency check failed: {e}") from e
+
+
 @router.post("/caption/batch", response_model=BatchCaptionResponse)
 async def batch_generate_captions(
     images: List[UploadFile] = File(..., description="Multiple image files"),
@@ -83,6 +145,7 @@ async def batch_generate_captions(
     num_beams: int = Form(3),
     temperature: float = Form(0.7),
     language: str = Form("en"),
+    vlm_engine=Depends(get_vlm),
 ):
     """Generate captions for multiple images in batch"""
     try:
@@ -95,7 +158,6 @@ async def batch_generate_captions(
 
         # Process each image
         results = []
-        vlm_engine = get_vlm_engine()
         successful_count = 0
         failed_count = 0
 

@@ -1,0 +1,43 @@
+# docker/Dockerfile.test
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# 安裝系統依賴
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# 複製依賴文件
+COPY requirements.txt requirements-test.txt ./
+
+# 安裝 Python 依賴
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -r requirements-test.txt
+
+# 複製代碼
+COPY backend/ backend/
+COPY tests/ tests/
+COPY scripts/ scripts/
+COPY configs/ configs/
+
+# 創建快取目錄
+RUN mkdir -p /tmp/test_warehouse/cache/hf/transformers && \
+    mkdir -p /tmp/test_warehouse/cache/hf/datasets && \
+    mkdir -p /tmp/test_warehouse/cache/hf/hub && \
+    mkdir -p /tmp/test_warehouse/cache/torch && \
+    mkdir -p /tmp/test_warehouse/models && \
+    mkdir -p /tmp/test_warehouse/datasets && \
+    mkdir -p /tmp/test_warehouse/outputs
+
+# 設置環境變數
+ENV PYTHONPATH=/app/backend
+ENV AI_CACHE_ROOT=/tmp/test_warehouse
+
+# 健康檢查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python scripts/health_check.py || exit 1
+
+CMD ["python", "-m", "pytest", "tests/", "-v"]

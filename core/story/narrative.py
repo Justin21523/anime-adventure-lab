@@ -9,6 +9,7 @@ import logging
 import random
 from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass
+import asyncio
 
 from ..llm import ChatMessage, LLMResponse, get_llm_adapter
 
@@ -42,6 +43,19 @@ class NarrativeGenerator:
             logger.error(f"Failed to initialize LLM adapter: {e}")
             self.llm = None
         self.scene_templates = self._load_scene_templates()
+
+    async def _chat(self, messages: List[ChatMessage]):
+        """Safely call LLM chat supporting sync/async adapters."""
+        if self.llm is None:
+            return None
+        try:
+            result = self.llm.chat(messages)  # type: ignore[attr-defined]
+            if asyncio.iscoroutine(result):
+                result = await result
+            return result
+        except Exception as exc:  # noqa: BLE001
+            logger.error("LLM chat failed: %s", exc)
+            return None
 
     def _load_scene_templates(self) -> Dict[str, Dict[str, Any]]:
         """Load scene templates for different story types"""
@@ -113,20 +127,16 @@ class NarrativeGenerator:
             ChatMessage(role="user", content=generation_prompt),
         ]
 
-        try:
-            response = await self.llm.chat(messages)  # type: ignore
-
-            # 統一處理響應類型 - 修正 LLMResponse 問題
-            if hasattr(response, "content"):
-                return response.content.strip()
-            elif isinstance(response, str):
-                return response.strip()
-            else:
-                return str(response).strip()
-
-        except Exception as e:
-            logger.error(f"Failed to generate scene: {e}")
+        response = await self._chat(messages)
+        if response is None:
             return self._generate_fallback_scene(player_input, context)
+
+        # 統一處理響應類型 - 修正 LLMResponse 問題
+        if hasattr(response, "content"):
+            return response.content.strip()
+        if isinstance(response, str):
+            return response.strip()
+        return str(response).strip()
 
     def _build_context_prompt(self, context: StoryContext) -> str:
         """Build context description from StoryContext"""
@@ -203,19 +213,9 @@ class NarrativeGenerator:
             ChatMessage(role="user", content=opening_prompt),
         ]
 
-        try:
-            response = await self.llm.chat(messages)  # type: ignore
-
-            # 統一處理響應類型
-            if hasattr(response, "content"):
-                return response.content.strip()
-            elif isinstance(response, str):
-                return response.strip()
-            else:
-                return str(response).strip()
-
-        except Exception as e:
-            logger.error(f"Failed to generate opening scene: {e}")
+        response = await self._chat(messages)
+        if response is None:
+            logger.error("Failed to generate opening scene: LLM unavailable")
             return f"""
 歡迎，{player_name}！
 
@@ -224,6 +224,12 @@ class NarrativeGenerator:
 
 你準備好踏出第一步了嗎？
             """.strip()
+
+        if hasattr(response, "content"):
+            return response.content.strip()
+        if isinstance(response, str):
+            return response.strip()
+        return str(response).strip()
 
     async def generate_character_dialogue(
         self,
@@ -256,24 +262,21 @@ class NarrativeGenerator:
             ChatMessage(role="user", content=dialogue_prompt),
         ]
 
-        try:
-            response = await self.llm.chat(messages)  # type: ignore
-
-            if hasattr(response, "content"):
-                dialogue = response.content.strip()
-            elif isinstance(response, str):
-                dialogue = response.strip()
-            else:
-                dialogue = str(response).strip()
-
-            # Clean up dialogue (remove quotes if present)
-            dialogue = dialogue.strip('"').strip("'").strip()
-
-            return dialogue if dialogue else f"[{character_name}沉默地看著你...]"
-
-        except Exception as e:
-            logger.error(f"Failed to generate character dialogue: {e}")
+        response = await self._chat(messages)
+        if response is None:
+            logger.error("Failed to generate character dialogue: LLM unavailable")
             return f"[{character_name}沉默地看著你，似乎在思考著什麼...]"
+
+        if hasattr(response, "content"):
+            dialogue = response.content.strip()
+        elif isinstance(response, str):
+            dialogue = response.strip()
+        else:
+            dialogue = str(response).strip()
+
+        dialogue = dialogue.strip('"').strip("'").strip()
+
+        return dialogue if dialogue else f"[{character_name}沉默地看著你...]"
 
     async def generate_scene_description(
         self,
@@ -313,19 +316,16 @@ class NarrativeGenerator:
             ChatMessage(role="user", content=scene_prompt),
         ]
 
-        try:
-            response = await self.llm.chat(messages)  # type: ignore
-
-            if hasattr(response, "content"):
-                return response.content.strip()
-            elif isinstance(response, str):
-                return response.strip()
-            else:
-                return str(response).strip()
-
-        except Exception as e:
-            logger.error(f"Failed to generate scene description: {e}")
+        response = await self._chat(messages)
+        if response is None:
+            logger.error("Failed to generate scene description: LLM unavailable")
             return f"你身處在{location}中，{atmosphere}的氣氛讓這個{time_of_day}顯得格外特別。"
+
+        if hasattr(response, "content"):
+            return response.content.strip()
+        if isinstance(response, str):
+            return response.strip()
+        return str(response).strip()
 
     def generate_narrative(
         self, context: Dict[str, Any], choice_result: Optional[Dict[str, Any]] = None
@@ -1829,24 +1829,21 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
             ChatMessage(role="user", content=character_prompt),
         ]
 
-        try:
-            response = await self.llm.chat(messages)  # type: ignore
-
-            if hasattr(response, "content"):
-                dialogue = response.content.strip()
-            elif isinstance(response, str):
-                dialogue = response.strip()
-            else:
-                dialogue = str(response).strip()
-
-            # Clean up dialogue
-            dialogue = dialogue.strip('"').strip("'").strip()
-
-            return dialogue if dialogue else None
-
-        except Exception as e:
-            logger.error(f"Failed to generate dialogue for {character.name}: {e}")
+        response = await self._chat(messages)
+        if response is None:
+            logger.error("Failed to generate dialogue for %s: LLM unavailable", character.name)
             return None
+
+        if hasattr(response, "content"):
+            dialogue = response.content.strip()
+        elif isinstance(response, str):
+            dialogue = response.strip()
+        else:
+            dialogue = str(response).strip()
+
+        dialogue = dialogue.strip('"').strip("'").strip()
+
+        return dialogue if dialogue else None
 
     def _analyze_scene_changes(
         self,

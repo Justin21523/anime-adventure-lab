@@ -9,6 +9,8 @@ import json
 import sqlite3
 from pathlib import Path
 from .logger import structured_logger
+import os
+import requests
 
 
 class MetricsCollector:
@@ -20,7 +22,11 @@ class MetricsCollector:
 
             AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/tmp/ai_cache")
             cache_dir = Path(AI_CACHE_ROOT) / "outputs" / "multi-modal-lab"
-            cache_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                cache_dir = Path("/tmp/ai_cache/outputs/multi-modal-lab")
+                cache_dir.mkdir(parents=True, exist_ok=True)
             db_path = cache_dir / "metrics.db"
 
         self.db_path = db_path
@@ -32,6 +38,8 @@ class MetricsCollector:
         self.endpoint_stats = defaultdict(
             lambda: {"count": 0, "total_time": 0.0, "errors": 0}
         )
+        self.webhook_url = os.getenv("MONITORING_WEBHOOK_URL")
+        self.webhook_channel = os.getenv("MONITORING_WEBHOOK_CHANNEL")
 
     def _init_db(self):
         """Initialize metrics database"""
@@ -170,6 +178,12 @@ class MetricsCollector:
             if status_code >= 400:
                 self.endpoint_stats[endpoint_key]["errors"] += 1
                 self.error_counts[status_code] += 1
+                self._maybe_send_alert(
+                    title="API error detected",
+                    text=f"{method} {endpoint} -> {status_code}: {error_message}",
+                    level="warning" if status_code < 500 else "critical",
+                    extras={"endpoint": endpoint, "status_code": status_code},
+                )
 
         except Exception as e:
             structured_logger.error(f"Failed to record API metrics: {e}")
@@ -207,6 +221,65 @@ class MetricsCollector:
 
         except Exception as e:
             structured_logger.error(f"Failed to record task metrics: {e}")
+
+    def get_recent_api_metrics(self, limit: int = 20) -> Dict[str, Any]:
+        """Return recent API requests and simple aggregates."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    """
+                    SELECT timestamp, endpoint, method, status_code, response_time_ms, error_message
+                    FROM api_metrics
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                """,
+                    (limit,),
+                )
+                rows = [dict(r) for r in cursor.fetchall()]
+
+                if not rows:
+                    return {"recent": [], "avg_latency_ms": 0, "error_count": 0}
+
+                avg_latency = sum(r["response_time_ms"] or 0 for r in rows) / len(rows)
+                error_count = len([r for r in rows if r["status_code"] >= 400])
+                return {
+                    "recent": rows,
+                    "avg_latency_ms": avg_latency,
+                    "error_count": error_count,
+                }
+        except Exception as e:
+            structured_logger.error(f"Failed to read recent API metrics: {e}")
+            return {"recent": [], "avg_latency_ms": 0, "error_count": 0}
+
+    def _maybe_send_alert(
+        self, title: str, text: str, level: str = "info", extras: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Send alert to webhook if configured."""
+        if not self.webhook_url:
+            return
+        payload = {
+            "text": title,
+            "attachments": [
+                {
+                    "fallback": text,
+                    "color": "#eab308" if level == "warning" else "#ef4444" if level == "critical" else "#38bdf8",
+                    "fields": [
+                        {"title": "Details", "value": text, "short": False},
+                    ],
+                }
+            ],
+        }
+        if extras:
+            payload["attachments"][0]["fields"].append(
+                {"title": "Extras", "value": json.dumps(extras), "short": False}
+            )
+        if self.webhook_channel:
+            payload["channel"] = self.webhook_channel
+        try:
+            requests.post(self.webhook_url, json=payload, timeout=3)
+        except Exception as e:
+            structured_logger.warning(f"Webhook alert failed: {e}")
 
     async def get_task_metrics(self) -> Dict[str, Any]:
         """Get aggregated task metrics"""

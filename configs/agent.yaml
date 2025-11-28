@@ -81,11 +81,11 @@ tools:
         required: true
 
   - name: web_search
-    description: "Search the web for information"
-    function_path: "core.agent.tools.web_search.search"
-    function: "tools.web_search.search"
+    description: "Search the web for information (Brave API)"
+    function_path: "core.agents.tools.web_search.brave_search"
+    function: "core.agents.tools.web_search.brave_search"
     category: "information"
-    requires_auth: false
+    requires_auth: true
     timeout_seconds: 30
     parameters:
       query:
@@ -101,12 +101,17 @@ tools:
         default: 5
         minimum: 1
         maximum: 20
+      api_key:
+        type: string
+        description: "Brave search API key; uses BRAVE_SEARCH_API_KEY if omitted"
+        required: false
 
   - name: web_search_summary
-    description: "Search the web and provide summarized results"
-    function: "tools.web_search.search_and_summarize"
+    description: "Search the web and provide summarized results (Brave + LLM summary)"
+    function_path: "core.agents.tools.web_search.brave_search_summary"
+    function: "core.agents.tools.web_search.brave_search_summary"
     category: "information"
-    requires_auth: false
+    requires_auth: true
     timeout_seconds: 45
     parameters:
       query:
@@ -122,6 +127,30 @@ tools:
         default: 3
         minimum: 1
         maximum: 10
+      api_key:
+        type: string
+        description: "Brave search API key; uses BRAVE_SEARCH_API_KEY if omitted"
+        required: false
+
+  - name: rag_search
+    description: "Search RAG index for contextual snippets"
+    function_path: "core.agents.tools.rag_search.rag_search"
+    function: "core.agents.tools.rag_search.rag_search"
+    category: "knowledge"
+    requires_auth: false
+    timeout_seconds: 20
+    parameters:
+      query:
+        type: string
+        description: "Query text"
+        required: true
+      top_k:
+        type: integer
+        description: "Top K results"
+        required: false
+        default: 5
+        minimum: 1
+        maximum: 20
 
   - name: file_list
     description: "List files and directories"
@@ -143,7 +172,8 @@ tools:
 
   - name: file_read
     description: "Read file content safely"
-    function: "tools.file_ops.read_file"
+    function_path: "core.agents.tools.file_ops.read_file"
+    function: "core.agents.tools.file_ops.read_file"
     category: "file_system"
     requires_auth: false
     timeout_seconds: 30
@@ -168,7 +198,8 @@ tools:
 
   - name: file_write
     description: "Write content to file safely"
-    function: "tools.file_ops.write_file"
+    function_path: "core.agents.tools.file_ops.write_file"
+    function: "core.agents.tools.file_ops.write_file"
     category: "file_system"
     requires_auth: true
     timeout_seconds: 30
@@ -194,7 +225,8 @@ tools:
 
   - name: file_exists
     description: "Check if file exists and get basic info"
-    function: "tools.file_ops.file_exists"
+    function_path: "core.agents.tools.file_ops.file_exists"
+    function: "core.agents.tools.file_ops.file_exists"
     category: "file_system"
     requires_auth: false
     timeout_seconds: 5
@@ -204,24 +236,10 @@ tools:
         description: "Path to check"
         required: true
 
-  - name: file_ops
-    description: "Perform safe file operations (read, list, info) within current directory"
-    function_path: "core.agent.tools.file_ops.execute"
-    parameters:
-      operation:
-        type: string
-        description: "Operation type: 'read' (read file), 'list' (list directory), 'info' (get file info)"
-        required: true
-      path:
-        type: string
-        description: "File or directory path (relative to current directory only)"
-        required: true
-    timeout_seconds: 15
-    requires_sandbox: true
-
   - name: create_directory
     description: "Create directory safely"
-    function: "tools.file_ops.create_directory"
+    function_path: "core.agents.tools.file_ops.create_directory"
+    function: "core.agents.tools.file_ops.create_directory"
     category: "file_system"
     requires_auth: true
     timeout_seconds: 10
@@ -289,7 +307,7 @@ tool_categories:
 
   information:
     description: "Information gathering and research"
-    tools: ["web_search", "web_search_summary"]
+    tools: ["web_search", "web_search_summary", "rag_search"]
 
   file_system:
     description: "File and directory operations"

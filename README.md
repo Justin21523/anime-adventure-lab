@@ -7,7 +7,7 @@ FastAPI backend, Celery workers, a minimal Gradio WebUI, and a shared model/data
 
 ## Key Principles
 
-- **Shared Warehouse Only**: No large models/datasets in the repo. Everything lives under `../ai_warehouse/` and is mounted via `AI_CACHE_ROOT`.
+- **Shared Warehouse Only**: No large models/datasets in the repo. Everything lives under `/mnt/c/AI_LLM_projects/ai_warehouse` (configurable via `AI_CACHE_ROOT`).
 - **Low-VRAM Defaults**: Prefer device_map="auto", fp16/bf16, gradient checkpointing, and LoRA over full fine-tuning.
 - **Security & Governance**: Never commit secrets; use `.env`. Optional NSFW/face-blur for public demos.
 
@@ -19,18 +19,19 @@ Architecture and folder layout follow the project plan and RAG/T2I modules descr
 
 ## Quickstart
 
-### 1) Environment
+### 1) Environment (conda)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate  # or conda
-pip install -r requirements.txt
-cp .env.example .env
-````
+conda create -n ai_env python=3.10 -y
+conda activate ai_env
+pip install -r requirements.txt -r requirements-test.txt
+cp .env.example .env  # if present
+```
 
-Set `AI_CACHE_ROOT` in `.env` to your mounted warehouse, e.g.:
+Set `AI_CACHE_ROOT` in `.env` to your warehouse root (not the `cache` subfolder), e.g.:
 
 ```
-AI_CACHE_ROOT=../ai_warehouse/cache
+AI_CACHE_ROOT=/mnt/c/AI_LLM_projects/ai_warehouse
 ```
 
 ### 2) Run API
@@ -59,6 +60,7 @@ python frontend/gradio/app.py
 docker compose up --build
 # API:  http://localhost:8000/healthz
 # REDIS:localhost:6379
+# Set AI_WAREHOUSE_HOST to your host warehouse path if not using /mnt/c/AI_LLM_projects/ai_warehouse
 ```
 
 ---
@@ -96,17 +98,18 @@ docs/         # developer & deployment docs, notebooks
 
 ## Shared Cache Bootstrap
 
-Each entrypoint prepares caches under `AI_CACHE_ROOT`:
+Each entrypoint prepares caches under `AI_CACHE_ROOT/cache`:
 
 ```python
 import os, pathlib, torch
-AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "../ai_warehouse/cache")
+AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/mnt/c/AI_LLM_projects/ai_warehouse")
+cache_root = pathlib.Path(AI_CACHE_ROOT) / "cache"
 for k, v in {
-    "HF_HOME": f"{AI_CACHE_ROOT}/hf",
-    "TRANSFORMERS_CACHE": f"{AI_CACHE_ROOT}/hf/transformers",
-    "HF_DATASETS_CACHE": f"{AI_CACHE_ROOT}/hf/datasets",
-    "HUGGINGFACE_HUB_CACHE": f"{AI_CACHE_ROOT}/hf/hub",
-    "TORCH_HOME": f"{AI_CACHE_ROOT}/torch",
+    "HF_HOME": f"{cache_root}/hf",
+    "TRANSFORMERS_CACHE": f"{cache_root}/hf/transformers",
+    "HF_DATASETS_CACHE": f"{cache_root}/hf/datasets",
+    "HUGGINGFACE_HUB_CACHE": f"{cache_root}/hf/hub",
+    "TORCH_HOME": f"{cache_root}/torch",
 }.items():
     os.environ[k] = v
     pathlib.Path(v).mkdir(parents=True, exist_ok=True)

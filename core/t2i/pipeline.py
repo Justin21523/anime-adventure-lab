@@ -68,9 +68,7 @@ class PipelineManager:
             # Determine pipeline type
             pipeline_class = self._get_pipeline_class(model_id)
 
-            # Prepare loading arguments
             load_args = {
-                "cache_dir": str(self.model_cache_dir),
                 "torch_dtype": (
                     torch.float16
                     if self.optimization_settings["use_fp16"]
@@ -79,8 +77,15 @@ class PipelineManager:
                 **kwargs,
             }
 
-            # Load pipeline
-            pipeline = pipeline_class.from_pretrained(model_id, **load_args)
+            model_path = Path(model_id)
+            if model_path.suffix in {".safetensors", ".ckpt"} and model_path.exists():
+                # Local single-file checkpoint
+                load_args.setdefault("use_safetensors", model_path.suffix == ".safetensors")
+                load_args.setdefault("cache_dir", str(self.model_cache_dir))
+                pipeline = pipeline_class.from_single_file(str(model_path), **load_args)
+            else:
+                load_args.setdefault("cache_dir", str(self.model_cache_dir))
+                pipeline = pipeline_class.from_pretrained(model_id, **load_args)
 
             # Move to device
             if self.device != "auto":

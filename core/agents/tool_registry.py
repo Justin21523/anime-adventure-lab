@@ -73,6 +73,7 @@ class ToolRegistry:
     def __init__(self):
         if not hasattr(self, "_initialized"):
             self._initialized = True
+            self.config_path = str(Path("configs") / "agent.yaml")
             self._load_from_config()
 
     def _load_from_config(self):
@@ -112,10 +113,11 @@ class ToolRegistry:
                     logger.error(
                         f"Failed to register tool {tool_config.get('name', 'unknown')}: {e}"
                     )
-
         except Exception as e:
             logger.error(f"Failed to load tool configuration: {e}")
-            self._register_default_tools()
+        finally:
+            # Always ensure core defaults are present; add missing ones if config existed
+            self._register_default_tools(add_missing=True)
 
     def _load_function(self, function_path: str) -> Optional[Callable]:
         """Load function from module path"""
@@ -129,7 +131,7 @@ class ToolRegistry:
 
             # Handle relative imports for tools
             if module_path.startswith("tools."):
-                module_path = f"core.agent.{module_path}"
+                module_path = f"core.agents.{module_path}"
 
             module = importlib.import_module(module_path)
             function = getattr(module, function_name)
@@ -140,53 +142,229 @@ class ToolRegistry:
             logger.error(f"Failed to load function {function_path}: {e}")
             return None
 
-    def _register_default_tools(self):
+    def _register_default_tools(self, add_missing: bool = False):
         """Register default tools if no configuration found"""
         logger.info("Registering default tools")
 
         # Register built-in tools
-        from .tools.calculator import calculate
-        from .tools.web_search import search
-        from .tools.file_ops import list_files
-
-        self.register_function(
-            name="calculator",
-            function=calculate,
-            description="Perform mathematical calculations",
-            parameters={
-                "expression": {
-                    "type": "string",
-                    "description": "Mathematical expression to evaluate",
-                }
-            },
+        from .tools.calculator import calculate, basic_math, percentage, unit_convert
+        from .tools.web_search import brave_search, brave_search_summary
+        from .tools.file_ops import (
+            list_files,
+            read_file,
+            write_file,
+            file_exists,
+            create_directory,
+            execute as file_ops_execute,
         )
+        from .tools.rag_search import rag_search
 
-        self.register_function(
-            name="web_search",
-            function=search,
-            description="Search the web for information",
-            parameters={
-                "query": {"type": "string", "description": "Search query"},
-                "max_results": {
-                    "type": "integer",
-                    "default": 5,
-                    "description": "Maximum number of results",
+        def _register_if_needed(name, func, desc, params):
+            if add_missing and name in self._tools:
+                return
+            self.register_function(
+                name=name,
+                function=func,
+                description=desc,
+                parameters=params,
+            )
+
+        for name, func, desc, params in [
+            (
+                "calculator",
+                calculate,
+                "Evaluate a mathematical expression safely",
+                {
+                    "expression": {
+                        "type": "string",
+                        "description": "Math expression to evaluate",
+                        "required": True,
+                        "default": "2+2",
+                    }
                 },
-            },
-        )
-
-        self.register_function(
-            name="file_ops",
-            function=list_files,
-            description="File system operations",
-            parameters={
-                "operation": {
-                    "type": "string",
-                    "description": "Operation to perform (list, read, write)",
+            ),
+            (
+                "basic_math",
+                basic_math,
+                "Basic arithmetic with two numbers",
+                {
+                    "a": {"type": "number", "description": "First number"},
+                    "b": {"type": "number", "description": "Second number"},
+                    "op": {
+                        "type": "string",
+                        "description": "Operation (+, -, *, /)",
+                        "default": "+",
+                    },
                 },
-                "path": {"type": "string", "description": "File or directory path"},
-            },
-        )
+            ),
+            (
+                "percentage",
+                percentage,
+                "Compute percentage of a value",
+                {
+                    "value": {"type": "number", "description": "Base value"},
+                    "percent": {"type": "number", "description": "Percent (0-100)"},
+                },
+            ),
+            (
+                "unit_convert",
+                unit_convert,
+                "Convert units (supports length/weight/time presets)",
+                {
+                    "value": {"type": "number", "description": "Value to convert"},
+                    "from_unit": {"type": "string", "description": "Source unit"},
+                    "to_unit": {"type": "string", "description": "Target unit"},
+                },
+            ),
+            (
+                "web_search",
+                brave_search,
+                "Real web search via Brave API",
+                {
+                    "query": {"type": "string", "description": "Search query"},
+                    "max_results": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Maximum number of results",
+                        "required": False,
+                    },
+                    "api_key": {
+                        "type": "string",
+                        "description": "Brave API key (fallback to BRAVE_API_KEY)",
+                        "required": False,
+                    },
+                },
+            ),
+            (
+                "web_search_summary",
+                brave_search_summary,
+                "Web search with short summary (requires API key)",
+                {
+                    "query": {"type": "string", "description": "Search query"},
+                    "max_results": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Maximum number of results",
+                        "required": False,
+                    },
+                    "api_key": {
+                        "type": "string",
+                        "description": "Brave API key (fallback to BRAVE_API_KEY)",
+                        "required": False,
+                    },
+                },
+            ),
+            (
+                "rag_search",
+                rag_search,
+                "Search existing RAG index for contextual snippets",
+                {
+                    "query": {"type": "string", "description": "Query text"},
+                    "top_k": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Top K results",
+                        "required": False,
+                    },
+                },
+            ),
+            (
+                "file_list",
+                list_files,
+                "List files in a directory",
+                {
+                    "path": {"type": "string", "description": "Directory path"},
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern (e.g., *.txt)",
+                        "default": "*",
+                    },
+                },
+            ),
+            (
+                "file_read",
+                read_file,
+                "Read a text file safely",
+                {
+                    "file_path": {"type": "string", "description": "Path to file"},
+                    "encoding": {
+                        "type": "string",
+                        "description": "Text encoding",
+                        "default": "utf-8",
+                    },
+                    "max_lines": {
+                        "type": "integer",
+                        "description": "Max lines to read",
+                        "default": 1000,
+                    },
+                },
+            ),
+            (
+                "file_write",
+                write_file,
+                "Write content to a file safely",
+                {
+                    "file_path": {"type": "string", "description": "Target file"},
+                    "content": {"type": "string", "description": "Content to write"},
+                    "encoding": {
+                        "type": "string",
+                        "description": "Text encoding",
+                        "default": "utf-8",
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "Allow overwriting existing files",
+                        "default": False,
+                        "required": False,
+                    },
+                },
+            ),
+            (
+                "file_exists",
+                file_exists,
+                "Check if file exists",
+                {"file_path": {"type": "string", "description": "Path to check"}},
+            ),
+            (
+                "create_directory",
+                create_directory,
+                "Create a directory safely",
+                {"dir_path": {"type": "string", "description": "Directory path"}},
+            ),
+            (
+                "file_ops",
+                file_ops_execute,
+                "Unified file operations (list/read/write/info)",
+                {
+                    "operation": {
+                        "type": "string",
+                        "description": "Operation name (list/read/write/info/exists/delete/create_dir)",
+                        "required": True,
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Target path for the operation",
+                        "required": True,
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content for write operation",
+                        "required": False,
+                        "default": "",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern for list",
+                        "required": False,
+                        "default": "*",
+                    },
+                },
+            ),
+        ]:
+            try:
+                _register_if_needed(name, func, desc, params)
+            except Exception as e:
+                logger.error(f"Failed to register tool {name}: {e}")
 
     def register_function(
         self,
@@ -228,6 +406,11 @@ class ToolRegistry:
         """Get tool function by name"""
         return self._functions.get(name)
 
+    # 向後兼容：舊版介面名稱
+    def get_tool_function(self, name: Union[str, ToolMetadata]) -> Optional[Callable]:
+        tool_name = name.name if isinstance(name, ToolMetadata) else name
+        return self.get_function(tool_name)
+
     def list_tools(self) -> List[str]:
         """List all registered tool names"""
         return list(self._tools.keys())
@@ -256,22 +439,28 @@ class ToolRegistry:
         """Check if tool is available"""
         return name in self._tools and name in self._functions
 
-    def validate_parameters(self, tool_name: str, parameters: Dict[str, Any]) -> bool:
-        """Validate parameters for a tool"""
-        metadata = self.get_tool(tool_name)
+    def validate_parameters(
+        self, tool: Union[str, ToolMetadata], parameters: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Validate parameters for a tool and apply defaults"""
+        metadata = tool if isinstance(tool, ToolMetadata) else self.get_tool(tool)
         if not metadata:
-            return False
+            raise ValueError(f"Tool '{tool}' not found")
 
-        # Basic validation - check required parameters exist
-        tool_params = metadata.parameters
+        tool_params = metadata.parameters or {}
+        validated = dict(parameters)
+
         for param_name, param_info in tool_params.items():
-            if param_info.get("required", True) and param_name not in parameters:  # type: ignore
-                logger.error(
-                    f"Required parameter '{param_name}' missing for tool '{tool_name}'"
-                )
-                return False
+            required = param_info.get("required", False)  # type: ignore
+            if param_name not in validated:
+                if "default" in param_info:
+                    validated[param_name] = param_info.get("default")
+                elif required:
+                    msg = f"Required parameter '{param_name}' missing for tool '{metadata.name}'"
+                    logger.error(msg)
+                    raise ValueError(msg)
 
-        return True
+        return validated
 
 
 # Decorator for registering tools

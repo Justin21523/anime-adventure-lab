@@ -8,7 +8,8 @@ Enhanced Text Adventure Game System
 import logging
 import json
 import random
-from typing import Dict, List, Optional, Any, Union, Tuple, Callable
+import asyncio
+from typing import Dict, List, Optional, Any, Union, Tuple, Callable, TYPE_CHECKING
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -16,7 +17,6 @@ from pathlib import Path
 
 # Enhanced imports
 from ..llm import ChatMessage, LLMResponse, get_llm_adapter
-from .engine import StoryEngine
 from ..config import get_config
 from ..exceptions import (
     GameError,
@@ -25,6 +25,9 @@ from ..exceptions import (
     InvalidChoiceError,
 )
 from .narrative import NarrativeGenerator
+
+if TYPE_CHECKING:  # Avoid circular import at runtime
+    from .engine import StoryEngine
 
 
 logger = logging.getLogger(__name__)
@@ -326,7 +329,11 @@ class SceneContext:
             "location": self.location,
             "time_of_day": self.time_of_day,
             "weather": self.weather,
-            "atmosphere": self.atmosphere,
+            "atmosphere": (
+                self.atmosphere.value
+                if hasattr(self.atmosphere, "value")
+                else str(self.atmosphere)
+            ),
             "present_characters": self.present_characters,
             "primary_npc": self.primary_npc,
             "plot_points": self.plot_points,
@@ -967,19 +974,16 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
             ChatMessage(role="user", content=context_prompt),
         ]
 
-        try:
-            response = await self.llm.chat(messages)  # type: ignore
-
-            if isinstance(response, LLMResponse):
-                return response.content.strip()
-            elif isinstance(response, str):
-                return response.strip()
-            else:
-                return str(response).strip()
-
-        except Exception as e:
-            logger.error(f"Failed to generate main narrative: {e}")
+        response = await self._chat(messages)
+        if response is None:
+            logger.error("Failed to generate main narrative: LLM unavailable")
             return "你的行動在這個神秘的世界中引起了一些變化，但具體會發生什麼，還需要時間來揭曉..."
+
+        if isinstance(response, LLMResponse):
+            return response.content.strip()
+        if isinstance(response, str):
+            return response.strip()
+        return str(response).strip()
 
     async def _generate_character_dialogues(
         self,
@@ -1109,24 +1113,21 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
             ChatMessage(role="user", content=character_prompt),
         ]
 
-        try:
-            response = await self.llm.chat(messages)  # type: ignore
-
-            if isinstance(response, LLMResponse):
-                dialogue = response.content.strip()
-            elif isinstance(response, str):
-                dialogue = response.strip()
-            else:
-                dialogue = str(response).strip()
-
-            # Clean up dialogue (remove quotes if present)
-            dialogue = dialogue.strip('"').strip("'").strip()
-
-            return dialogue if dialogue else None
-
-        except Exception as e:
-            logger.error(f"Failed to generate dialogue for {character.name}: {e}")
+        response = await self._chat(messages)
+        if response is None:
+            logger.error("Failed to generate dialogue for %s: LLM unavailable", character.name)
             return None
+
+        if isinstance(response, LLMResponse):
+            dialogue = response.content.strip()
+        elif isinstance(response, str):
+            dialogue = response.strip()
+        else:
+            dialogue = str(response).strip()
+
+        dialogue = dialogue.strip('"').strip("'").strip()
+
+        return dialogue if dialogue else None
 
     def _analyze_scene_changes(
         self,
@@ -1198,6 +1199,8 @@ class EnhancedStoryEngine:
     def __init__(self, config_dir: Optional[Path] = None):
         self.config = get_config()
         # Initialize base engine in enhanced mode
+        from .engine import StoryEngine  # Local import to avoid circular dependency
+
         self.base_engine = StoryEngine(config_dir=config_dir, enhanced_mode=True)
 
         # Enhanced components
@@ -2166,6 +2169,8 @@ def create_enhanced_story_engine(
         logger.error(f"Failed to create enhanced story engine: {e}")
         # Fallback to creating a wrapper around basic engine
         logger.warning("Falling back to basic story engine with enhanced wrapper")
+
+        from .engine import StoryEngine  # Local import to avoid circular dependency
 
         basic_engine = StoryEngine(config_dir, enhanced_mode=True)
 

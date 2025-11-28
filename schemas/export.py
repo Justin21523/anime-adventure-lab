@@ -14,6 +14,9 @@ class ExportRequest(BaseRequest):
     export_type: str = Field(..., description="Type of export")
     format: str = Field("json", description="Export format")
     items: List[str] = Field(..., description="Items to export")
+    options: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional export options"
+    )
 
     @field_validator("export_type")
     def validate_export_type(cls, v):
@@ -36,3 +39,31 @@ class ExportResponse(BaseResponse):
     file_path: str = Field(..., description="Exported file path")
     file_size_mb: float = Field(..., description="File size in MB")
     items_exported: int = Field(..., description="Number of items exported")
+    results: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Per-item export results"
+    )
+    warnings: Optional[List[str]] = Field(None, description="Non-fatal warnings")
+
+
+class ConvertRequest(BaseRequest):
+    """Format conversion request"""
+
+    input_path: str = Field(..., description="Input file path")
+    output_path: Optional[str] = Field(
+        None, description="Optional output path (auto if omitted)"
+    )
+    source_format: str = Field(..., description="Source format")
+    target_format: str = Field(..., description="Target format")
+    options: Dict[str, Any] = Field(
+        default_factory=dict, description="Conversion options"
+    )
+
+
+class ConvertResponse(BaseResponse):
+    """Format conversion response"""
+
+    input_path: str = Field(..., description="Input file")
+    output_path: str = Field(..., description="Converted output path")
+    source_format: str = Field(..., description="Source format")
+    target_format: str = Field(..., description="Target format")
+    details: Dict[str, Any] = Field(default_factory=dict, description="Extra details")

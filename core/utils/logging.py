@@ -14,6 +14,8 @@ import traceback
 from datetime import datetime
 
 from ..config import get_config
+from .model import ModelManager
+from .cache import CacheManager
 
 
 class StructuredFormatter(logging.Formatter):

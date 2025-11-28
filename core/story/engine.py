@@ -65,8 +65,15 @@ class StoryEngine:
 
         # Session storage
         self.sessions: Dict[str, GameSession] = {}
-        self.sessions_path = Path(self.cache) / "game_sessions"  # type: ignore
-        self.sessions_path.mkdir(exist_ok=True)
+        try:
+            cache_root = self.cache.get_output_path("games")  # type: ignore[assignment]
+            self.sessions_path = Path(cache_root) / "story_sessions"
+            self.sessions_path.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Falling back to local story session path: %s", exc)
+            fallback_path = Path("outputs") / "story_sessions"
+            fallback_path.mkdir(parents=True, exist_ok=True)
+            self.sessions_path = fallback_path
 
         # Enhanced features
         if self.enhanced_mode:
@@ -304,6 +311,13 @@ class StoryEngine:
         context_memory = StoryContextMemory(
             session.session_id,
         )
+        context_memory.player_name = session.player_name  # type: ignore[attr-defined]
+        context_memory.scene_sequence = []  # type: ignore[attr-defined]
+        context_memory.location_states = {}  # type: ignore[attr-defined]
+        context_memory.main_plot_points = []  # type: ignore[attr-defined]
+        context_memory.player_decisions = []  # type: ignore[attr-defined]
+        context_memory.player_relationships = {}  # type: ignore[attr-defined]
+        context_memory.world_flags = {}  # type: ignore[attr-defined]
 
         # Create player character
         player_character = GameCharacter(
@@ -365,34 +379,34 @@ class StoryEngine:
 
     def _load_sessions(self):
         """Load existing game sessions from storage"""
-        try:
-            for session_file in self.sessions_path.glob("*.json"):
+        for session_file in self.sessions_path.glob("*.json"):
+            try:
                 with open(session_file, "r", encoding="utf-8") as f:
                     session_data = json.load(f)
                     session = GameSession.from_dict(session_data)
                     self.sessions[session.session_id] = session
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Skip invalid session file %s: %s", session_file, exc)
+                continue
 
-                    # Load enhanced context if available
-                    if self.enhanced_mode:
-                        context_file = session_file.with_suffix(".context.json")
-                        if context_file.exists():
-                            try:
-                                with open(context_file, "r", encoding="utf-8") as cf:
-                                    context_data = json.load(cf)
-                                    context_memory = self._deserialize_context_memory(
-                                        context_data
-                                    )
-                                    self.context_memories[session.session_id] = (
-                                        context_memory
-                                    )
-                            except Exception as e:
-                                logger.warning(
-                                    f"Failed to load context for {session.session_id}: {e}"
-                                )
+            if self.enhanced_mode:
+                context_file = session_file.with_suffix(".context.json")
+                if context_file.exists():
+                    try:
+                        with open(context_file, "r", encoding="utf-8") as cf:
+                            context_data = json.load(cf)
+                            context_memory = self._deserialize_context_memory(
+                                context_data
+                            )
+                            self.context_memories[session.session_id] = context_memory
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "Failed to load context for %s: %s",
+                            session.session_id,
+                            exc,
+                        )
 
-            logger.info(f"Loaded {len(self.sessions)} existing sessions")
-        except Exception as e:
-            logger.error(f"Failed to load sessions: {e}")
+        logger.info(f"Loaded {len(self.sessions)} existing sessions")
 
     def _save_session(self, session: GameSession):
         """Save session to storage"""

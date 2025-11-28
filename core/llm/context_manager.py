@@ -7,7 +7,10 @@ Handles context window management, token counting, and intelligent truncation
 import re
 import json
 import logging
-import tiktoken
+try:
+    import tiktoken  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    tiktoken = None
 from typing import List, Dict, Any, Optional, Tuple, Union
 from dataclasses import dataclass
 from transformers import AutoTokenizer, PreTrainedTokenizer
@@ -20,6 +23,8 @@ from ..shared_cache import get_shared_cache
 from ..exceptions import ContextLengthExceededError, ValidationError
 
 logger = logging.getLogger(__name__)
+
+EncodingType = Any if tiktoken is None else tiktoken.Encoding
 
 
 @dataclass
@@ -75,7 +80,7 @@ class ContextManager:
 
         self._tokenizers: Dict[str, PreTrainedTokenizer] = {}
         # Token encoders cache
-        self._encoders: Dict[str, tiktoken.Encoding] = {}
+        self._encoders: Dict[str, EncodingType] = {}
 
         # Default context windows for different models
         self._model_contexts = {
@@ -203,8 +208,12 @@ class ContextManager:
         logger.warning(f"No specific config for {model_name}, using default")
         return self.model_configs["default"]
 
-    def get_encoder(self, model_name: str) -> Optional[tiktoken.Encoding]:
+    def get_encoder(self, model_name: str) -> Optional[EncodingType]:
         """Get or create token encoder for a model"""
+        if tiktoken is None:
+            logger.warning("tiktoken not installed; skipping encoder load")
+            return None
+
         if model_name in self._encoders:
             return self._encoders[model_name]
 

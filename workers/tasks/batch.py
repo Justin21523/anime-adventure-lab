@@ -10,9 +10,10 @@ from celery import current_task
 
 from workers.celery_app import celery_app
 
-AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/mnt/ai_warehouse/cache")
-BATCH_DIR = f"{AI_CACHE_ROOT}/batch_jobs"
-Path(BATCH_DIR).mkdir(parents=True, exist_ok=True)
+DEFAULT_CACHE_ROOT = Path("/mnt/c/AI_LLM_projects/ai_warehouse")
+AI_CACHE_ROOT = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_CACHE_ROOT))
+BATCH_DIR = AI_CACHE_ROOT / "outputs" / "batch_jobs"
+BATCH_DIR.mkdir(parents=True, exist_ok=True)
 
 # Simple in-memory job storage (could use Redis/DB in production)
 job_storage = {}
@@ -44,7 +45,7 @@ class BatchJobManager:
         job_storage[job_id] = job_data
 
         # Save to disk
-        job_file = Path(BATCH_DIR) / f"{job_id}.json"
+        job_file = BATCH_DIR / f"{job_id}.json"
         with open(job_file, "w") as f:
             json.dump(job_data, f, indent=2)
 
@@ -57,7 +58,7 @@ class BatchJobManager:
             return job_storage[job_id]
 
         # Try loading from disk
-        job_file = Path(BATCH_DIR) / f"{job_id}.json"
+        job_file = BATCH_DIR / f"{job_id}.json"
         if job_file.exists():
             with open(job_file, "r") as f:
                 job_data = json.load(f)
@@ -79,7 +80,7 @@ class BatchJobManager:
         job_data["updated_at"] = datetime.utcnow().isoformat()
 
         # Save to disk
-        job_file = Path(BATCH_DIR) / f"{job_id}.json"
+        job_file = BATCH_DIR / f"{job_id}.json"
         with open(job_file, "w") as f:
             json.dump(job_data, f, indent=2)
 
@@ -150,32 +151,37 @@ def process_batch_job(job_id: str):
 
 
 def process_t2i_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Process a single T2I task"""
-    from core.t2i import get_t2i_pipeline, save_image_to_cache
-    import torch
+    """Process a single T2I task using T2IEngine with mock fallback."""
+    from core.t2i.engine import T2IEngine
+    from core.shared_cache import get_shared_cache
 
-    # Get pipeline
-    pipeline = get_t2i_pipeline(
-        task_data.get("model", "runwayml/stable-diffusion-v1-5")
+    cache = get_shared_cache()
+    engine = T2IEngine(
+        cache_root=cache.cache_root,
+        device="auto",
+        config={
+            "default_model": task_data.get("model", "runwayml/stable-diffusion-v1-5"),
+            "mock_generation": False,
+        },
+    )
+    result = engine.txt2img(
+        {
+            "prompt": task_data["prompt"],
+            "negative_prompt": task_data.get("negative_prompt", ""),
+            "width": task_data.get("width", 768),
+            "height": task_data.get("height", 768),
+            "num_inference_steps": task_data.get("steps", 25),
+            "guidance_scale": task_data.get("guidance_scale", 7.5),
+            "seed": task_data.get("seed", 42),
+        }
     )
 
-    # Generate image
-    result = pipeline(
-        prompt=task_data["prompt"],
-        negative_prompt=task_data.get("negative_prompt", ""),
-        width=task_data.get("width", 768),
-        height=task_data.get("height", 768),
-        num_inference_steps=task_data.get("steps", 25),
-        guidance_scale=task_data.get("guidance_scale", 7.5),
-        generator=torch.Generator().manual_seed(task_data.get("seed", 42)),
-    )
-
-    # Save image
-    image_path, metadata_path = save_image_to_cache(result.images[0], task_data)
+    metadata = result.get("metadata", {})
+    paths = metadata.get("output_paths") or []
 
     return {
-        "image_path": image_path,
-        "metadata_path": metadata_path,
+        "image_path": paths[0] if paths else "",
+        "metadata": metadata,
         "seed": task_data.get("seed", 42),
     }
 

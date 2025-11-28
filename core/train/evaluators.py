@@ -7,21 +7,27 @@ from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 from PIL import Image
 from dataclasses import dataclass, asdict
-import clip
-import cv2
-from transformers import CLIPProcessor, CLIPModel
-from sklearn.metrics.pairwise import cosine_similarity
-from transformers import CLIPProcessor, CLIPModel
 import os
 
-import clip
+try:
+    import clip  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    clip = None
+import cv2
 from transformers import CLIPProcessor, CLIPModel
 from sklearn.metrics.pairwise import cosine_similarity
 
 from core.config import get_config
 from core.shared_cache import get_shared_cache
 from ..utils.image import get_image_processor
-from ..exceptions import EvaluationError, ModelLoadError
+try:
+    from ..exceptions import EvaluationError, ModelLoadError
+except Exception:  # pragma: no cover - fallback for missing class
+    class EvaluationError(Exception):
+        ...
+
+    class ModelLoadError(Exception):
+        ...
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +92,8 @@ class ModelEvaluator:
             return
 
         try:
+            if clip is None:
+                raise ImportError("clip 未安裝，跳過評估模型載入")
             # CLIP for text-image similarity
             self.clip_model, self.clip_preprocess = clip.load(
                 "ViT-B/32", device="cuda" if torch.cuda.is_available() else "cpu"
@@ -103,9 +111,7 @@ class ModelEvaluator:
             self.clip_model = None
             self.clip_preprocess = None
             self.clip_processor = None
-            raise EvaluationError(
-                f"Failed to load evaluation models: {e}", "model_loading"
-            )
+            # 不拋出例外，避免在無評估需求時阻塞匯入
 
     def evaluate_model(
         self,

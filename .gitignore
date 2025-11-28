@@ -48,3 +48,5 @@ build/
 tmp/
 temp/
 *.tmp
+
+*.AGENTS.md

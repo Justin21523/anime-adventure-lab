@@ -12,6 +12,7 @@ from enum import Enum
 
 from .base_agent import BaseAgent, SimpleReasoningAgent, AgentMemory
 from .executor import AgentExecutor, ExecutionResult
+from .base_agent import AgentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -329,13 +330,23 @@ class MultiStepProcessor:
                 task_description=step.description, context=step_context
             )
 
-            if result["success"]:
+            if isinstance(result, AgentResponse):
+                success = result.success
+                payload = result.dict()
+            else:
+                # Backward compatibility if a dict is returned
+                success = result.get("success", False)
+                payload = result
+
+            if success:
                 step.status = TaskStatus.COMPLETED
-                step.result = result
+                step.result = payload
                 logger.info(f"Step {step.step_id} completed successfully")
             else:
                 step.status = TaskStatus.FAILED
-                step.error = result.get("error", "Unknown error")
+                step.error = payload.get("error_message") or payload.get(
+                    "error", "Unknown error"
+                )
                 logger.error(f"Step {step.step_id} failed: {step.error}")
 
         except Exception as e:

@@ -1,5 +1,6 @@
 # core/export/story_exporter.py
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -13,7 +14,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ExportConfig:
-    output_dir: str = "../ai_warehouse/outputs/exports"
+    output_dir: str = (
+        f"{os.getenv('AI_CACHE_ROOT', '/mnt/c/AI_LLM_projects/ai_warehouse')}"
+        "/outputs/exports"
+    )
     include_images: bool = True
     include_metadata: bool = True
     pdf_style: str = "manga"  # manga, novel, comic
