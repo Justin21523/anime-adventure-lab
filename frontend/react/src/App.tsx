@@ -9,8 +9,9 @@ import { NewStoryForm } from './features/story/components/NewStoryForm'
 import { StoryGameScreen } from './features/story/components/StoryGameScreen'
 import { RAGManagement } from './features/rag/components/RAGManagement'
 import { BatchMonitor } from './features/batch/components/BatchMonitor'
+import { AgentSystem } from './features/agent/components/AgentSystem'
 
-type Route = 'home' | 'new-story' | 'game' | 'rag' | 'batch'
+type Route = 'home' | 'new-story' | 'game' | 'rag' | 'batch' | 'agent'
 
 function App() {
   const [route, setRoute] = useState<Route>('home')
@@ -65,6 +66,13 @@ function App() {
                   >
                     批次任務
                   </Button>
+                  <Button
+                    variant={route === 'agent' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setRoute('agent')}
+                  >
+                    Agent
+                  </Button>
                 </div>
               </div>
             </div>
@@ -97,6 +105,8 @@ function App() {
         {route === 'rag' && <RAGManagement />}
 
         {route === 'batch' && <BatchMonitor />}
+
+        {route === 'agent' && <AgentSystem />}
       </div>
 
       {/* React Query DevTools (only in development) */}
