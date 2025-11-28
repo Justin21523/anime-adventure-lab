@@ -8,8 +8,9 @@ import { SessionList } from './features/story/components/SessionList'
 import { NewStoryForm } from './features/story/components/NewStoryForm'
 import { StoryGameScreen } from './features/story/components/StoryGameScreen'
 import { RAGManagement } from './features/rag/components/RAGManagement'
+import { BatchMonitor } from './features/batch/components/BatchMonitor'
 
-type Route = 'home' | 'new-story' | 'game' | 'rag'
+type Route = 'home' | 'new-story' | 'game' | 'rag' | 'batch'
 
 function App() {
   const [route, setRoute] = useState<Route>('home')
@@ -55,7 +56,14 @@ function App() {
                     size="sm"
                     onClick={() => setRoute('rag')}
                   >
-                    RAG 管理
+                    RAG
+                  </Button>
+                  <Button
+                    variant={route === 'batch' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setRoute('batch')}
+                  >
+                    批次任務
                   </Button>
                 </div>
               </div>
@@ -87,6 +95,8 @@ function App() {
         )}
 
         {route === 'rag' && <RAGManagement />}
+
+        {route === 'batch' && <BatchMonitor />}
       </div>
 
       {/* React Query DevTools (only in development) */}
