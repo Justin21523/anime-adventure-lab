@@ -67,6 +67,18 @@ class StoryTurnRequest(BaseModel):
         return value
 
 
+class SceneImage(BaseModel):
+    """Generated scene image data."""
+
+    image_url: str = Field(..., description="URL to generated scene image")
+    prompt: str = Field(..., description="Positive prompt used for generation")
+    negative_prompt: str = Field(..., description="Negative prompt used")
+    generation_time: float = Field(..., description="Time taken to generate (seconds)")
+    seed: Optional[int] = Field(None, description="Random seed used")
+    width: int = Field(768, description="Image width")
+    height: int = Field(768, description="Image height")
+
+
 class StoryTurnResponse(BaseModel):
     """Story turn response."""
 
@@ -82,6 +94,9 @@ class StoryTurnResponse(BaseModel):
     agent_overlay: Optional[Dict[str, Any]] = None
     knowledge_used: Optional[List[Dict[str, Any]]] = None
     context: Optional[Dict[str, Any]] = None
+    scene_image: Optional[SceneImage] = Field(
+        None, description="Auto-generated scene image (if triggered)"
+    )
 
 
 class StorySessionInfo(BaseModel):

@@ -18,6 +18,7 @@ from core.exceptions import GameError, SessionNotFoundError, InvalidChoiceError
 from core.safety import get_content_filter
 from schemas.game import GamePersonaInfo
 from schemas.story import (
+    SceneImage,
     StoryAgentActionRequest,
     StoryAgentActionResponse,
     StoryChoicePreview,
@@ -73,6 +74,55 @@ def _filter_text(text: str) -> str:
     except Exception as exc:  # noqa: BLE001
         logger.debug("Safety filter fallback: %s", exc)
         return text
+
+
+async def _generate_scene_image(
+    narrative_text: str,
+    context_snapshot: Dict[str, Any],
+    force: bool = False
+) -> Optional[SceneImage]:
+    """Generate scene image if triggered by story context."""
+    try:
+        from core.story.t2i_integration import get_t2i_integration
+
+        t2i_integration = get_t2i_integration()
+
+        # Build scene context from story context
+        scene_context = {
+            "location": context_snapshot.get("current_scene", {}).get("name", "unknown place"),
+            "time": context_snapshot.get("time_of_day", "daytime"),
+            "atmosphere": context_snapshot.get("atmosphere", "neutral"),
+            "characters": [
+                char.get("name", "")
+                for char in context_snapshot.get("present_characters", [])
+            ],
+            "scene_transition": context_snapshot.get("scene_transition", False),
+            "is_major_event": context_snapshot.get("is_major_event", False),
+            "weather": context_snapshot.get("weather", ""),
+        }
+
+        # Generate scene image
+        result = await t2i_integration.generate_scene_image(
+            scene_context=scene_context,
+            narrative_text=narrative_text,
+            force=force
+        )
+
+        if result:
+            return SceneImage(
+                image_url=result.image_url,
+                prompt=result.prompt,
+                negative_prompt=result.negative_prompt,
+                generation_time=result.generation_time,
+                seed=result.seed,
+                width=result.width,
+                height=result.height
+            )
+        return None
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Scene image generation skipped: %s", exc)
+        return None
 
 
 def _build_agent_context(session) -> AgentStoryContext:
@@ -204,6 +254,21 @@ async def create_story_session(request: StorySessionCreateRequest):
             choice_id=None,
         )
 
+        # Get context snapshot for scene image
+        context_snapshot = story_engine.get_session_context(session.session_id) or {}
+        context_snapshot.update({
+            "setting": request.setting,
+            "difficulty": request.difficulty,
+            "persona_id": request.persona_id,
+        })
+
+        # Generate opening scene image
+        scene_image = await _generate_scene_image(
+            narrative_text=turn_result["narrative"],
+            context_snapshot=context_snapshot,
+            force=False
+        )
+
         return StoryTurnResponse(
             session_id=session.session_id,
             turn_count=turn_result["turn_count"],
@@ -216,11 +281,8 @@ async def create_story_session(request: StorySessionCreateRequest):
             agent_used=bool(agent_overlay),
             agent_overlay=agent_overlay,
             knowledge_used=knowledge_used or None,
-            context={
-                "setting": request.setting,
-                "difficulty": request.difficulty,
-                "persona_id": request.persona_id,
-            },
+            context=context_snapshot,
+            scene_image=scene_image,
         )
     except GameError as exc:
         logger.error("Story creation failed: %s", exc)
@@ -272,6 +334,13 @@ async def process_story_turn(request: StoryTurnRequest):
             request.session_id
         ) or {}
 
+        # Generate scene image if triggered
+        scene_image = await _generate_scene_image(
+            narrative_text=result["narrative"],
+            context_snapshot=context_snapshot,
+            force=False
+        )
+
         return StoryTurnResponse(
             session_id=result["session_id"],
             turn_count=result["turn_count"],
@@ -285,6 +354,7 @@ async def process_story_turn(request: StoryTurnRequest):
             agent_overlay=agent_overlay,
             knowledge_used=knowledge_used or None,
             context=context_snapshot,
+            scene_image=scene_image,
         )
     except (SessionNotFoundError, InvalidChoiceError) as exc:
         raise HTTPException(status_code=404, detail=str(exc))
