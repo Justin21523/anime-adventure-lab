@@ -132,17 +132,42 @@ Long-term: RAG vectors → Semantic search
 
 ---
 
+---
+
+### Phase 3 Week 6-7: Agent Story Integration (Optional) ✅
+
+**Goal**: Integrate Agent autonomous decision layer into story turn processing.
+
+**Backend Implementation:**
+- `core/agents/story_agent_layer.py` - Agent decision layer (450 lines)
+- `core/story/engine.py` - Agent integration into turn processing
+- `api/routers/story.py` - Agent actions in API response
+- `schemas/story.py` - agent_actions field
+- `tests/test_agent_story_integration.py` - Comprehensive tests (380 lines)
+- `scripts/test_agent_integration.py` - Standalone test runner
+
+**Features:**
+- **Intervention Detection**: Keywords (quest/damage/item), scene objectives
+- **Decision Making**: Rule-based with 5 patterns (quest/damage/item/NPC/location)
+- **Safety Integration**: All tools go through StorySafetyWrapper
+- **Tool Execution**: modify_world_state, update_character_state, add_inventory_item, rag_search, generate_scene_image
+
+**Architecture:**
+```
+Narrative Generation → Agent Intervention Check → Decision Making → Safety Wrapper Execution → Memory Recording
+```
+
+**Testing:**
+- 6/6 standalone tests passing ✓
+- 100% mocked (GPU-safe)
+- Integration with safety wrapper confirmed
+
+**Commit:**
+- `5e00c11` - Agent integration (Week 6-7)
+
+---
+
 ## ⏳ Optional Future Phases
-
-### Phase 3 Week 6-7: Agent Story Integration (Optional)
-
-**Not yet implemented** - This would integrate the Agent safety wrapper into the story turn processing, allowing Agent to make autonomous decisions.
-
-**Planned:**
-- Integrate safety wrapper into story engine
-- Agent-driven narrative decisions
-- Tool-based world modifications
-- Frontend agent action display
 
 ### Phase 4 Week 8-10: SSE Real-time Updates (Optional)
 
@@ -161,9 +186,9 @@ Long-term: RAG vectors → Semantic search
 ### Code Statistics
 
 **Backend:**
-- Core modules: ~2,800 lines
-- Tests: ~800 lines
-- **Total: ~3,600 lines**
+- Core modules: ~3,300 lines (+500 for Agent layer)
+- Tests: ~1,200 lines (+400 for Agent tests)
+- **Total: ~4,500 lines** (+900)
 
 **Frontend:**
 - Components: ~1,000 lines
@@ -171,30 +196,32 @@ Long-term: RAG vectors → Semantic search
 - Hooks: ~200 lines
 - **Total: ~1,400 lines**
 
-**Grand Total: ~5,000 lines of production code**
+**Grand Total: ~5,900 lines of production code** (+900 from Phase 3 Week 6-7)
 
 ### Files Created/Modified
 
-**Backend (11 files):**
+**Backend (14 files):**
 - Phase 1: 5 files (T2I integration, tests)
 - Phase 2: 5 files (Memory system, tests)
-- Phase 3: 6 files (Agent safety, tools, tests)
+- Phase 3 Week 5: 6 files (Agent safety, tools, tests)
+- Phase 3 Week 6-7: 3 files (Agent layer, integration, tests) + 3 modified
 
 **Frontend (10 files):**
 - Phase 1: 5 files (SceneVisualizer, Badge, types)
 - Phase 2: 4 files (Memory UI, types)
 - Phase 3: 0 files (backend-only)
 
-**Total: 21 new/modified files**
+**Total: 24 new/modified files** (+3 from Phase 3 Week 6-7)
 
 ### Git History
 
 **Commits:**
 - Phase 1: 3 commits
 - Phase 2: 2 commits
-- Phase 3: 1 commit
+- Phase 3 Week 5: 1 commit
+- Phase 3 Week 6-7: 1 commit
 - Documentation: Multiple commits
-- **Total: 20+ commits**
+- **Total: 21+ commits**
 
 ### Test Coverage
 
@@ -202,6 +229,7 @@ Long-term: RAG vectors → Semantic search
 - T2I tests: 100% mocked (no real T2I engine)
 - Memory tests: 100% mocked (no real RAG embeddings)
 - Agent safety tests: 100% coverage (critical security)
+- Agent integration tests: 6/6 passing (100% mocked)
 
 **Test Strategy:**
 - Mock fixtures for all GPU/model operations
@@ -516,5 +544,5 @@ def mock_llm_adapter():
 
 **Created**: 2025-11-28
 **Last Updated**: 2025-11-28
-**Status**: ✅ **Core Integration Complete** (Phases 1-2 + Phase 3 Week 5)
-**Next Steps**: Optional Agent integration (Week 6-7) or SSE streaming (Week 8-10)
+**Status**: ✅ **Agent Integration Complete** (Phases 1-2 + Phase 3 Week 5-7)
+**Next Steps**: Optional SSE real-time streaming (Phase 4 Week 8-10) or Frontend Agent UI
