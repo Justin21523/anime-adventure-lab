@@ -44,6 +44,22 @@ export interface StoryMemoryContext {
   }>
 }
 
+export interface AgentToolResult {
+  tool: string
+  success: boolean
+  result?: any
+  error?: string
+  rollback_performed?: boolean
+}
+
+export interface AgentActions {
+  decision_type: string
+  reasoning: string
+  tool_results: AgentToolResult[]
+  overall_success: boolean
+  errors: string[]
+}
+
 export interface StorySession {
   session_id: string
   player_name: string
@@ -61,6 +77,8 @@ export interface StorySession {
   scene_image?: SceneImage | null
   memory_stats?: MemoryStats | null
   memory_context?: StoryMemoryContext | null
+  agent_actions?: AgentActions | null
+  agent_used?: boolean
 }
 
 export interface StoryChoice {
