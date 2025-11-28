@@ -136,7 +136,7 @@ Long-term: RAG vectors → Semantic search
 
 ### Phase 3 Week 6-7: Agent Story Integration (Optional) ✅
 
-**Goal**: Integrate Agent autonomous decision layer into story turn processing.
+**Goal**: Integrate Agent autonomous decision layer into story turn processing with full UI display.
 
 **Backend Implementation:**
 - `core/agents/story_agent_layer.py` - Agent decision layer (450 lines)
@@ -146,15 +146,29 @@ Long-term: RAG vectors → Semantic search
 - `tests/test_agent_story_integration.py` - Comprehensive tests (380 lines)
 - `scripts/test_agent_integration.py` - Standalone test runner
 
+**Frontend Implementation:**
+- `AgentActionsPanel.tsx` - Agent UI component (280 lines)
+- `StoryGameScreen.tsx` - Integration with left sidebar
+- `story.types.ts` - TypeScript types for Agent actions
+
 **Features:**
 - **Intervention Detection**: Keywords (quest/damage/item), scene objectives
 - **Decision Making**: Rule-based with 5 patterns (quest/damage/item/NPC/location)
 - **Safety Integration**: All tools go through StorySafetyWrapper
 - **Tool Execution**: modify_world_state, update_character_state, add_inventory_item, rag_search, generate_scene_image
+- **Visual Display**: Expandable panel with success/failure indicators, tool icons, rollback badges
+
+**UI Features:**
+- Pulsing green indicator when Agent acted
+- Color-coded success (green) / failure (red) borders
+- Tool-specific icons (Flag, Heart, Package, Search, Image)
+- Smart result parsing (stat changes, flag modifications, item acquisition)
+- Expandable JSON details
+- Error messages and rollback indicators
 
 **Architecture:**
 ```
-Narrative Generation → Agent Intervention Check → Decision Making → Safety Wrapper Execution → Memory Recording
+Narrative Generation → Agent Intervention Check → Decision Making → Safety Wrapper Execution → Memory Recording → UI Display
 ```
 
 **Testing:**
@@ -162,8 +176,11 @@ Narrative Generation → Agent Intervention Check → Decision Making → Safety
 - 100% mocked (GPU-safe)
 - Integration with safety wrapper confirmed
 
-**Commit:**
-- `5e00c11` - Agent integration (Week 6-7)
+**Commits:**
+- `5e00c11` - Backend Agent integration
+- `c3efde1` - Documentation update
+- `c48021a` - Integration guide
+- `b7f0c87` - Frontend Agent UI
 
 ---
 
@@ -191,12 +208,12 @@ Narrative Generation → Agent Intervention Check → Decision Making → Safety
 - **Total: ~4,500 lines** (+900)
 
 **Frontend:**
-- Components: ~1,000 lines
-- Types: ~200 lines
+- Components: ~1,300 lines (+300 for AgentActionsPanel)
+- Types: ~220 lines (+20 for Agent types)
 - Hooks: ~200 lines
-- **Total: ~1,400 lines**
+- **Total: ~1,720 lines** (+320)
 
-**Grand Total: ~5,900 lines of production code** (+900 from Phase 3 Week 6-7)
+**Grand Total: ~6,220 lines of production code** (+900 backend + 320 frontend from Phase 3 Week 6-7)
 
 ### Files Created/Modified
 
@@ -206,12 +223,13 @@ Narrative Generation → Agent Intervention Check → Decision Making → Safety
 - Phase 3 Week 5: 6 files (Agent safety, tools, tests)
 - Phase 3 Week 6-7: 3 files (Agent layer, integration, tests) + 3 modified
 
-**Frontend (10 files):**
+**Frontend (13 files):**
 - Phase 1: 5 files (SceneVisualizer, Badge, types)
 - Phase 2: 4 files (Memory UI, types)
-- Phase 3: 0 files (backend-only)
+- Phase 3 Week 5: 0 files (backend-only)
+- Phase 3 Week 6-7: 3 files (AgentActionsPanel, StoryGameScreen, types)
 
-**Total: 24 new/modified files** (+3 from Phase 3 Week 6-7)
+**Total: 27 new/modified files** (+3 backend + 3 frontend from Phase 3 Week 6-7)
 
 ### Git History
 
@@ -219,9 +237,9 @@ Narrative Generation → Agent Intervention Check → Decision Making → Safety
 - Phase 1: 3 commits
 - Phase 2: 2 commits
 - Phase 3 Week 5: 1 commit
-- Phase 3 Week 6-7: 1 commit
+- Phase 3 Week 6-7: 3 commits (backend + docs + frontend)
 - Documentation: Multiple commits
-- **Total: 21+ commits**
+- **Total: 24+ commits**
 
 ### Test Coverage
 
@@ -544,5 +562,5 @@ def mock_llm_adapter():
 
 **Created**: 2025-11-28
 **Last Updated**: 2025-11-28
-**Status**: ✅ **Agent Integration Complete** (Phases 1-2 + Phase 3 Week 5-7)
-**Next Steps**: Optional SSE real-time streaming (Phase 4 Week 8-10) or Frontend Agent UI
+**Status**: ✅ **Agent Integration Complete with UI** (Phases 1-2 + Phase 3 Week 5-7)
+**Next Steps**: Optional SSE real-time streaming (Phase 4 Week 8-10)
