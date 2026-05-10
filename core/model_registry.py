@@ -21,12 +21,13 @@ _ALIASES = {
     "BAAI/bge-m3": "language/sentence_transformers/bge-m3",
     "BAAI/bge-base-en-v1.5": "language/sentence_transformers/bge-m3",
     "BAAI/bge-reranker-v2-m3": "language/reranker/bge-reranker-large",
-    "google/gemma-4-31B-it-GGUF": "language/vlm/gemma-4-31B-it-GGUF",
-    "gemma-4-31B-it-GGUF": "language/vlm/gemma-4-31B-it-GGUF",
-    "llava-hf/llava-1.5-7b-hf": "language/vlm/gemma-4-31B-it-GGUF",
-    "Qwen/Qwen-VL-Chat": "language/vlm/gemma-4-31B-it-GGUF",
-    "Qwen/Qwen2-VL-7B-Instruct": "language/vlm/gemma-4-31B-it-GGUF",
-    "Salesforce/blip2-opt-2.7b": "language/vlm/gemma-4-31B-it-GGUF",
+    # VLM aliases now route to shared Qwen3.6-27B (llama.cpp serves it)
+    "google/gemma-4-31B-it-GGUF": "language/llm/Qwen3.6-27B-GGUF",
+    "gemma-4-31B-it-GGUF": "language/llm/Qwen3.6-27B-GGUF",
+    "llava-hf/llava-1.5-7b-hf": "language/llm/Qwen3.6-27B-GGUF",
+    "Qwen/Qwen-VL-Chat": "language/llm/Qwen3.6-27B-GGUF",
+    "Qwen/Qwen2-VL-7B-Instruct": "language/llm/Qwen3.6-27B-GGUF",
+    "Salesforce/blip2-opt-2.7b": "language/llm/Qwen3.6-27B-GGUF",
     "stabilityai/stable-diffusion-xl-base-1.0": (
         "diffusion/stable-diffusion/stable-diffusion-xl-base-1.0"
     ),

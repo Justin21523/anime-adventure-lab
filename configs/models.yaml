@@ -3,20 +3,20 @@
 
 vlm:
   caption:
-    default_model: "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF"
+    default_model: "Qwen3.6-27B-Q4_K_M.gguf"
     available_models:
-      - name: "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF"
+      - name: "Qwen3.6-27B-Q4_K_M.gguf"
         type: "blip2"
         size_gb: 5.4
         vram_gb: 6.0
         description: "BLIP-2 with OPT-2.7B, good balance of quality and speed"
         recommended: true
-      - name: "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF"
+      - name: "Qwen3.6-27B-Q4_K_M.gguf"
         type: "blip2"
         size_gb: 12.6
         vram_gb: 14.0
         description: "BLIP-2 with OPT-6.7B, higher quality captions"
-      - name: "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF"
+      - name: "Qwen3.6-27B-Q4_K_M.gguf"
         type: "blip2"
         size_gb: 15.8
         vram_gb: 16.0
@@ -28,16 +28,16 @@ vlm:
         description: "Original BLIP, lightweight and fast"
 
   vqa:
-    default_model: "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF"
+    default_model: "Qwen3.6-27B-Q4_K_M.gguf"
     available_models:
-      - name: "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF"
+      - name: "Qwen3.6-27B-Q4_K_M.gguf"
         type: "llava"
         size_gb: 13.5
         vram_gb: 14.0
         description: "LLaVA 1.5 7B, excellent Chinese/English VQA"
         recommended: true
         supports_chinese: true
-      - name: "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF"
+      - name: "Qwen3.6-27B-Q4_K_M.gguf"
         type: "llava"
         size_gb: 26.0
         vram_gb: 28.0
@@ -50,7 +50,7 @@ vlm:
         description: "Qwen-VL Chat, optimized for Chinese"
         supports_chinese: true
         chinese_optimized: true
-      - name: "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF"
+      - name: "Qwen3.6-27B-Q4_K_M.gguf"
         type: "blip2"
         size_gb: 5.4
         vram_gb: 6.0
