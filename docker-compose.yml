@@ -1,13 +1,22 @@
+# Anime-Adventure-Lab — Docker Compose (AMD ROCm host)
+#
+# Architecture:
+#   - API + Redis + Frontend → containers (CPU-only)
+#   - Celery workers → host conda env (uses ROCm GPU directly)
+#
+# To start workers on host:
+#   source ~/miniconda3/etc/profile.d/conda.sh
+#   conda activate rocm-pytorch-r9700
+#   cd /mnt/c/ai_projects/anime-adventure-lab
+#   bash scripts/run-worker.sh generation   # or postprocess, training
+#
+# Or use the all-in-one start:
+#   bash start.sh
+
 name: anime-adventure-lab
 
-x-backend-build: &backend_build
-  context: .
-  dockerfile: Dockerfile
-  args:
-    REQUIREMENTS_FILE: ${BACKEND_REQUIREMENTS_FILE:-requirements-docker.txt}
-
 x-backend-env: &backend_env
-  # Container-internal AI_WAREHOUSE roots (bind-mounted from host paths below)
+  # Container-internal AI_WAREHOUSE roots (bind-mounted from host)
   AI_CACHE_ROOT: /warehouse/ai_cache
   AI_MODELS_ROOT: /warehouse/ai_models
   AI_OUTPUT_ROOT: /warehouse/ai_output
@@ -21,19 +30,19 @@ x-backend-env: &backend_env
   CELERY_BROKER_URL: redis://redis:6379/0
   CELERY_RESULT_BACKEND: redis://redis:6379/0
 
-  # Persist sqlite DB into outputs by default (override with DATABASE_URL for Postgres)
+  # SQLite DB in outputs (override with DATABASE_URL for Postgres)
   DATABASE_URL: ${DATABASE_URL:-sqlite:////warehouse/ai_output/saga_forge.db}
 
-  # Safe defaults (mock heavy models unless explicitly disabled)
-  T2I_MOCK: ${T2I_MOCK:-1}
-  VLM_MOCK: ${VLM_MOCK:-1}
-  CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}
+  # Mock heavy models in API container (workers run real inference on host)
+  T2I_MOCK: "1"
+  VLM_MOCK: "1"
+  LLM_MOCK: "1"
 
-  # llama.cpp server (OpenClaw shared backend)
-  LLM_BACKEND: ${LLM_BACKEND:-llamacpp}
-  LLAMA_CPP_SERVER: ${LLAMA_CPP_SERVER:-1}
+  # llama.cpp server (external, on host)
+  LLM_BACKEND: llamacpp
+  LLAMA_CPP_SERVER: "1"
   LLAMA_SERVER_URL: ${LLAMA_SERVER_URL:-http://host.docker.internal:8080}
-  LLAMA_SERVER_TIMEOUT: ${LLAMA_SERVER_TIMEOUT:-300}
+  LLAMA_SERVER_TIMEOUT: "300"
 
 x-backend-volumes: &backend_volumes
   - ${AI_CACHE_ROOT:-./warehouse/ai_cache}:/warehouse/ai_cache
@@ -44,9 +53,6 @@ services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
-    # No host port mapping needed — containers communicate via Docker network
-    # ports:
-    #   - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -56,7 +62,11 @@ services:
       retries: 20
 
   api:
-    build: *backend_build
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        REQUIREMENTS_FILE: ${BACKEND_REQUIREMENTS_FILE:-requirements-docker.txt}
     environment:
       <<: *backend_env
       API_HOST: 0.0.0.0
@@ -69,95 +79,12 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    # GPU not required for API — LLM runs via llama.cpp server (HTTP)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s
       timeout: 10s
       retries: 30
-      start_period: 600s
-    restart: unless-stopped
-
-  worker-generation:
-    build: *backend_build
-    environment:
-      <<: *backend_env
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-2}
-    volumes: *backend_volumes
-    depends_on:
-      redis:
-        condition: service_healthy
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    command: ["celery", "-A", "workers.celery_app:celery_app", "worker", "-l", "INFO", "--queues=generation", "--concurrency=2"]
-    restart: unless-stopped
-
-  worker-postprocess:
-    build: *backend_build
-    environment:
-      <<: *backend_env
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-      CELERY_WORKER_CONCURRENCY: "1"
-    volumes: *backend_volumes
-    depends_on:
-      redis:
-        condition: service_healthy
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    command: ["celery", "-A", "workers.celery_app:celery_app", "worker", "-l", "INFO", "--queues=postprocess", "--concurrency=1"]
-    restart: unless-stopped
-
-  worker-training:
-    build: *backend_build
-    environment:
-      <<: *backend_env
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-      CELERY_WORKER_CONCURRENCY: ${CELERY_TRAIN_CONCURRENCY:-1}
-    volumes: *backend_volumes
-    depends_on:
-      redis:
-        condition: service_healthy
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    command: ["celery", "-A", "workers.celery_app:celery_app", "worker", "-l", "INFO", "--queues=training", "--concurrency=1"]
-    restart: unless-stopped
-
-  flower:
-    build: *backend_build
-    environment:
-      <<: *backend_env
-    ports:
-      - "5555:5555"
-    depends_on:
-      redis:
-        condition: service_healthy
-    command: ["celery", "-A", "workers.celery_app:celery_app", "flower", "--port=5555", "--basic_auth=admin:admin"]
+      start_period: 120s
     restart: unless-stopped
 
   frontend:
@@ -172,7 +99,32 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+# ─────────────────────────────────────────────────────────────
+# Celery workers are NOT run in Docker on ROCm hosts.
+# Run them natively on the host (see scripts/run-worker.sh).
+# Uncomment below only if you have a ROCm-enabled Docker setup.
+# ─────────────────────────────────────────────────────────────
+#
+#  worker-generation:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile
+#    environment:
+#      <<: *backend_env
+#      T2I_MOCK: "0"
+#      VLM_MOCK: "0"
+#      CELERY_WORKER_CONCURRENCY: "2"
+#      HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+#    volumes: *backend_volumes
+#    devices:
+#      - /dev/kfd:/dev/kfd
+#      - /dev/dri:/dev/dri
+#    depends_on:
+#      redis:
+#        condition: service_healthy
+#    command: ["celery", "-A", "workers.celery_app:celery_app", "worker", "-l", "INFO", "--queues=generation", "--concurrency=2"]
+#    restart: unless-stopped
+
 volumes:
   redis_data:
     driver: local
-  frontend_node_modules:
