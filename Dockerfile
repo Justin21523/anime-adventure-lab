@@ -34,6 +34,8 @@ RUN pip install -r requirements.txt && pip cache purge 2>/dev/null; true
 
 COPY . .
 
+COPY . .
+
 RUN mkdir -p /warehouse/ai_cache /warehouse/ai_models /warehouse/ai_output /app/logs
 
 ENV PYTHONPATH=/app \

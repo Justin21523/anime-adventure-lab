@@ -84,33 +84,38 @@ class ModelConfig(BaseSettings):
     enable_vae_slicing: bool = Field(default=True, description="Enable VAE slicing")
     enable_cpu_offload: bool = Field(default=True, description="Enable CPU offload")
 
-    # Default models
+    # Default models — point to locally available paths or llama.cpp model IDs
     default_llm: str = Field(
-        default="Qwen/Qwen2.5-7B-Instruct", description="Default LLM model"
+        default="Qwen3.6-27B-Q4_K_M.gguf", description="Default LLM (llama.cpp)"
     )
     default_embedding: str = Field(
-        default="BAAI/bge-m3", description="Default embedding model"
+        default="/mnt/c/ai_models/language/sentence_transformers/bge-m3",
+        description="Default embedding model",
     )
     default_sd_model: str = Field(
-        default="stabilityai/stable-diffusion-xl-base-1.0", description="Default SD model"
+        default="/mnt/c/ai_models/diffusion/stable-diffusion/stable-diffusion-xl-base-1.0",
+        description="Default SD model",
     )
     default_vlm_model: str = Field(
-        default="/mnt/c/ai_models/language/vlm/gemma-4-E4B-it",
+        default="/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF",
         description="Default VLM model",
     )
 
     # Model specific settings
     caption_model: str = Field(
-        default="/mnt/c/ai_models/language/vlm/gemma-4-E4B-it",
+        default="/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF",
         description="Caption model",
     )
     vqa_model: str = Field(
-        default="/mnt/c/ai_models/language/vlm/gemma-4-E4B-it",
+        default="/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF",
         description="VQA model",
     )
-    chat_model: str = Field(default="Qwen/Qwen2.5-7B-Instruct", description="Chat model")
+    chat_model: str = Field(
+        default="Qwen3.6-27B-Q4_K_M.gguf", description="Chat model (llama.cpp)"
+    )
     embedding_model: str = Field(
-        default="BAAI/bge-base-en-v1.5", description="Embedding model"
+        default="/mnt/c/ai_models/language/sentence_transformers/bge-m3",
+        description="Embedding model",
     )
 
     # Game settings

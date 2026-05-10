@@ -13,7 +13,7 @@ low_vram: true # Enable memory optimizations
 models:
   # BLIP-2 Models (recommended for low VRAM)
   blip2:
-    model_name: "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it" # Smaller than 6.7b variant
+    model_name: "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF" # Smaller than 6.7b variant
     quantization: "4bit" # 4bit, 8bit, none
     torch_dtype: "float16"
     load_in_4bit: true
@@ -30,7 +30,7 @@ models:
 
   # Alternative smaller models
   blip2_small:
-    model_name: "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it" # Even smaller
+    model_name: "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF" # Even smaller
     quantization: "4bit"
     torch_dtype: "float16"
 
@@ -186,6 +186,6 @@ environments:
   testing:
     models:
       blip2:
-        model_name: "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it" # Consistent for tests
+        model_name: "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF" # Consistent for tests
     memory:
       auto_unload: false # Keep loaded for faster tests

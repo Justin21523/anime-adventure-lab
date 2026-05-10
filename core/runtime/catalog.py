@@ -46,7 +46,7 @@ def load_runtime_preset_catalog() -> Dict[str, Any]:
                 "name": "Default",
                 "description": "Fallback runtime preset",
                 "llm": {
-                    "model_name": "Qwen/Qwen2.5-7B-Instruct",
+                    "model_name": "Qwen3.6-27B-Q4_K_M.gguf",
                     "torch_dtype": "float16",
                     "device_map": "auto",
                     "use_quantization": True,
