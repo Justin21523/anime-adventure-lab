@@ -97,17 +97,17 @@ class ModelConfig(BaseSettings):
         description="Default SD model",
     )
     default_vlm_model: str = Field(
-        default="/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF",
+        default="Qwen3.6-27B-Q4_K_M.gguf",
         description="Default VLM model",
     )
 
     # Model specific settings
     caption_model: str = Field(
-        default="/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF",
+        default="Qwen3.6-27B-Q4_K_M.gguf",
         description="Caption model",
     )
     vqa_model: str = Field(
-        default="/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF",
+        default="Qwen3.6-27B-Q4_K_M.gguf",
         description="VQA model",
     )
     chat_model: str = Field(

@@ -19,11 +19,20 @@ import types
 # Inject a minimal torch stub if not available (API uses llama.cpp server, not torch)
 if "torch" not in sys.modules:
     _fake_torch = types.ModuleType("torch")
-    _fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
+    _fake_cuda = types.SimpleNamespace()
+    _fake_cuda.is_available = lambda: False
+    _fake_torch.cuda = _fake_cuda
     _fake_torch.__version__ = "2.0.0+cpu"
-    # Common attributes that config.py and others expect
-    for _attr in ["float16", "float32", "bfloat16", "device", "Tensor", "nn", "optim", "load", "save"]:
-        setattr(_fake_torch, _attr, type('T', (), {}()))
+    _fake_torch.device = types.SimpleNamespace()
+    _fake_torch.Tensor = object
+    _fake_torch.nn = types.SimpleNamespace()
+    _fake_torch.optim = types.SimpleNamespace()
+    _fake_torch.float16 = None
+    _fake_torch.float32 = float
+    _fake_torch.bfloat16 = None
+    _fake_torch.load = lambda *a, **k: None
+    _fake_torch.save = lambda *a, **k: None
+    _fake_torch.manual_seed = lambda *a: None
     sys.modules["torch"] = _fake_torch
 
 try:
