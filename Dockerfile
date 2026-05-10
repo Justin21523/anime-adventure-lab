@@ -1,14 +1,18 @@
-# Dockerfile for Anime-Adventure-Lab
+# Dockerfile for Anime-Adventure-Lab (CPU-only / API container)
+#
+# GPU workloads (T2I, VLM, training) are NOT run inside this container.
+# On AMD ROCm hosts, run Celery workers natively in the host conda env
+# (see scripts/run-worker.sh).
+#
+# This image builds the FastAPI API server + Redis-dependent services.
 
 FROM python:3.10-slim
 
-# Set working directory
 WORKDIR /app
 
-# Allow choosing a requirements file at build time (e.g. requirements-docker.txt)
-ARG REQUIREMENTS_FILE=requirements.txt
+ARG REQUIREMENTS_FILE=requirements-docker.txt
 
-# Install system dependencies
+# System deps (no GPU drivers needed — API is CPU-only)
 RUN apt-get update && apt-get install -y \
     build-essential \
     git \
@@ -22,20 +26,16 @@ RUN apt-get update && apt-get install -y \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
 COPY ${REQUIREMENTS_FILE} ./requirements.txt
 
-# Install Python dependencies (limit parallelism to avoid OOM)
 ENV PIP_NO_CACHE_DIR=1 PIP_MAX_WORKERS=1
+# Install without torch/xformers — those live on the host for workers
 RUN pip install -r requirements.txt && pip cache purge 2>/dev/null; true
 
-# Copy application code
 COPY . .
 
-# Create necessary directories
 RUN mkdir -p /warehouse/ai_cache /warehouse/ai_models /warehouse/ai_output /app/logs
 
-# Set environment variables
 ENV PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
     AI_CACHE_ROOT=/warehouse/ai_cache \
@@ -46,12 +46,13 @@ ENV PYTHONPATH=/app \
     TORCH_HOME=/warehouse/ai_cache/torch \
     XDG_CACHE_HOME=/warehouse/ai_cache
 
-# Expose ports
+# Default LLM backend: external llama.cpp server (HTTP)
+ENV LLM_BACKEND=llamacpp \
+    LLAMA_CPP_SERVER=1
+
 EXPOSE 8000
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/healthz || exit 1
 
-# Default command
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
