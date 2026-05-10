@@ -16,8 +16,8 @@ training:
 dreambooth:
   instance_prompt: "a photo of sks person"
   class_prompt: "a photo of person"
-  instance_data_dir: "${AI_CACHE_ROOT}/datasets/dreambooth/instance"
-  class_data_dir: "${AI_CACHE_ROOT}/datasets/dreambooth/class"
+  instance_data_dir: "${AI_DATASETS_ROOT}/dreambooth/instance"
+  class_data_dir: "${AI_DATASETS_ROOT}/dreambooth/class"
   num_class_images: 200
   prior_loss_weight: 1.0
 
@@ -28,5 +28,5 @@ optimization:
   train_text_encoder: false
 
 output:
-  output_dir: "${AI_CACHE_ROOT}/models/dreambooth"
+  output_dir: "${AI_OUTPUT_ROOT}/training/dreambooth"
   save_model_card: true

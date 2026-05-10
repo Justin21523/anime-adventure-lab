@@ -40,14 +40,21 @@ from api.routers import (
     controlnet_router,
     export_router,
     finetune_router,
+    jobs_router,
     llm_router,
     lora_router,
+    queue_router,
+    runtime_router,
+    ws_router,
     monitoring_router,
     performance_router,
     safety_router,
     story_router,
     t2i_router,
     vlm_router,
+    worlds_router,
+    datasets_router,
+    models_router,
 )
 
 
@@ -67,18 +74,31 @@ async def lifespan(app: FastAPI):
     # Load configuration
     config = get_config()
     setup_logging(config)
+
+    # Temporary: Enable DEBUG logging for turn processing debugging
+    import logging
+    logging.getLogger().setLevel(logging.DEBUG)
+    logging.getLogger('core.story').setLevel(logging.DEBUG)
+    logging.getLogger('api.routers').setLevel(logging.DEBUG)
+
     app.state.config = config
 
     # Bootstrap shared cache
-    cache = bootstrap_cache()
-    app.state.cache = cache
+    try:
+        cache = bootstrap_cache()
+        app.state.cache = cache
+    except Exception as e:
+        logger.error(f"❌ FATAL: Failed to bootstrap shared cache: {e}", exc_info=True)
+        # Don't re-raise immediately, try to continue or provide better error
+        raise
 
     logger.info(
         f"✅ Multi-Modal Lab API ready at http://{config.api.host}:{config.api.port}"
     )
 
-    # Pre-load critical models if configured
-    if config.get_feature_flag("preload_models"):
+    # Pre-load critical models only when explicitly configured. Heavy local
+    # models should not block API startup; routers load them lazily on demand.
+    if bool(config.get("features.preload_models", False)):
         try:
             vlm_engine = get_vlm_engine()
             vlm_engine.load_caption_model()
@@ -182,12 +202,19 @@ def create_app() -> FastAPI:
 
     # Training and export routers
     app.include_router(finetune_router, prefix=API_PREFIX, tags=["Finetune"])
+    app.include_router(jobs_router, prefix=API_PREFIX, tags=["Jobs"])
     app.include_router(export_router, prefix=API_PREFIX, tags=["Export"])
+    app.include_router(queue_router, prefix=API_PREFIX, tags=["Queue"])
 
     # Model-specific routers
     app.include_router(llm_router, prefix=API_PREFIX, tags=["LLM"])
     app.include_router(vlm_router, prefix=API_PREFIX, tags=["VLM"])
+    app.include_router(runtime_router, prefix=API_PREFIX, tags=["Runtime"])
     app.include_router(story_router, prefix=API_PREFIX, tags=["Story"])
+    app.include_router(worlds_router, prefix=API_PREFIX, tags=["Worlds"])
+    app.include_router(datasets_router, prefix=API_PREFIX, tags=["Datasets"])
+    app.include_router(models_router, prefix=API_PREFIX, tags=["Models"])
+    app.include_router(ws_router, prefix=API_PREFIX, tags=["WebSocket"])
 
     # Root redirect
     @app.get("/")
@@ -200,6 +227,11 @@ def create_app() -> FastAPI:
             "health_check": f"{API_PREFIX}/health",
             "status": f"{API_PREFIX}/status",
         }
+
+    @app.get("/healthz", include_in_schema=False)
+    async def healthz():
+        """Lightweight health check for Docker/K8s."""
+        return {"status": "healthy"}
 
     return app
 

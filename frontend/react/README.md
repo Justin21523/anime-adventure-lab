@@ -4,7 +4,7 @@ Modern React + TypeScript frontend for the Anime Adventure Lab backend.
 
 ## 📋 Overview
 
-This is a complete React-based UI replacement for the existing Gradio interface, providing:
+This is the primary React-based UI for the backend (Gradio 已移除), providing:
 - Story gameplay interface (Phase 1 MVP)
 - Admin dashboard for RAG, Agent, Batch, T2I management
 - Real-time updates via SSE streaming
@@ -267,7 +267,6 @@ More components will be added as needed.
 - [ ] Code splitting
 - [ ] Performance optimization
 - [ ] Production deployment
-- [ ] Gradio removal
 
 ## ⚠️ Important Notes
 

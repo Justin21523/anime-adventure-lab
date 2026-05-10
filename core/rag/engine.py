@@ -10,12 +10,15 @@ from typing import Any, Dict, List, Optional
 
 import faiss
 import numpy as np
-import opencc
 import torch
-from rank_bm25 import BM25Okapi
+try:
+    from rank_bm25 import BM25Okapi  # type: ignore
+except Exception:  # noqa: BLE001
+    BM25Okapi = None  # type: ignore
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModel, AutoTokenizer
 
+from .reranker import CrossEncoderReranker
 from ..exceptions import (
     DocumentIndexError,
     EmbeddingError,
@@ -24,8 +27,23 @@ from ..exceptions import (
 )
 from ..config import get_config
 from ..shared_cache import get_shared_cache
+from ..model_registry import resolve_model_path
 
 logger = logging.getLogger(__name__)
+
+try:
+    import opencc  # type: ignore
+except Exception:  # noqa: BLE001
+    opencc = None  # type: ignore
+
+
+def _resolve_device(device: str) -> str:
+    raw = str(device or "").strip().lower()
+    if raw == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if raw.startswith("cuda"):
+        return "cuda"
+    return "cpu"
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +103,10 @@ class SearchResult:
     document: Document
     score: float
     rank: int
+    semantic_score: Optional[float] = None
+    bm25_score: Optional[float] = None
+    combined_score: Optional[float] = None
+    rerank_score: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -168,8 +190,20 @@ class ChineseRAGEngine:
         self.cache = get_shared_cache()
 
         # Model configuration
-        self.embedding_model_name = (
-            embedding_model or self.config.model.embedding_model  # type: ignore[attr-defined]
+        rag_cfg = getattr(self.config, "rag", None)
+        self.embedding_model_name = embedding_model or getattr(
+            rag_cfg, "embedding_model", None
+        ) or self.config.model.embedding_model  # type: ignore[attr-defined]
+        self.reranker_model_name = str(getattr(rag_cfg, "reranker_model", "") or "").strip()
+        self.enable_rerank = bool(getattr(rag_cfg, "enable_rerank", False))
+        self.rerank_top_k = int(getattr(rag_cfg, "rerank_top_k", 0) or 0)
+        self.hybrid_alpha = float(getattr(rag_cfg, "hybrid_alpha", 1.0) or 1.0)
+        self._embedding_device = _resolve_device(getattr(rag_cfg, "device", "cpu"))
+        self._reranker = CrossEncoderReranker(
+            self.reranker_model_name,
+            cache_dir=Path(self.cache.get_path("MODELS_RERANKER")),
+            device=str(getattr(rag_cfg, "reranker_device", "cpu") or "cpu"),
+            max_seq_length=int(getattr(rag_cfg, "max_seq_length", 512) or 512),
         )
         self._embedding_model: Optional[Any] = None
         self._tokenizer: Optional[AutoTokenizer] = None
@@ -183,7 +217,7 @@ class ChineseRAGEngine:
 
         # Index parameters
         self.embedding_dim: int = 768  # default, will be overwritten on model load
-        self.max_chunk_size: int = 500  # characters per chunk
+        self.max_chunk_size: int = int(getattr(rag_cfg, "chunk_size", 500) or 500)  # characters per chunk
 
         # BM25 for optional lexical / hybrid search
         self.bm25: Optional[BM25Okapi] = None
@@ -202,14 +236,22 @@ class ChineseRAGEngine:
 
         try:
             cache_dir = self.cache.get_path("MODELS_EMBEDDING")
-            logger.info("Loading embedding model: %s", self.embedding_model_name)
+            local_embedding_model = resolve_model_path(
+                self.embedding_model_name,
+                kind="embedding",
+            )
+            logger.info(
+                "Loading embedding model: %s -> %s",
+                self.embedding_model_name,
+                local_embedding_model,
+            )
 
             # Prefer SentenceTransformer for retrieval
             try:
                 self._embedding_model = SentenceTransformer(
-                    self.embedding_model_name,
+                    local_embedding_model,
                     cache_folder=str(cache_dir),
-                    device=self.config.model.device,
+                    device=self._embedding_device,
                 )
                 self.embedding_dim = (
                     self._embedding_model.get_sentence_embedding_dimension()
@@ -225,16 +267,20 @@ class ChineseRAGEngine:
                 )
 
                 self._tokenizer = AutoTokenizer.from_pretrained(
-                    self.embedding_model_name,
+                    local_embedding_model,
                     cache_dir=str(cache_dir),
+                    local_files_only=True,
                 )
                 self._embedding_model = AutoModel.from_pretrained(
-                    self.embedding_model_name,
+                    local_embedding_model,
                     cache_dir=str(cache_dir),
+                    local_files_only=True,
                     torch_dtype=(
                         torch.float16 if self.config.model.use_fp16 else torch.float32
                     ),
-                    device_map="auto" if torch.cuda.is_available() else None,
+                    device_map="auto"
+                    if torch.cuda.is_available() and self._embedding_device != "cpu"
+                    else None,
                 )
 
                 # Use hidden_size as embedding dimension
@@ -252,38 +298,51 @@ class ChineseRAGEngine:
         if not self._loaded:
             self._load_model()
 
-        try:
-            if isinstance(self._embedding_model, SentenceTransformer):
-                embedding = self._embedding_model.encode(
+        def _do_encode() -> np.ndarray:
+            try:
+                if isinstance(self._embedding_model, SentenceTransformer):
+                    embedding = self._embedding_model.encode(
+                        text,
+                        convert_to_numpy=True,
+                        normalize_embeddings=True,
+                    )
+                    return embedding.astype(np.float32)
+
+                # Transformers path
+                assert self._tokenizer is not None
+                inputs = self._tokenizer(
                     text,
-                    convert_to_numpy=True,
-                    normalize_embeddings=True,
+                    return_tensors="pt",
+                    truncation=True,
+                    padding=True,
+                    max_length=512,
                 )
-                return embedding.astype(np.float32)
 
-            # Transformers path
-            assert self._tokenizer is not None
-            inputs = self._tokenizer(
-                text,
-                return_tensors="pt",
-                truncation=True,
-                padding=True,
-                max_length=512,
-            )
+                device = next(self._embedding_model.parameters()).device  # type: ignore[union-attr]
+                inputs = {k: v.to(device) for k, v in inputs.items()}
 
-            device = next(self._embedding_model.parameters()).device  # type: ignore[union-attr]
-            inputs = {k: v.to(device) for k, v in inputs.items()}
+                with torch.no_grad():
+                    outputs = self._embedding_model(**inputs)  # type: ignore[operator]
+                    # Mean pooling
+                    embedding = outputs.last_hidden_state.mean(dim=1).squeeze(0)
+                    embedding = torch.nn.functional.normalize(embedding, p=2, dim=0)
 
-            with torch.no_grad():
-                outputs = self._embedding_model(**inputs)  # type: ignore[operator]
-                # Mean pooling
-                embedding = outputs.last_hidden_state.mean(dim=1).squeeze(0)
-                embedding = torch.nn.functional.normalize(embedding, p=2, dim=0)
+                return embedding.cpu().numpy().astype(np.float32)
+            except Exception as e:  # noqa: BLE001
+                logger.error("Text encoding failed: %s", e)
+                raise EmbeddingError(f"Encoding failed: {e}")
 
-            return embedding.cpu().numpy().astype(np.float32)
-        except Exception as e:  # noqa: BLE001
-            logger.error("Text encoding failed: %s", e)
-            raise EmbeddingError(f"Encoding failed: {e}")
+        if self._embedding_device == "cuda" and torch.cuda.is_available():
+            try:
+                from core.runtime import get_model_runtime
+
+                runtime = get_model_runtime()
+                with runtime.exclusive_gpu(reason="rag.embed", device="cuda"):
+                    return _do_encode()
+            except Exception:
+                return _do_encode()
+
+        return _do_encode()
 
     def _generate_embedding(self, text: str) -> np.ndarray:
         """
@@ -367,8 +426,22 @@ class ChineseRAGEngine:
             if not content.strip():
                 raise DocumentIndexError(doc_id, "Empty content")
 
-            if doc_id in self.documents:
-                logger.warning("Document %s already exists, updating...", doc_id)
+            base_metadata: Dict[str, Any] = dict(metadata or {})
+            if base_metadata and base_metadata.get("title") is None:
+                # Prefer original filename as a display title when available.
+                try:
+                    base_metadata["title"] = base_metadata.get("original_filename") or base_metadata.get("file_name") or doc_id
+                except Exception:
+                    base_metadata["title"] = doc_id
+
+            # If doc_id already exists (as a logical parent), remove old chunks first to avoid FAISS/doc_id_map drift.
+            replaced = False
+            try:
+                replaced = bool(self.remove_document(doc_id))
+                if replaced:
+                    logger.info("Replacing existing document %s (removed old chunks, will rebuild index)", doc_id)
+            except Exception:
+                replaced = False
 
             # Split into chunks
             chunks = self._chunk_document(content, doc_id)
@@ -378,6 +451,12 @@ class ChineseRAGEngine:
             # Generate embeddings for chunks
             chunk_embeddings: List[np.ndarray] = []
             for chunk in chunks:
+                # Merge caller metadata (world_id, tags, source...) into every chunk.
+                # Keep chunk-specific fields (parent_doc_id, chunk_index...) taking precedence.
+                try:
+                    chunk.metadata = {**base_metadata, **(chunk.metadata or {})}
+                except Exception:
+                    pass
                 embedding = self._generate_embedding(chunk.content)
                 chunk.embedding = embedding
                 chunk_embeddings.append(embedding)
@@ -385,21 +464,22 @@ class ChineseRAGEngine:
                 # Store chunk in document store
                 self.documents[chunk.doc_id] = chunk
 
-            # Prepare FAISS index if needed
-            if self.index is None:
-                self.index = self._create_index()
+            # Keep FAISS/BM25/doc_id_map consistent.
+            # If we replaced an existing document, we must rebuild to remove stale embeddings.
+            if replaced or self.index is None or not self.doc_id_map:
+                self.rebuild_index()
+            else:
+                # Normalize embeddings for cosine similarity
+                embeddings_matrix = np.asarray(chunk_embeddings, dtype=np.float32)
+                faiss.normalize_L2(embeddings_matrix)
 
-            # Normalize embeddings for cosine similarity
-            embeddings_matrix = np.asarray(chunk_embeddings, dtype=np.float32)
-            faiss.normalize_L2(embeddings_matrix)
+                # Add to index & doc_id_map
+                self.index.add(embeddings_matrix)  # type: ignore[union-attr]
+                for chunk in chunks:
+                    self.doc_id_map.append(chunk.doc_id)
 
-            # Add to index & doc_id_map
-            self.index.add(embeddings_matrix)  # type: ignore[union-attr]
-            for chunk in chunks:
-                self.doc_id_map.append(chunk.doc_id)
-
-            # Keep BM25 in sync
-            self._update_bm25()
+                # Keep BM25 in sync
+                self._update_bm25()
 
             logger.info("Added document %s with %d chunks", doc_id, len(chunks))
             return True
@@ -432,45 +512,142 @@ class ChineseRAGEngine:
         query: str,
         top_k: int = 5,
         min_score: float = 0.3,
+        world_id: Optional[str] = None,
+        enable_rerank: Optional[bool] = None,
+        rerank_top_k: Optional[int] = None,
     ) -> List[SearchResult]:
-        """Search for relevant chunks using the FAISS index."""
+        """
+        Search for relevant chunks using:
+        - semantic (FAISS)
+        - optional BM25 hybrid fusion
+        - optional reranker (CrossEncoder)
+        """
         if self.index is None or not self.documents or not self.doc_id_map:
             logger.warning("No documents indexed for search")
             return []
 
         try:
-            query_embedding = self._encode_text(query)
-            query_vector = np.asarray([query_embedding], dtype=np.float32)
-            faiss.normalize_L2(query_vector)
+            requested_k = max(1, int(top_k or 0))
+            enable_rerank_flag = bool(self.enable_rerank) if enable_rerank is None else bool(enable_rerank)
+            enable_rerank_stage = bool(enable_rerank_flag) and bool(self.reranker_model_name)
+            rerank_top = int(self.rerank_top_k or 0) if rerank_top_k is None else int(rerank_top_k or 0)
+            rerank_top = max(0, rerank_top)
+            rerank_k = max(requested_k, rerank_top) if enable_rerank_stage else requested_k
+            max_candidates = len(self.doc_id_map)
+            candidate_k = max(1, min(int(rerank_k), int(max_candidates)))
 
-            k = min(top_k, len(self.doc_id_map))
-            scores, indices = self.index.search(query_vector, k)  # type: ignore[arg-type]
+            target_world = str(world_id or "").strip() or None
 
-            results: List[SearchResult] = []
-            for rank, (score, idx) in enumerate(zip(scores[0], indices[0]), start=1):
-                if idx < 0 or idx >= len(self.doc_id_map):
-                    continue
-                if score < min_score:
-                    continue
+            # When world_id is specified, we need to over-fetch candidates because FAISS cannot
+            # filter by metadata. Keep rerank window bounded by candidate_k, but increase the
+            # retrieval window to avoid "0 hit" caused by cross-world top-k domination.
+            retrieval_k = candidate_k
+            if target_world:
+                oversample = 8
+                retrieval_k = min(max_candidates, max(retrieval_k, int(candidate_k * oversample)))
 
-                chunk_id = self.doc_id_map[idx]
-                document = self.documents.get(chunk_id)
-                if not document:
-                    continue
+            semantic_results = self._semantic_search(query, top_k=retrieval_k)
+            use_bm25 = bool(self.bm25) and float(self.hybrid_alpha) < 1.0
+            bm25_results = self._bm25_search(query, top_k=retrieval_k) if use_bm25 else []
 
-                results.append(
-                    SearchResult(
-                        document=document,
-                        score=float(score),
-                        rank=rank,
-                    )
+            merged: Dict[str, SearchResult] = {}
+
+            def _accept(doc: Document) -> bool:
+                if not target_world:
+                    return True
+                metadata = doc.metadata or {}
+                return (
+                    str(metadata.get("world_id", "default")).strip() == target_world
                 )
 
-            logger.info(
-                "Search for '%s...' returned %d results",
-                query[:50],
-                len(results),
-            )
+            for res in semantic_results:
+                doc = res.document
+                if not _accept(doc):
+                    continue
+                merged[doc.doc_id] = SearchResult(
+                    document=doc,
+                    score=float(res.score),
+                    rank=0,
+                    semantic_score=float(res.score),
+                )
+
+            for res in bm25_results:
+                doc = res.document
+                if not _accept(doc):
+                    continue
+                item = merged.get(doc.doc_id)
+                if item is None:
+                    merged[doc.doc_id] = SearchResult(
+                        document=doc,
+                        score=float(res.score),
+                        rank=0,
+                        semantic_score=None,
+                        bm25_score=float(res.score),
+                    )
+                else:
+                    item.bm25_score = float(res.score)
+
+            if not merged:
+                return []
+
+            max_bm25 = 0.0
+            if use_bm25:
+                max_bm25 = max((x.bm25_score or 0.0) for x in merged.values())
+                if not np.isfinite(max_bm25):
+                    max_bm25 = 0.0
+
+            alpha = float(self.hybrid_alpha)
+            if not np.isfinite(alpha):
+                alpha = 1.0
+            alpha = min(1.0, max(0.0, alpha))
+
+            candidates: List[SearchResult] = []
+            for item in merged.values():
+                semantic_score = float(item.semantic_score or 0.0)
+                if not np.isfinite(semantic_score):
+                    semantic_score = 0.0
+                semantic_score = max(0.0, semantic_score)
+
+                bm25_score = float(item.bm25_score or 0.0)
+                if not np.isfinite(bm25_score):
+                    bm25_score = 0.0
+                bm25_norm = (bm25_score / max_bm25) if (use_bm25 and max_bm25 > 0) else 0.0
+
+                combined = (alpha * semantic_score) + ((1.0 - alpha) * bm25_norm)
+
+                item.semantic_score = semantic_score
+                item.bm25_score = bm25_score if use_bm25 else None
+                item.combined_score = combined
+                item.score = combined
+
+                if combined >= float(min_score or 0.0):
+                    candidates.append(item)
+
+            if not candidates:
+                return []
+
+            candidates.sort(key=lambda x: float(x.combined_score or x.score), reverse=True)
+
+            # Optional reranker stage (best-effort; falls back to combined score)
+            if enable_rerank_stage and self._reranker.is_enabled():
+                rerank_window = min(candidate_k, len(candidates))
+                passages = [c.document.content for c in candidates[:rerank_window]]
+                rerank_scores = self._reranker.rerank(query, passages)
+                if rerank_scores and len(rerank_scores) == len(passages):
+                    for item, score in zip(candidates[:rerank_window], rerank_scores):
+                        item.rerank_score = float(score)
+                        item.score = float(score)
+                    candidates[:rerank_window] = sorted(
+                        candidates[:rerank_window],
+                        key=lambda x: float(x.rerank_score or x.score),
+                        reverse=True,
+                    )
+
+            results = candidates[:requested_k]
+            for i, item in enumerate(results, start=1):
+                item.rank = i
+
+            logger.info("Search '%s...' -> %d results", query[:50], len(results))
             return results
         except Exception as e:  # noqa: BLE001
             logger.error("Search failed for query '%s...': %s", query[:50], e)
@@ -647,6 +824,8 @@ class ChineseRAGEngine:
             "embedding_dim": self.embedding_dim,
             "model_loaded": self._loaded,
             "bm25_enabled": self.bm25 is not None,
+            "enable_rerank": bool(self.enable_rerank),
+            "reranker_model": self.reranker_model_name,
         }
 
     def save_index(self, filepath: Optional[Path] = None) -> Path:

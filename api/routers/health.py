@@ -37,6 +37,7 @@ class HealthResponse(BaseModel):
     system: Dict[str, Any]
     cache: Dict[str, Any]
     config: Dict[str, Any]
+    llm: Dict[str, Any] = {}
 
 
 class SystemInfo(BaseModel):
@@ -100,6 +101,13 @@ async def health_check(cache=Depends(get_cache), settings=Depends(get_settings))
     except Exception as e:
         config_info = {"error": str(e)}
 
+    # LLM health status
+    try:
+        llm = get_llm_adapter()
+        llm_health = llm.health_check()
+    except Exception as e:
+        llm_health = {"error": str(e), "available": False}
+
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now(),
@@ -108,6 +116,7 @@ async def health_check(cache=Depends(get_cache), settings=Depends(get_settings))
         system=system_info,
         cache=cache_info,
         config=config_info,
+        llm=llm_health,
     )
 
 
@@ -118,6 +127,18 @@ async def detailed_status():
     cache = get_shared_cache()
     llm_adapter = get_llm_adapter()
     vlm_engine = get_vlm_engine()
+    t2i_status = None
+    try:
+        from core.t2i.engine import get_t2i_engine
+
+        t2i = get_t2i_engine()
+        t2i_status = {
+            "current_model": getattr(t2i, "current_model_id", None),
+            "device": getattr(t2i, "device", None),
+            "mock_mode": bool(getattr(t2i, "mock_generation", False)),
+        }
+    except Exception:
+        t2i_status = None
 
     return {
         "system": {
@@ -125,13 +146,24 @@ async def detailed_status():
             "cuda_device_count": (
                 torch.cuda.device_count() if torch.cuda.is_available() else 0
             ),
+            "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         },
         "cache": cache.get_cache_stats(),
         "models": {
             "llm_loaded": llm_adapter.list_loaded_models(),
             "vlm_status": vlm_engine.get_status(),
+            "t2i_status": t2i_status,
+            "defaults": {
+                "chat_model": getattr(config.model, "chat_model", None),
+                "sd_model": getattr(config.model, "default_sd_model", None),
+            },
         },
         "config": {
+            "mock_modes": {
+                "llm": os.getenv("LLM_MOCK", "0").strip().lower() in {"1", "true", "yes", "on"},
+                "t2i": os.getenv("T2I_MOCK", "0").strip().lower() in {"1", "true", "yes", "on"},
+                "vlm": os.getenv("VLM_MOCK", "0").strip().lower() in {"1", "true", "yes", "on"},
+            },
             "features": {
                 feature: config.get_feature_flag(feature)
                 for feature in ["caption", "vqa", "chat", "rag", "agent", "game", "t2i"]

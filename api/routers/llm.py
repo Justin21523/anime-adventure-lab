@@ -5,6 +5,8 @@ LLM Management Router
 
 import asyncio
 import logging
+import os
+import torch
 from fastapi import APIRouter, HTTPException
 from core.llm.adapter import get_llm_adapter, reset_llm_adapter
 from schemas.chat import (
@@ -66,11 +68,7 @@ async def load_llm_model(model_name: str, use_mock: bool = False):
         adapter = get_llm_adapter(model_name=model_name, use_mock=use_mock)
         # Trigger load if supported
         if hasattr(adapter, "chat"):
-            try:
-                adapter.chat(messages=[{"role": "user", "content": "ping"}], max_length=8)
-            except Exception:
-                # Ignore load-time failures, rely on list for visibility
-                pass
+            adapter.chat(messages=[{"role": "user", "content": "ping"}], max_length=8)
         return {
             "message": f"Load request for {model_name} accepted",
             "loaded_models": adapter.list_loaded_models(),
@@ -115,7 +113,13 @@ async def llm_status():
             "success": True,
             "loaded_models": loaded,
             "default_model": adapter.model_name if hasattr(adapter, "model_name") else None,
-            "mock_mode": getattr(adapter, "use_mock", None),
+            "mock_mode": bool(
+                getattr(adapter, "use_mock", None)
+                or os.getenv("LLM_MOCK", "0").strip().lower() in {"1", "true", "yes", "on"}
+                or str(getattr(adapter, "model_name", "")).lower() == "mock"
+            ),
+            "cuda_available": torch.cuda.is_available(),
+            "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         }
     except Exception as e:  # noqa: BLE001
         logger.error("Failed to get LLM status: %s", e)

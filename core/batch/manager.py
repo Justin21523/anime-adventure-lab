@@ -7,8 +7,9 @@ from pathlib import Path
 import asyncio
 from ..monitoring.logger import structured_logger
 from schemas.batch import BatchStatus
+from ..shared_cache import get_shared_cache
 
-DEFAULT_CACHE_ROOT = Path("/mnt/c/AI_LLM_projects/ai_warehouse")
+DEFAULT_CACHE_ROOT = Path("/mnt/c/ai_cache")
 
 
 class BatchManager:
@@ -16,14 +17,12 @@ class BatchManager:
 
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
-            import os
-
-            AI_CACHE_ROOT = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_CACHE_ROOT))
-            cache_dir = AI_CACHE_ROOT / "outputs" / "multi-modal-lab"
+            cache = get_shared_cache()
+            cache_dir = Path(cache.get_path("OUTPUT_BATCH"))
             try:
                 cache_dir.mkdir(parents=True, exist_ok=True)
             except PermissionError:
-                cache_dir = Path("/tmp/ai_cache/outputs/multi-modal-lab")
+                cache_dir = Path("/tmp/ai_output/batch")
                 cache_dir.mkdir(parents=True, exist_ok=True)
             db_path = cache_dir / "batch_jobs.db"
 

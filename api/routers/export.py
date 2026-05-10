@@ -13,6 +13,8 @@ from fastapi import APIRouter, HTTPException
 
 # Ensure cache root is writable in restricted environments
 os.environ.setdefault("AI_CACHE_ROOT", "/tmp/ai_cache")
+os.environ.setdefault("AI_MODELS_ROOT", "/tmp/ai_models")
+os.environ.setdefault("AI_OUTPUT_ROOT", "/tmp/ai_output/anime-adventure-lab")
 
 from core.export import get_model_exporter, get_format_converter
 from core.export.story_exporter import StoryExporter, ExportConfig, StorySession, StoryTurn
@@ -107,12 +109,12 @@ def _get_story_exporter():
 
 def _export_root() -> Path:
     """Resolve export root with safe fallback."""
-    cache_root = Path(os.getenv("AI_CACHE_ROOT", "/tmp/ai_cache"))
-    out_dir = cache_root / "outputs" / "exports"
+    output_root = Path(os.getenv("AI_OUTPUT_ROOT", "/tmp/ai_output"))
+    out_dir = output_root / "exports"
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
     except PermissionError:
-        out_dir = Path("/tmp/ai_cache/outputs/exports")
+        out_dir = Path("/tmp/ai_output/exports")
         out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir
 

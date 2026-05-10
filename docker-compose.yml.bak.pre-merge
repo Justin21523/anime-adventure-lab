@@ -1,0 +1,115 @@
+name: anime-adventure-lab
+
+x-backend-build: &backend_build
+  context: .
+  dockerfile: Dockerfile
+  args:
+    REQUIREMENTS_FILE: ${BACKEND_REQUIREMENTS_FILE:-requirements-docker.txt}
+
+x-backend-env: &backend_env
+  # Container-internal AI_WAREHOUSE roots (bind-mounted from host paths below)
+  AI_CACHE_ROOT: /warehouse/ai_cache
+  AI_MODELS_ROOT: /warehouse/ai_models
+  AI_OUTPUT_ROOT: /warehouse/ai_output
+  HF_HOME: /warehouse/ai_cache/huggingface
+  TRANSFORMERS_CACHE: /warehouse/ai_cache/huggingface
+  TORCH_HOME: /warehouse/ai_cache/torch
+  XDG_CACHE_HOME: /warehouse/ai_cache
+
+  # Runtime wiring
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/0
+
+  # Persist sqlite DB into outputs by default (override with DATABASE_URL for Postgres)
+  DATABASE_URL: ${DATABASE_URL:-sqlite:////warehouse/ai_output/saga_forge.db}
+
+  # Safe defaults (mock heavy models unless explicitly disabled)
+  T2I_MOCK: ${T2I_MOCK:-1}
+  VLM_MOCK: ${VLM_MOCK:-1}
+  CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}
+
+x-backend-volumes: &backend_volumes
+  - ${AI_CACHE_ROOT:-./warehouse/ai_cache}:/warehouse/ai_cache
+  - ${AI_MODELS_ROOT:-./warehouse/ai_models}:/warehouse/ai_models
+  - ${AI_OUTPUT_ROOT:-./warehouse/ai_output}:/warehouse/ai_output
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: *backend_build
+    environment:
+      <<: *backend_env
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:3000,http://localhost}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes: *backend_volumes
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 30
+      start_period: 600s
+    restart: unless-stopped
+
+  worker:
+    build: *backend_build
+    environment:
+      <<: *backend_env
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes: *backend_volumes
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: ["celery", "-A", "workers.celery_app:celery_app", "worker", "-l", "INFO"]
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+      target: prod
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  redis_data:

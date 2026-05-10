@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -12,14 +13,27 @@ from typing import Any, Dict, List, Optional
 from core.shared_cache import get_shared_cache
 
 
+def _ensure_writable_dir(path: Path, fallback_name: str) -> Path:
+    """Return a writable directory, falling back to /tmp in restricted local envs."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".write_test"
+        probe.write_text("ok")
+        probe.unlink(missing_ok=True)
+        return path
+    except Exception:
+        fallback = Path("/tmp/ai_output/anime-adventure-lab") / fallback_name
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
 class TrainJobManager:
     """Persist training job metadata without requiring an external queue."""
 
     def __init__(self, cache_root: Optional[str] = None):
         cache = get_shared_cache()
         root = Path(cache_root or cache.get_path("OUTPUT_TRAINING"))
-        self.jobs_dir = Path(root)
-        self.jobs_dir.mkdir(parents=True, exist_ok=True)
+        self.jobs_dir = _ensure_writable_dir(Path(root), "training")
         self.jobs_file = self.jobs_dir / "jobs.json"
         self.jobs: Dict[str, Dict[str, Any]] = {}
         self._load()
@@ -42,6 +56,7 @@ class TrainJobManager:
     def create_job(
         self, job_type: str, payload: Dict[str, Any], status: str = "pending"
     ) -> str:
+        self._load()
         job_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
         self.jobs[job_id] = {
@@ -53,11 +68,15 @@ class TrainJobManager:
             "progress": 0.0,
             "payload": payload,
             "result_path": None,
+            "celery_task_id": None,
+            "cancel_requested": False,
+            "error": None,
         }
         self._save()
         return job_id
 
     def update_job(self, job_id: str, **updates: Any) -> Optional[Dict[str, Any]]:
+        self._load()
         job = self.jobs.get(job_id)
         if not job:
             return None
@@ -68,6 +87,18 @@ class TrainJobManager:
 
     def _auto_progress(self, job: Dict[str, Any]) -> Dict[str, Any]:
         """Lightweight simulated progress for environments without a trainer loop."""
+        payload = job.get("payload") or {}
+        simulate = payload.get("simulate")
+        if simulate is None:
+            job_type = str(job.get("job_type") or "").lower()
+            is_training_job = ("lora" in job_type) or ("finetune" in job_type) or ("train" in job_type)
+            if is_training_job:
+                simulate = os.getenv("TRAIN_SIMULATE", "1").lower() not in {"0", "false", "no"}
+            else:
+                simulate = False
+        if not simulate:
+            return job
+
         status = job.get("status", "pending")
         if status not in {"pending", "running"}:
             return job
@@ -94,16 +125,8 @@ class TrainJobManager:
         self._save()
         return job
 
-    def update_job(self, job_id: str, **updates: Any) -> Optional[Dict[str, Any]]:
-        job = self.jobs.get(job_id)
-        if not job:
-            return None
-        job.update(updates)
-        job["updated_at"] = datetime.utcnow().isoformat()
-        self._save()
-        return job
-
     def get_job(self, job_id: str, auto_progress: bool = True) -> Optional[Dict[str, Any]]:
+        self._load()
         job = self.jobs.get(job_id)
         if not job:
             return None
@@ -112,6 +135,7 @@ class TrainJobManager:
         return job
 
     def list_jobs(self) -> List[Dict[str, Any]]:
+        self._load()
         return [self._auto_progress(job) for job in self.jobs.values()]
 
     def update_job_status(self, job_id: str, status: str, progress: Optional[float] = None, result_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -124,3 +148,7 @@ class TrainJobManager:
         if status in {"completed", "failed", "cancelled"} and "completed_at" not in updates:
             updates["completed_at"] = datetime.utcnow().isoformat()
         return self.update_job(job_id, **updates)
+
+    def request_cancel(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Mark a job as cancel requested (workers may poll this flag)."""
+        return self.update_job(job_id, cancel_requested=True, status="cancelling")

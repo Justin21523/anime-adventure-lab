@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
+from core.shared_cache import get_shared_cache
 from schemas.batch import (
     BatchJobRequest,
     BatchJobResponse,
@@ -21,19 +22,40 @@ from schemas.batch import (
     BatchJobList,
     TaskProgress,
 )
-from workers.tasks import (
-    batch_caption_task,
-    batch_vqa_task,
-    batch_chat_task,
-    get_task_status,
-    cancel_task,
-)
 from core.batch.manager import BatchManager, DEFAULT_CACHE_ROOT
 from core.batch.queue import QueueManager
 
 router = APIRouter(prefix="/batch", tags=["batch"])
 batch_manager = BatchManager()
 queue_manager = QueueManager(batch_manager)
+
+try:
+    from workers.tasks import (
+        batch_caption_task,
+        batch_vqa_task,
+        batch_chat_task,
+        get_task_status,
+        cancel_task,
+    )
+except Exception as exc:  # noqa: BLE001
+    logging.warning("Celery batch tasks unavailable; batch API will use local fallback: %s", exc)
+    batch_caption_task = None
+    batch_vqa_task = None
+    batch_chat_task = None
+
+    def get_task_status(task_id: str) -> Dict[str, Any]:
+        return {
+            "task_id": task_id,
+            "status": "PENDING",
+            "error": "Celery is not installed or not available in this environment",
+        }
+
+    def cancel_task(task_id: str) -> bool:
+        return str(task_id).startswith(("local-", "sim-"))
+
+
+def _celery_available() -> bool:
+    return all((batch_caption_task, batch_vqa_task, batch_chat_task))
 
 
 def _parse_dt(ts: Any) -> Optional[datetime]:
@@ -68,12 +90,12 @@ def _map_status(status: str) -> BatchStatus:
 
 def _write_simulated_results(job_id: str, payload: Dict[str, Any]) -> str:
     """Persist lightweight simulated results for testing/offline runs."""
-    cache_root = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_CACHE_ROOT))
-    out_dir = cache_root / "outputs" / "multi-modal-lab" / "batch_results"
+    cache = get_shared_cache()
+    out_dir = Path(cache.get_path("OUTPUT_BATCH")) / "batch_results"
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
     except PermissionError:
-        out_dir = Path("/tmp/ai_cache/outputs/multi-modal-lab/batch_results")
+        out_dir = Path("/tmp/ai_output/batch/batch_results")
         out_dir.mkdir(parents=True, exist_ok=True)
     results_file = out_dir / f"simulated_results_{job_id}.json"
     with open(results_file, "w", encoding="utf-8") as f:
@@ -133,6 +155,32 @@ async def submit_batch_job(request: BatchJobRequest):
                 processed_items=len(request.inputs),
                 failed_items=0,
                 results_path=results_path,
+            )
+
+        if not _celery_available():
+            task_id = f"local-{job_id}"
+            logging.warning(
+                "Celery is unavailable; creating local pending batch job. "
+                "Use request.simulate=true for immediate local results."
+            )
+            await batch_manager.create_job(
+                job_id=job_id,
+                task_id=task_id,
+                job_type=request.job_type,
+                total_items=len(request.inputs),
+                config=request.config,
+            )
+            await batch_manager.update_job_status(
+                job_id, BatchStatus.PENDING, processed_items=0
+            )
+            return BatchJobResponse(
+                job_id=job_id,
+                task_id=task_id,
+                status=BatchStatus.PENDING,
+                created_at=datetime.utcnow(),
+                total_items=len(request.inputs),
+                processed_items=0,
+                failed_items=0,
             )
 
         # Route to Celery task

@@ -11,12 +11,13 @@ from datetime import datetime
 import uuid
 
 
-DEFAULT_CACHE_ROOT = Path("/mnt/c/AI_LLM_projects/ai_warehouse")
+DEFAULT_CACHE_ROOT = Path("/mnt/c/ai_cache")
 
 from workers.celery_app import celery_app, redis_client
 import os
 from api.dependencies import get_vlm, get_llm
 from core.monitoring.logger import structured_logger
+from core.shared_cache import get_shared_cache
 
 # Initialize engines (will be loaded lazily)
 vlm_engine = None
@@ -55,6 +56,17 @@ def update_task_progress(
         progress_data["partial_results"] = results
 
     redis_client.setex(f"task_progress:{task_id}", 3600, json.dumps(progress_data))
+
+
+def _batch_results_dir() -> Path:
+    cache = get_shared_cache()
+    out_dir = Path(cache.get_path("OUTPUT_BATCH")) / "batch_results"
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        out_dir = Path("/tmp/ai_output/batch/batch_results")
+        out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
 
 
 @celery_app.task(bind=True, name="batch_caption_task")
@@ -111,9 +123,7 @@ def batch_caption_task(
                 structured_logger.error(f"Failed to caption {image_path}: {e}")
 
         # Save results to file
-        AI_CACHE_ROOT = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_CACHE_ROOT))
-        results_dir = AI_CACHE_ROOT / "outputs" / "multi-modal-lab" / "batch_results"
-        results_dir.mkdir(parents=True, exist_ok=True)
+        results_dir = _batch_results_dir()
 
         results_file = results_dir / f"caption_results_{job_id}.json"
         with open(results_file, "w", encoding="utf-8") as f:
@@ -210,9 +220,7 @@ def batch_vqa_task(
                 structured_logger.error(f"Failed VQA for item {i}: {e}")
 
         # Save results
-        AI_CACHE_ROOT = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_CACHE_ROOT))
-        results_dir = AI_CACHE_ROOT / "outputs" / "multi-modal-lab" / "batch_results"
-        results_dir.mkdir(parents=True, exist_ok=True)
+        results_dir = _batch_results_dir()
 
         results_file = results_dir / f"vqa_results_{job_id}.json"
         with open(results_file, "w", encoding="utf-8") as f:
@@ -295,9 +303,7 @@ def batch_chat_task(
                 structured_logger.error(f"Failed chat completion for item {i}: {e}")
 
         # Save results
-        AI_CACHE_ROOT = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_CACHE_ROOT))
-        results_dir = AI_CACHE_ROOT / "outputs" / "multi-modal-lab" / "batch_results"
-        results_dir.mkdir(parents=True, exist_ok=True)
+        results_dir = _batch_results_dir()
 
         results_file = results_dir / f"chat_results_{job_id}.json"
         with open(results_file, "w", encoding="utf-8") as f:

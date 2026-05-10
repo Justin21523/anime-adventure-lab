@@ -209,14 +209,7 @@ class LoRATrainer:
         else:
             self.config = config
 
-        # Check dependencies
-        missing_deps = []
-        missing_deps.append("diffusers")
-        missing_deps.append("peft")
-        missing_deps.append("transformers")
-
-        if missing_deps:
-            raise LoRAError(f"Missing required dependencies: {', '.join(missing_deps)}")
+        # Dependencies are imported at module load; if this file imports, deps exist.
 
         # Initialize accelerator
         self.accelerator = self._create_accelerator()

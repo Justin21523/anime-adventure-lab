@@ -89,15 +89,16 @@ cd anime-adventure-lab
 # 複製環境變數範本
 cp .env.example .env
 
-# 編輯配置（必須設置 AI_CACHE_ROOT）
+# 編輯配置（必須設置 AI_CACHE_ROOT / AI_MODELS_ROOT / AI_OUTPUT_ROOT）
 nano .env
 ```
 
 **最小必要配置**:
 ```bash
 # .env
-AI_CACHE_ROOT=/mnt/c/AI_LLM_projects/ai_warehouse
-AI_WAREHOUSE_HOST=/mnt/c/AI_LLM_projects/ai_warehouse
+AI_CACHE_ROOT=/mnt/c/ai_cache
+AI_MODELS_ROOT=/mnt/c/ai_models
+AI_OUTPUT_ROOT=/mnt/c/ai_output/anime-adventure-lab
 POSTGRES_PASSWORD=your_secure_password
 MINIO_PASSWORD=your_minio_password
 ```
@@ -105,11 +106,11 @@ MINIO_PASSWORD=your_minio_password
 ### 3. 創建模型倉儲目錄
 
 ```bash
-# 創建倉儲目錄
-mkdir -p /mnt/c/AI_LLM_projects/ai_warehouse/cache
+# 創建倉儲目錄（AI_WAREHOUSE 3.0）
+mkdir -p /mnt/c/ai_cache /mnt/c/ai_models /mnt/c/ai_output/anime-adventure-lab
 
 # 設置權限
-chmod -R 755 /mnt/c/AI_LLM_projects/ai_warehouse
+chmod -R 755 /mnt/c/ai_cache /mnt/c/ai_models /mnt/c/ai_output/anime-adventure-lab
 ```
 
 ### 4. 啟動服務
@@ -138,8 +139,7 @@ docker compose ps
 # 測試 API
 curl http://localhost:8000/healthz
 
-# 測試 Gradio UI（如果啟動）
-open http://localhost:7860
+# 前端（Nginx 靜態站點 + API 反代）：預設 http://localhost:3000 （可用 FRONTEND_PORT 調整）
 ```
 
 ## Docker Compose 配置說明
@@ -176,7 +176,7 @@ services:
   minio:     # 物件儲存
   api:       # API 服務器
   worker:    # 背景任務
-  webui:     # Gradio UI（可選）
+  frontend:  # React（建議本機 Vite dev；不一定要放進 compose）
   flower:    # Celery 監控（可選）
 ```
 
@@ -303,7 +303,7 @@ docker compose exec redis redis-cli SAVE
 docker cp $(docker compose ps -q redis):/data/dump.rdb backup_redis.rdb
 
 # 備份倉儲
-tar -czf warehouse_backup.tar.gz /mnt/c/AI_LLM_projects/ai_warehouse
+tar -czf warehouse_backup.tar.gz /mnt/c/ai_cache /mnt/c/ai_models /mnt/c/ai_output/anime-adventure-lab
 ```
 
 **恢復**:
@@ -321,9 +321,16 @@ docker compose restart redis
 ### 核心配置
 
 ```bash
-# 倉儲路徑（必須）
-AI_CACHE_ROOT=/warehouse  # 容器內路徑
-AI_WAREHOUSE_HOST=/mnt/c/AI_LLM_projects/ai_warehouse  # 主機路徑
+# 倉儲路徑（Host 端，用於 bind mount 的來源路徑）
+# - 若不設定，docker-compose.yml 會預設使用專案內的 ./warehouse/*
+AI_CACHE_ROOT=/mnt/c/ai_cache
+AI_MODELS_ROOT=/mnt/c/ai_models
+AI_OUTPUT_ROOT=/mnt/c/ai_output/anime-adventure-lab
+
+# 容器內路徑（由 docker-compose.yml 固定設定）
+# AI_CACHE_ROOT=/warehouse/ai_cache
+# AI_MODELS_ROOT=/warehouse/ai_models
+# AI_OUTPUT_ROOT=/warehouse/ai_output
 
 # 資料庫
 DATABASE_URL=postgresql://saga:password@postgres:5432/sagaforge
@@ -445,11 +452,13 @@ ports:
 **問題**: 權限錯誤
 ```bash
 # 檢查目錄權限
-ls -la /mnt/c/AI_LLM_projects/ai_warehouse
+ls -la /mnt/c/ai_cache
+ls -la /mnt/c/ai_models
+ls -la /mnt/c/ai_output/anime-adventure-lab
 
 # 修復權限
-sudo chown -R $USER:$USER /mnt/c/AI_LLM_projects/ai_warehouse
-chmod -R 755 /mnt/c/AI_LLM_projects/ai_warehouse
+sudo chown -R $USER:$USER /mnt/c/ai_cache /mnt/c/ai_models /mnt/c/ai_output/anime-adventure-lab
+chmod -R 755 /mnt/c/ai_cache /mnt/c/ai_models /mnt/c/ai_output/anime-adventure-lab
 ```
 
 ### GPU 不可用

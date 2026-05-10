@@ -82,6 +82,57 @@ class TextParser(DocumentParser):
         ]
 
 
+class MarkdownParser(DocumentParser):
+    """
+    Markdown parser with header-based semantic chunking.
+    Useful for role settings and world descriptions.
+    """
+
+    def parse(self, file_path: str) -> List[Dict[str, Any]]:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return self.parse_text(content, source=file_path)
+
+    def parse_text(self, text: str, source: str = "manual_entry") -> List[Dict[str, Any]]:
+        import re
+
+        # Split by headers (h1, h2, h3)
+        # Pattern matches # Header, ## Header, etc.
+        sections = re.split(r"(^#+\s+.*$)", text, flags=re.MULTILINE)
+
+        chunks = []
+        current_header = "General"
+        
+        for i, section in enumerate(sections):
+            if not section.strip():
+                continue
+            
+            # If this is a header
+            if re.match(r"^#+\s+", section):
+                current_header = section.strip("# ").strip()
+                continue
+            
+            # This is the content following a header
+            chunks.append({
+                "content": f"{current_header}: {section.strip()}",
+                "metadata": {
+                    "source": source,
+                    "section": current_header,
+                    "type": "markdown",
+                    "chunk_id": len(chunks)
+                }
+            })
+
+        # Fallback if no headers found
+        if not chunks:
+            chunks.append({
+                "content": text.strip(),
+                "metadata": {"source": source, "type": "markdown", "chunk_id": 0}
+            })
+            
+        return chunks
+
+
 class PDFParser(DocumentParser):
     """PDF parser using PyPDF2"""
 

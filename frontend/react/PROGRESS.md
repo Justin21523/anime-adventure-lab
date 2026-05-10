@@ -28,7 +28,7 @@
   - shadcn/ui compatible config
 - [x] Update backend CORS configuration
   - Already configured in `configs/app.yaml`
-  - Supports both React (3000) and Gradio (7860)
+  - Supports React dev server (3000)
 - [x] Create OpenAPI schema generation script
   - `scripts/generate_openapi_schema.py`
   - Generates `openapi.json` from FastAPI app
@@ -247,7 +247,7 @@ frontend/react/
 1. **GPU Training**: All model features use mocks - DO NOT load real models
 2. **API Types**: Always regenerate after backend changes: `npm run generate:api`
 3. **Type Safety**: Use generated types from `src/api/generated/api.ts`
-4. **CORS**: Already configured in backend - supports both React and Gradio
+4. **CORS**: Backend allows `http://localhost:3000`
 
 ## 🔗 Key Files
 
@@ -294,7 +294,6 @@ npm run lint                 # Run ESLint
 - **Plan File**: `/home/justin/.llm_provider/plans/iterative-tumbling-wadler.md`
 - **Backend**: Running on `http://localhost:8000`
 - **Frontend Dev**: `http://localhost:3000`
-- **Gradio UI**: `http://localhost:7860` (will coexist during migration)
 
 ---
 
@@ -304,10 +303,9 @@ npm run lint                 # Run ESLint
 
 ```bash
 # From project root
-cd docker
-docker-compose up -d
+docker compose up -d --build
 
-# Frontend: http://localhost
+# Frontend: http://localhost:3000
 # Backend API: http://localhost:8000
 # API Docs: http://localhost:8000/docs
 ```
@@ -337,7 +335,7 @@ npm run dev
 ✅ Comprehensive UI component library
 
 ### Next Steps
-- **Gradio Removal**: The old Gradio UI can now be safely removed
+- **Gradio Removal**: Completed
 - **Testing**: Add E2E tests with Playwright
 - **Monitoring**: Add frontend error tracking (Sentry)
 - **Analytics**: Add user analytics if needed
@@ -809,4 +807,3 @@ Layer 5: Error Handling (graceful degradation)
 
 **Last Updated**: 2025-11-28 (Phase 3 Week 5 Complete)
 **Status**: ✅ **Core Story-Driven System Complete** - T2I + RAG + Agent Safety Ready for Production
-

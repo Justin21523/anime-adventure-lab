@@ -21,6 +21,7 @@ from transformers import (
 
 from ..config import get_config
 from ..shared_cache import get_shared_cache
+from ..model_registry import resolve_model_path
 from ..exceptions import ModelLoadError, CUDAOutOfMemoryError, handle_cuda_oom
 from .base import BaseLLM
 
@@ -127,57 +128,74 @@ class ModelLoader:
         if load_config is None:
             load_config = self._get_default_config(model_name)
 
-        cache_key = f"{model_name}_{load_config.get_cache_key()}"
+        resolved_model_name = resolve_model_path(model_name, kind="llm")
+        load_config.model_name = resolved_model_name
+        cache_key = f"{resolved_model_name}_{load_config.get_cache_key()}"
 
         # Check if already loaded
         if cache_key in self._loaded_models:
-            logger.info(f"Model {model_name} already loaded, returning cached instance")
+            logger.info(f"Model {resolved_model_name} already loaded, returning cached instance")
             return self._loaded_models[cache_key]
 
         # Check if model is already loaded
         if cache_key in self._model_cache:
-            logger.info(f"Using cached model: {model_name}")
+            logger.info(f"Using cached model: {resolved_model_name}")
             return self._model_cache[cache_key]
 
-        logger.info(f"Loading model: {model_name}")
+        logger.info(f"Loading model: {model_name} -> {resolved_model_name}")
 
-        try:
-            # Clear GPU cache before loading
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+        def _do_load() -> Dict[str, Union[PreTrainedModel, PreTrainedTokenizer]]:
+            try:
+                # Clear GPU cache before loading
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    gc.collect()
+
+                # Load tokenizer first
+                tokenizer = self._load_tokenizer(resolved_model_name, load_config)
+
+                # Load model with optimizations
+                model = self._load_model_with_config(resolved_model_name, load_config)
+
+                # Cache the loaded model
+                model_dict = {"model": model, "tokenizer": tokenizer}
+
+                self._model_cache[cache_key] = model_dict
+                self._config_cache[cache_key] = load_config
+                self._loaded_models[cache_key] = model_dict
+                self._model_configs[cache_key] = load_config
+
+                # Log model info
+                self._log_model_info(model_name, model, load_config)
+
+                # Save loading metadata to cache
+                self._save_model_metadata(cache_key, resolved_model_name, load_config)
+
+                return model_dict
+
+            except Exception as e:
+                logger.error(f"Failed to load model {resolved_model_name}: {e}")
+
+                # Clean up on failure
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 gc.collect()
 
-            # Load tokenizer first
-            tokenizer = self._load_tokenizer(model_name, load_config)
+                raise ModelLoadError(resolved_model_name, str(e))
 
-            # Load model with optimizations
-            model = self._load_model_with_config(model_name, load_config)
+        device_map = str(getattr(load_config, "device_map", "") or "").strip().lower()
+        use_gpu_lock = torch.cuda.is_available() and device_map != "cpu"
+        if use_gpu_lock:
+            try:
+                from core.runtime import get_model_runtime
 
-            # Cache the loaded model
-            model_dict = {"model": model, "tokenizer": tokenizer}
+                runtime = get_model_runtime()
+                with runtime.exclusive_gpu(reason=f"llm.load:{model_name}", device="cuda"):
+                    return _do_load()
+            except Exception:
+                return _do_load()
 
-            self._model_cache[cache_key] = model_dict
-            self._config_cache[cache_key] = load_config
-            self._loaded_models[cache_key] = model_dict
-            self._model_configs[cache_key] = load_config
-
-            # Log model info
-            self._log_model_info(model_name, model, load_config)
-
-            # Save loading metadata to cache
-            self._save_model_metadata(cache_key, model_name, load_config)
-
-            return model_dict
-
-        except Exception as e:
-            logger.error(f"Failed to load model {model_name}: {e}")
-
-            # Clean up on failure
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
-
-            raise ModelLoadError(model_name, str(e))
+        return _do_load()
 
     def _load_tokenizer(
         self, model_name: str, load_config: ModelLoadConfig
@@ -188,7 +206,7 @@ class ModelLoader:
         tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             trust_remote_code=load_config.trust_remote_code,
-            cache_dir=Path(self.cache.cache_root) / "hf",
+            cache_dir=Path(self.cache.get_path("CACHE_HF")),
             **{
                 k: v
                 for k, v in load_config.kwargs.items()
@@ -222,7 +240,7 @@ class ModelLoader:
             "torch_dtype": load_config.torch_dtype,
             "trust_remote_code": load_config.trust_remote_code,
             "low_cpu_mem_usage": load_config.low_cpu_mem_usage,
-            "cache_dir": Path(self.cache.cache_root) / "hf",
+            "cache_dir": Path(self.cache.get_path("CACHE_HF")),
         }
         # Add device map if not CPU-only
         if load_config.device_map != "cpu":
@@ -249,7 +267,7 @@ class ModelLoader:
             minimal_kwargs = {
                 "torch_dtype": torch.float32,
                 "trust_remote_code": True,
-                "cache_dir": Path(self.cache.cache_root) / "hf",
+                "cache_dir": Path(self.cache.get_path("CACHE_HF")),
             }
             model = AutoModelForCausalLM.from_pretrained(model_name, **minimal_kwargs)
 

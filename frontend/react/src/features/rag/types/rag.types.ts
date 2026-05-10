@@ -2,53 +2,80 @@
  * RAG feature types
  */
 
-export interface RAGDocument {
+export interface RAGDocumentInfo {
   doc_id: string
-  filename: string
-  world_id: string
-  chunk_count: number
-  metadata?: Record<string, any>
-  created_at: string
+  title: string
+  chunks: number
+  total_chars: number
+  created_at?: string | null
+  metadata: Record<string, any>
+}
+
+export interface RAGAddDocumentResponse {
+  doc_id: string
+  added: boolean
+  chunks_created?: number | null
+  success?: boolean
+  timestamp?: string
 }
 
 export interface RAGSearchResult {
   doc_id: string
-  chunk_id: string
   content: string
   score: number
-  metadata?: Record<string, any>
+  rank: number
+  metadata: Record<string, any>
 }
 
 export interface RAGStats {
   total_documents: number
   total_chunks: number
-  total_vectors: number
-  index_size_mb: number
-  world_id: string
+  index_size: number
+  embedding_model: string
+  embedding_dim: number
+  model_loaded: boolean
+  success?: boolean
+  timestamp?: string
 }
 
 export interface RAGUploadRequest {
   file: File
   world_id?: string
-  metadata?: Record<string, any>
+  tags?: string
+}
+
+export interface RAGUploadBatchRequest {
+  files: File[]
+  world_id?: string
+  tags?: string
+}
+
+export interface RAGUploadJobResponse {
+  success: boolean
+  job_id: string
+  status?: string
+  [key: string]: any
 }
 
 export interface RAGSearchRequest {
   query: string
   world_id?: string
   top_k?: number
-  score_threshold?: number
+  min_score?: number
 }
 
 export interface RAGSearchResponse {
   results: RAGSearchResult[]
   query: string
-  total_results: number
-  search_time_ms: number
+  total_found: number
+  success?: boolean
+  timestamp?: string
 }
 
 export interface RAGDocumentListResponse {
-  documents: RAGDocument[]
+  documents: RAGDocumentInfo[]
   total: number
-  world_id?: string
+  limit: number
+  offset: number
+  success?: boolean
 }

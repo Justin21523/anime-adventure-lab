@@ -8,13 +8,12 @@ api:
   prefix: "/api/v1"
   cors_origins:
     - "http://localhost:3000"
-    - "http://localhost:7860"
   max_workers: 2
   max_batch_size: 4
   timeout_seconds: 300
 
 cache:
-  ai_cache_root: "/mnt/c/AI_LLM_projects/ai_warehouse"
+  ai_cache_root: "/mnt/c/ai_cache"
   model_cache_ttl: 3600 # seconds
   max_cache_size_gb: 20
 

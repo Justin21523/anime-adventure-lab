@@ -23,6 +23,7 @@ from .adapter import (
     get_llm_adapter,
     get_enhanced_llm_adapter,
 )
+from .llamacpp_server_adapter import LlamaCppServerLLM
 
 
 __all__ = [
@@ -47,6 +48,8 @@ __all__ = [
     "EnhancedTransformersLLM",
     "QwenLLM",
     "LlamaLLM",
+    # llama.cpp server
+    "LlamaCppServerLLM",
     # Main adapter
     "LLMAdapter",
     "EnhancedLLMAdapter",

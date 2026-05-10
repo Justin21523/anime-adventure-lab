@@ -7,6 +7,7 @@ import torch
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
+from ..shared_cache import get_shared_cache
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +16,14 @@ class ModelConfigManager:
     """Model configuration and metadata manager"""
 
     def __init__(self, cache_root: str):
+        self.cache = get_shared_cache()
         self.cache_root = Path(cache_root)
-        self.models_dir = self.cache_root / "models"
-        self.models_dir.mkdir(parents=True, exist_ok=True)
+        self.models_dir = Path(self.cache.get_path("MODELS_TEXT2IMAGE"))
+        try:
+            self.models_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            self.models_dir = Path("/tmp/ai_models/stable-diffusion")
+            self.models_dir.mkdir(parents=True, exist_ok=True)
         self.config_file = self.models_dir / "model_registry.json"
         self.models = {}
         self.loaded_model = None

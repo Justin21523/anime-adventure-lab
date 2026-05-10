@@ -15,8 +15,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ExportConfig:
     output_dir: str = (
-        f"{os.getenv('AI_CACHE_ROOT', '/mnt/c/AI_LLM_projects/ai_warehouse')}"
-        "/outputs/exports"
+        f"{os.getenv('AI_OUTPUT_ROOT', '/tmp/ai_output/anime-adventure-lab')}/exports"
     )
     include_images: bool = True
     include_metadata: bool = True
@@ -58,7 +57,11 @@ class StoryExporter:
     def __init__(self, config: ExportConfig):
         self.config = config
         self.output_dir = Path(config.output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            self.output_dir = Path("/tmp/ai_output/exports")
+            self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Load templates
         self.templates = self._load_templates()

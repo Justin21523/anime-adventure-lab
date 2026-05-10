@@ -1,0 +1,411 @@
+{
+  "session_id": "game_20260425_205402_Jackson",
+  "player_name": "Jackson",
+  "persona_id": "wise_sage",
+  "world_id": "default",
+  "created_at": "2026-04-25T20:54:02.297405",
+  "updated_at": "2026-04-25T21:54:55.648929",
+  "turn_count": 5,
+  "is_active": true,
+  "inventory": [],
+  "history": [
+    {
+      "turn": 0,
+      "timestamp": "2026-04-25T20:54:02.304871",
+      "player_input": "開始故事，玩家 Jackson。",
+      "ai_response": "Mock response to: \n根據以下情境生成故事場景：\n\n當前場景：opening\n當前位置：起點\n時間：清晨\n天氣：晴朗\n情緒氛圍：充滿希望\n在場角色：智者導師\n\n玩家行動：開始故事，玩家 Jackson。\n場景類型：opening\n場景模板：開始一個新的冒險故事，玩家名叫{player_name}。設定：{setting}\n預期情緒：adventurous\n預期長度：medium\n\n生成要求：\n1. 描述生動的場景和環境\n2. 反映玩家行動的結果\n3. 保持與之前情節的連貫性\n4. 為下一步行動設置懸念\n5. 字數控制在 150-300 字之間",
+      "choice_id": null,
+      "scene_id": "opening"
+    },
+    {
+      "turn": 1,
+      "timestamp": "2026-04-25T20:54:15.828375",
+      "player_input": "仔細檢查這個區域",
+      "ai_response": "Mock response to: \n根據以下情境生成故事場景：\n\n當前場景：opening\n當前位置：起點\n時間：清晨\n天氣：晴朗\n情緒氛圍：充滿希望\n之前場景：opening\n在場角色：智者導師\n\n玩家行動：仔細檢查這個區域\n場景類型：resolution\n場景模板：根據玩家的選擇{choice}，描述後果和故事發展\n預期情緒：consequential\n預期長度：medium\n\n生成要求：\n1. 描述生動的場景和環境\n2. 反映玩家行動的結果\n3. 保持與之前情節的連貫性\n4. 為下一步行動設置懸念\n5. 字數控制在 150-300 字之間",
+      "choice_id": "examine_area",
+      "scene_id": "opening",
+      "rag_mode": "auto",
+      "rag_query": "仔細檢查這個區域",
+      "rerank_mode": "auto",
+      "knowledge_used": [],
+      "agent_used": false,
+      "artifacts": {
+        "rag": {
+          "mode": "auto",
+          "query": "仔細檢查這個區域",
+          "rerank_mode": "auto",
+          "enable_rerank": false,
+          "hits": []
+        },
+        "agents": {
+          "used": false,
+          "overlay": null
+        },
+        "t2i": {
+          "scene_image_job_id": null,
+          "scene_image": null
+        },
+        "world": {
+          "world_id": "default",
+          "applied_worldpack_updated_at": "2026-04-25T20:53:44.366411",
+          "worldpack_updated_at_current": "2026-04-25T20:53:44.366411",
+          "synced": true
+        }
+      }
+    },
+    {
+      "turn": 2,
+      "timestamp": "2026-04-25T20:55:15.359732",
+      "player_input": "小心謹慎地行動",
+      "ai_response": "Mock response to: \n根據以下情境生成故事場景：\n\n當前場景：opening\n當前位置：起點\n時間：清晨\n天氣：晴朗\n情緒氛圍：充滿希望\n之前場景：opening -> opening\n在場角色：智者導師\n\n玩家行動：小心謹慎地行動\n場景類型：resolution\n場景模板：根據玩家的選擇{choice}，描述後果和故事發展\n預期情緒：consequential\n預期長度：medium\n\n生成要求：\n1. 描述生動的場景和環境\n2. 反映玩家行動的結果\n3. 保持與之前情節的連貫性\n4. 為下一步行動設置懸念\n5. 字數控制在 150-300 字之間",
+      "choice_id": "careful_approach",
+      "scene_id": "opening",
+      "rag_mode": "auto",
+      "rag_query": "小心謹慎地行動",
+      "rerank_mode": "auto",
+      "knowledge_used": [],
+      "agent_used": false,
+      "artifacts": {
+        "rag": {
+          "mode": "auto",
+          "query": "小心謹慎地行動",
+          "rerank_mode": "auto",
+          "enable_rerank": false,
+          "hits": []
+        },
+        "agents": {
+          "used": false,
+          "overlay": null
+        },
+        "t2i": {
+          "scene_image_job_id": null,
+          "scene_image": null
+        },
+        "world": {
+          "world_id": "default",
+          "applied_worldpack_updated_at": "2026-04-25T20:53:44.366411",
+          "worldpack_updated_at_current": "2026-04-25T20:53:44.366411",
+          "synced": true
+        }
+      }
+    },
+    {
+      "turn": 3,
+      "timestamp": "2026-04-25T21:06:01.260105",
+      "player_input": "小心謹慎地行動",
+      "ai_response": "Mock response to: \n根據以下情境生成故事場景：\n\n當前場景：opening\n當前位置：起點\n時間：清晨\n天氣：晴朗\n情緒氛圍：充滿希望\n之前場景：opening -> opening -> opening\n在場角色：智者導師\n\n玩家行動：小心謹慎地行動\n場景類型：resolution\n場景模板：根據玩家的選擇{choice}，描述後果和故事發展\n預期情緒：consequential\n預期長度：medium\n\n生成要求：\n1. 描述生動的場景和環境\n2. 反映玩家行動的結果\n3. 保持與之前情節的連貫性\n4. 為下一步行動設置懸念\n5. 字數控制在 150-300 字之間",
+      "choice_id": "careful_approach",
+      "scene_id": "opening",
+      "rag_mode": "auto",
+      "rag_query": "小心謹慎地行動",
+      "rerank_mode": "auto",
+      "knowledge_used": [],
+      "agent_used": false,
+      "artifacts": {
+        "rag": {
+          "mode": "auto",
+          "query": "小心謹慎地行動",
+          "rerank_mode": "auto",
+          "enable_rerank": false,
+          "hits": []
+        },
+        "agents": {
+          "used": false,
+          "overlay": null
+        },
+        "t2i": {
+          "scene_image_job_id": null,
+          "scene_image": null
+        },
+        "world": {
+          "world_id": "default",
+          "applied_worldpack_updated_at": "2026-04-25T20:53:44.366411",
+          "worldpack_updated_at_current": "2026-04-25T21:05:28.217461",
+          "synced": false
+        }
+      }
+    },
+    {
+      "turn": 4,
+      "timestamp": "2026-04-25T21:54:55.648918",
+      "player_input": "小心謹慎地行動",
+      "ai_response": "Mock response to: \n根據以下情境生成故事場景：\n\n當前場景：opening\n當前位置：起點\n時間：清晨\n天氣：晴朗\n情緒氛圍：充滿希望\n之前場景：opening -> opening -> opening\n在場角色：智者導師\n\n玩家行動：小心謹慎地行動\n場景類型：resolution\n場景模板：根據玩家的選擇{choice}，描述後果和故事發展\n預期情緒：consequential\n預期長度：medium\n\n生成要求：\n1. 描述生動的場景和環境\n2. 反映玩家行動的結果\n3. 保持與之前情節的連貫性\n4. 為下一步行動設置懸念\n5. 字數控制在 150-300 字之間",
+      "choice_id": "careful_approach",
+      "scene_id": "opening",
+      "rag_mode": "auto",
+      "rag_query": "小心謹慎地行動",
+      "rerank_mode": "auto",
+      "knowledge_used": [],
+      "agent_used": false,
+      "artifacts": {
+        "rag": {
+          "mode": "auto",
+          "query": "小心謹慎地行動",
+          "rerank_mode": "auto",
+          "enable_rerank": false,
+          "hits": []
+        },
+        "agents": {
+          "used": false,
+          "overlay": null
+        },
+        "t2i": {
+          "scene_image_job_id": null,
+          "scene_image": null
+        },
+        "world": {
+          "world_id": "default",
+          "applied_worldpack_updated_at": "2026-04-25T20:53:44.366411",
+          "worldpack_updated_at_current": "2026-04-25T21:54:30.748232",
+          "synced": false
+        }
+      }
+    }
+  ],
+  "scene_id": "opening",
+  "scene_description": "Mock response to: \n根據以下情境生成故事場景：\n\n當前場景：opening\n當前位置：起點\n時間：清晨\n天氣：晴朗\n情緒氛圍：充滿希望\n之前場景：opening -> opening -> opening\n在場角色：智者導師\n\n玩家行動：小心謹慎地行動\n場景類型：resolution\n場景模板：根據玩家的選擇{choice}，描述後果和故事發展\n預期情緒：consequential\n預期長度：medium\n\n生成要求：\n1. 描述生動的場景和環境\n2. 反映玩家行動的結果\n3. 保持與之前情節的連貫性\n4. 為下一步行動設置懸念\n5. 字數控制在 150-300 字之間",
+  "available_choices": [
+    {
+      "choice_id": "careful_approach",
+      "text": "小心謹慎地行動",
+      "type": "action",
+      "difficulty": "medium",
+      "can_choose": true
+    },
+    {
+      "choice_id": "search_for_secrets",
+      "text": "尋找隱藏的秘密",
+      "type": "exploration",
+      "difficulty": "medium",
+      "can_choose": true
+    },
+    {
+      "choice_id": "search_for_secrets",
+      "text": "尋找隱藏的秘密",
+      "type": "exploration",
+      "difficulty": "medium",
+      "can_choose": true
+    },
+    {
+      "choice_id": "examine_area",
+      "text": "仔細檢查這個區域",
+      "type": "exploration",
+      "difficulty": "easy",
+      "can_choose": true
+    }
+  ],
+  "story_context": {
+    "world_id": "default",
+    "runtime_preset_id": "rtx_5080_16gb",
+    "setting": "fantasy",
+    "difficulty": "medium",
+    "player_template_id": "adventurer",
+    "current_location": "起點",
+    "time_of_day": "清晨",
+    "weather": "晴朗",
+    "mood": "充滿希望",
+    "world_name": "預設世界",
+    "world_description": "通用冒險世界（可在「世界工作室」修改）",
+    "world_visual": {
+      "prompt_prefix": "anime style, cinematic lighting, high detail",
+      "negative_prompt": "lowres, blurry, bad anatomy, extra fingers",
+      "base_model": null,
+      "default_loras": []
+    },
+    "worldpack_updated_at": "2026-04-25T20:53:44.366411",
+    "agent_profile": {
+      "enabled": true,
+      "enabled_agents": [],
+      "max_tool_calls": 6,
+      "max_llm_calls": 1,
+      "allowed_tools": []
+    },
+    "rag_auto": true,
+    "rag_available": false,
+    "enrich_with_rag": false,
+    "rerank_mode": "auto"
+  },
+  "current_state": {
+    "scene_id": "opening",
+    "scene_description": "Mock response to: \n根據以下情境生成故事場景：\n\n當前場景：opening\n當前位置：起點\n時間：清晨\n天氣：晴朗\n情緒氛圍：充滿希望\n之前場景：opening -> opening -> opening\n在場角色：智者導師\n\n玩家行動：小心謹慎地行動\n場景類型：resolution\n場景模板：根據玩家的選擇{choice}，描述後果和故事發展\n預期情緒：consequential\n預期長度：medium\n\n生成要求：\n1. 描述生動的場景和環境\n2. 反映玩家行動的結果\n3. 保持與之前情節的連貫性\n4. 為下一步行動設置懸念\n5. 字數控制在 150-300 字之間",
+    "available_choices": [
+      {
+        "choice_id": "careful_approach",
+        "text": "小心謹慎地行動",
+        "type": "action",
+        "difficulty": "medium",
+        "can_choose": true
+      },
+      {
+        "choice_id": "search_for_secrets",
+        "text": "尋找隱藏的秘密",
+        "type": "exploration",
+        "difficulty": "medium",
+        "can_choose": true
+      },
+      {
+        "choice_id": "search_for_secrets",
+        "text": "尋找隱藏的秘密",
+        "type": "exploration",
+        "difficulty": "medium",
+        "can_choose": true
+      },
+      {
+        "choice_id": "examine_area",
+        "text": "仔細檢查這個區域",
+        "type": "exploration",
+        "difficulty": "easy",
+        "can_choose": true
+      }
+    ],
+    "story_context": {
+      "world_id": "default",
+      "runtime_preset_id": "rtx_5080_16gb",
+      "setting": "fantasy",
+      "difficulty": "medium",
+      "player_template_id": "adventurer",
+      "current_location": "起點",
+      "time_of_day": "清晨",
+      "weather": "晴朗",
+      "mood": "充滿希望",
+      "world_name": "預設世界",
+      "world_description": "通用冒險世界（可在「世界工作室」修改）",
+      "world_visual": {
+        "prompt_prefix": "anime style, cinematic lighting, high detail",
+        "negative_prompt": "lowres, blurry, bad anatomy, extra fingers",
+        "base_model": null,
+        "default_loras": []
+      },
+      "worldpack_updated_at": "2026-04-25T20:53:44.366411",
+      "agent_profile": {
+        "enabled": true,
+        "enabled_agents": [],
+        "max_tool_calls": 6,
+        "max_llm_calls": 1,
+        "allowed_tools": []
+      },
+      "rag_auto": true,
+      "rag_available": false,
+      "enrich_with_rag": false,
+      "rerank_mode": "auto"
+    },
+    "flags": {}
+  },
+  "stats": {
+    "health": 100,
+    "energy": 100,
+    "intelligence": 14,
+    "charisma": 10,
+    "luck": 10,
+    "experience": 0,
+    "level": 1
+  },
+  "character_roster": {
+    "player": {
+      "character_id": "player",
+      "name": "Jackson",
+      "role": "player",
+      "personality_traits": [
+        "好奇",
+        "勇敢",
+        "適應力強"
+      ],
+      "speaking_style": "第一人稱視角",
+      "background_story": "一個踏上冒險旅程的Jackson",
+      "motivations": [
+        "探索未知",
+        "成長",
+        "幫助他人"
+      ],
+      "relationships": {},
+      "current_state": "neutral",
+      "current_location": "起始點",
+      "health": 100,
+      "mood": "neutral",
+      "dialogue_history": [],
+      "interaction_count": 0,
+      "last_seen_turn": 0
+    },
+    "wise_guide": {
+      "character_id": "wise_guide",
+      "name": "智者艾莉亞",
+      "role": "companion",
+      "personality_traits": [
+        "智慧",
+        "神秘",
+        "指導性"
+      ],
+      "speaking_style": "充滿智慧且神秘的語調",
+      "background_story": "一位古老的魔法師，掌握著許多秘密知識",
+      "motivations": [
+        "指導後輩",
+        "保護古老知識",
+        "維持平衡"
+      ],
+      "relationships": {
+        "player": "mentor"
+      },
+      "current_state": "neutral",
+      "current_location": "起始點",
+      "health": 100,
+      "mood": "wise",
+      "dialogue_history": [],
+      "interaction_count": 0,
+      "last_seen_turn": 0
+    },
+    "merchant_bob": {
+      "character_id": "merchant_bob",
+      "name": "商人巴布",
+      "role": "npc",
+      "personality_traits": [
+        "精明",
+        "友善",
+        "商業頭腦"
+      ],
+      "speaking_style": "熱情且具說服力的商業語調",
+      "background_story": "一個經驗豐富的旅行商人，足跡遍布各地",
+      "motivations": [
+        "獲利",
+        "建立人脈",
+        "分享故事"
+      ],
+      "relationships": {
+        "player": "business_partner"
+      },
+      "current_state": "happy",
+      "current_location": "起始點",
+      "health": 100,
+      "mood": "cheerful",
+      "dialogue_history": [],
+      "interaction_count": 0,
+      "last_seen_turn": 0
+    },
+    "mysterious_guardian": {
+      "character_id": "mysterious_guardian",
+      "name": "守護者凱爾",
+      "role": "companion",
+      "personality_traits": [
+        "謹慎",
+        "保護欲",
+        "忠誠"
+      ],
+      "speaking_style": "嚴肅且正式的守護者語調",
+      "background_story": "一位神秘的守護者，職責是保護重要的秘密",
+      "motivations": [
+        "守護職責",
+        "保護無辜",
+        "維護正義"
+      ],
+      "relationships": {
+        "player": "protector"
+      },
+      "current_state": "neutral",
+      "current_location": "隱藏地點",
+      "health": 120,
+      "mood": "vigilant",
+      "dialogue_history": [],
+      "interaction_count": 0,
+      "last_seen_turn": 0
+    }
+  }
+}

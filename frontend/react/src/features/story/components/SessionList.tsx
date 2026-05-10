@@ -23,7 +23,7 @@ export function SessionList({ onSelectSession, onNewSession }: SessionListProps)
     )
   }
 
-  const sessions = data?.sessions || []
+  const sessions = data || []
 
   return (
     <div className="space-y-4">
@@ -62,7 +62,7 @@ export function SessionList({ onSelectSession, onNewSession }: SessionListProps)
                   <div className="flex justify-between">
                     <span className="text-slate-400">最後遊玩</span>
                     <span className="text-slate-200 text-xs">
-                      {formatTimestamp(session.last_played)}
+                      {formatTimestamp(session.updated_at)}
                     </span>
                   </div>
                 </div>

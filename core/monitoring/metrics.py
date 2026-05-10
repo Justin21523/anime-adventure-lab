@@ -11,6 +11,7 @@ from pathlib import Path
 from .logger import structured_logger
 import os
 import requests
+from ..shared_cache import get_shared_cache
 
 
 class MetricsCollector:
@@ -18,14 +19,12 @@ class MetricsCollector:
 
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
-            import os
-
-            AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/tmp/ai_cache")
-            cache_dir = Path(AI_CACHE_ROOT) / "outputs" / "multi-modal-lab"
+            cache = get_shared_cache()
+            cache_dir = Path(cache.get_path("LOGS_DIR"))
             try:
                 cache_dir.mkdir(parents=True, exist_ok=True)
             except PermissionError:
-                cache_dir = Path("/tmp/ai_cache/outputs/multi-modal-lab")
+                cache_dir = Path("/tmp/ai_output/logs")
                 cache_dir.mkdir(parents=True, exist_ok=True)
             db_path = cache_dir / "metrics.db"
 

@@ -12,8 +12,12 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
-# Set up minimal environment
-os.environ["AI_CACHE_ROOT"] = "/mnt/c/AI_LLM_projects/ai_warehouse"
+# Set up minimal environment (AI_WAREHOUSE 3.0)
+os.environ.setdefault("AI_CACHE_ROOT", "/mnt/c/ai_cache")
+os.environ.setdefault("AI_MODELS_ROOT", "/mnt/c/ai_models")
+os.environ.setdefault(
+    "AI_OUTPUT_ROOT", "/mnt/c/ai_output/anime-adventure-lab"
+)
 
 
 def test_basic_python():

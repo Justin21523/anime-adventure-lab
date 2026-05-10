@@ -9,14 +9,21 @@ from typing import Dict, Any, List
 from celery import current_task
 
 from workers.celery_app import celery_app
-
-DEFAULT_CACHE_ROOT = Path("/mnt/c/AI_LLM_projects/ai_warehouse")
-AI_CACHE_ROOT = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_CACHE_ROOT))
-BATCH_DIR = AI_CACHE_ROOT / "outputs" / "batch_jobs"
-BATCH_DIR.mkdir(parents=True, exist_ok=True)
+from core.shared_cache import get_shared_cache
 
 # Simple in-memory job storage (could use Redis/DB in production)
 job_storage = {}
+
+
+def _get_batch_dir() -> Path:
+    cache = get_shared_cache()
+    out_dir = Path(cache.get_path("OUTPUT_BATCH")) / "batch_jobs"
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        out_dir = Path("/tmp/ai_output/batch/batch_jobs")
+        out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
 
 
 class BatchJobManager:
@@ -45,7 +52,7 @@ class BatchJobManager:
         job_storage[job_id] = job_data
 
         # Save to disk
-        job_file = BATCH_DIR / f"{job_id}.json"
+        job_file = _get_batch_dir() / f"{job_id}.json"
         with open(job_file, "w") as f:
             json.dump(job_data, f, indent=2)
 
@@ -58,7 +65,7 @@ class BatchJobManager:
             return job_storage[job_id]
 
         # Try loading from disk
-        job_file = BATCH_DIR / f"{job_id}.json"
+        job_file = _get_batch_dir() / f"{job_id}.json"
         if job_file.exists():
             with open(job_file, "r") as f:
                 job_data = json.load(f)
@@ -80,7 +87,7 @@ class BatchJobManager:
         job_data["updated_at"] = datetime.utcnow().isoformat()
 
         # Save to disk
-        job_file = BATCH_DIR / f"{job_id}.json"
+        job_file = _get_batch_dir() / f"{job_id}.json"
         with open(job_file, "w") as f:
             json.dump(job_data, f, indent=2)
 

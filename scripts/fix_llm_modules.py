@@ -14,7 +14,11 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
 # Set up environment
-os.environ["AI_CACHE_ROOT"] = "/mnt/c/AI_LLM_projects/ai_warehouse"
+os.environ.setdefault("AI_CACHE_ROOT", "/mnt/c/ai_cache")
+os.environ.setdefault("AI_MODELS_ROOT", "/mnt/c/ai_models")
+os.environ.setdefault(
+    "AI_OUTPUT_ROOT", "/mnt/c/ai_output/anime-adventure-lab"
+)
 
 
 def setup_test_environment():
@@ -24,8 +28,8 @@ def setup_test_environment():
     # Create cache directories
     cache_root = Path(os.environ["AI_CACHE_ROOT"])
     cache_root.mkdir(parents=True, exist_ok=True)
-    (cache_root / "cache" / "hf").mkdir(parents=True, exist_ok=True)
-    (cache_root / "cache" / "torch").mkdir(parents=True, exist_ok=True)
+    (cache_root / "huggingface").mkdir(parents=True, exist_ok=True)
+    (cache_root / "torch").mkdir(parents=True, exist_ok=True)
 
     # Bootstrap shared cache
     try:

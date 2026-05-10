@@ -1,22 +1,72 @@
 import { useState } from 'react'
 import { useAgentTask } from '../hooks/useAgentTask'
+import { useAgentTools } from '../hooks/useAgentTools'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ToolSelector } from './ToolSelector'
+import { ToolParameterForm } from './ToolParameterForm'
+import { ToolExecutionPanel } from './ToolExecutionPanel'
+import { useUiStore } from '@/stores/uiStore'
 
 export function TaskExecutor() {
   const [taskDescription, setTaskDescription] = useState('')
   const [maxIterations, setMaxIterations] = useState(5)
+  const [selectedTools, setSelectedTools] = useState<string[]>([])
+  const [toolParameters, setToolParameters] = useState<Record<string, Record<string, any>>>({})
+  const [showToolSelector, setShowToolSelector] = useState(false)
+  const [showParameterForm, setShowParameterForm] = useState(false)
+  const [currentTaskId, setCurrentTaskId] = useState<string | undefined>()
+
   const agentTask = useAgentTask()
+  const { data: toolsData } = useAgentTools()
+  const { addNotification } = useUiStore()
 
   const handleExecute = async () => {
     if (!taskDescription.trim()) return
 
-    await agentTask.mutateAsync({
-      task_description: taskDescription,
-      max_iterations: maxIterations,
+    try {
+      const result = await agentTask.mutateAsync({
+        task_description: taskDescription,
+        max_iterations: maxIterations,
+        tools: selectedTools.length > 0 ? selectedTools : undefined,
+        context: Object.keys(toolParameters).length > 0 ? { tool_parameters: toolParameters } : undefined,
+      })
+
+      // Set current task ID for monitoring
+      if (result.task_id) {
+        setCurrentTaskId(result.task_id)
+      }
+
+      addNotification({
+        type: 'success',
+        title: '任務已啟動',
+        message: `Task ID: ${result.task_id}`,
+      })
+    } catch (error) {
+      addNotification({
+        type: 'error',
+        title: '任務啟動失敗',
+        message: error instanceof Error ? error.message : '未知錯誤',
+      })
+    }
+  }
+
+  const handleTaskComplete = () => {
+    addNotification({
+      type: 'success',
+      title: '任務已完成',
+      message: '所有步驟執行完成',
+    })
+  }
+
+  const handleTaskError = (error: string) => {
+    addNotification({
+      type: 'error',
+      title: '任務執行失敗',
+      message: error,
     })
   }
 
@@ -50,6 +100,46 @@ export function TaskExecutor() {
             />
           </div>
 
+          {/* Tool selection toggle */}
+          <div className="flex items-center justify-between pt-2 border-t border-slate-700">
+            <div>
+              <Label>工具選擇</Label>
+              <p className="text-xs text-slate-400 mt-1">
+                {selectedTools.length === 0
+                  ? '未選擇（Agent 將自動選擇工具）'
+                  : `已選擇 ${selectedTools.length} 個工具`}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowToolSelector(!showToolSelector)}
+            >
+              {showToolSelector ? '隱藏工具選擇' : '選擇工具'}
+            </Button>
+          </div>
+
+          {/* Parameter configuration toggle */}
+          {selectedTools.length > 0 && (
+            <div className="flex items-center justify-between pt-2 border-t border-slate-700">
+              <div>
+                <Label>參數配置</Label>
+                <p className="text-xs text-slate-400 mt-1">
+                  {Object.keys(toolParameters).length === 0
+                    ? '未配置（使用默認參數）'
+                    : `已配置 ${Object.keys(toolParameters).length} 個工具的參數`}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowParameterForm(!showParameterForm)}
+              >
+                {showParameterForm ? '隱藏參數配置' : '配置參數'}
+              </Button>
+            </div>
+          )}
+
           <Button
             onClick={handleExecute}
             disabled={!taskDescription.trim() || agentTask.isPending}
@@ -60,8 +150,35 @@ export function TaskExecutor() {
         </CardContent>
       </Card>
 
-      {/* 執行結果 */}
-      {agentTask.data && (
+      {/* Tool selector */}
+      {showToolSelector && (
+        <ToolSelector
+          selectedTools={selectedTools}
+          onToolsChange={setSelectedTools}
+        />
+      )}
+
+      {/* Parameter configuration form */}
+      {showParameterForm && selectedTools.length > 0 && toolsData && (
+        <ToolParameterForm
+          tools={toolsData.tools}
+          selectedToolNames={selectedTools}
+          parameters={toolParameters}
+          onParametersChange={setToolParameters}
+        />
+      )}
+
+      {/* Tool execution monitoring panel */}
+      {currentTaskId && (
+        <ToolExecutionPanel
+          taskId={currentTaskId}
+          onComplete={handleTaskComplete}
+          onError={handleTaskError}
+        />
+      )}
+
+      {/* Legacy execution results (fallback) */}
+      {!currentTaskId && agentTask.data && (
         <Card>
           <CardHeader>
             <CardTitle>執行結果</CardTitle>

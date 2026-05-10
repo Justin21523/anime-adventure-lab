@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 from pathlib import Path
 import os
+from ..shared_cache import get_shared_cache
 
 
 class StructuredLogger:
@@ -20,8 +21,11 @@ class StructuredLogger:
             self.logger.removeHandler(handler)
 
         # Setup log directory
-        AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/tmp/ai_cache")
-        log_dir = Path(AI_CACHE_ROOT) / "logs"
+        try:
+            cache = get_shared_cache()
+            log_dir = Path(cache.get_path("LOGS_DIR"))
+        except Exception:
+            log_dir = Path(os.getenv("AI_OUTPUT_ROOT", "/tmp/ai_output")) / "logs"
         try:
             log_dir.mkdir(parents=True, exist_ok=True)
             writable = os.access(log_dir, os.W_OK)
@@ -30,7 +34,7 @@ class StructuredLogger:
 
         if not writable:
             # Fallback to tmp when cache root is not writable (e.g., read-only mounts)
-            log_dir = Path("/tmp/ai_cache/logs")
+            log_dir = Path("/tmp/ai_output/logs")
             log_dir.mkdir(parents=True, exist_ok=True)
 
         # Console handler with JSON formatter

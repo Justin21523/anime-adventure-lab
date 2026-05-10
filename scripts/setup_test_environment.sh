@@ -41,30 +41,43 @@ echo -e "${BLUE}安裝測試依賴...${NC}"
 pip install -r requirements.txt
 pip install -r requirements-test.txt
 
-# 設置測試倉庫目錄
-WAREHOUSE_ROOT="${AI_CACHE_ROOT:-/mnt/c/AI_LLM_projects/ai_warehouse}"
-CACHE_ROOT="${WAREHOUSE_ROOT}/cache"
-echo -e "${BLUE}設置測試倉庫: $WAREHOUSE_ROOT${NC}"
+# 設置測試倉庫目錄（AI_WAREHOUSE 3.0）
+AI_CACHE_ROOT="${AI_CACHE_ROOT:-/tmp/ai_cache}"
+AI_MODELS_ROOT="${AI_MODELS_ROOT:-/tmp/ai_models}"
+AI_OUTPUT_ROOT="${AI_OUTPUT_ROOT:-/tmp/ai_output/anime-adventure-lab}"
+AI_DATASETS_ROOT="${AI_DATASETS_ROOT:-/tmp/ai_datasets/anime-adventure-lab}"
 
-mkdir -p "$CACHE_ROOT"/hf/{transformers,datasets,hub}
-mkdir -p "$CACHE_ROOT"/torch
-mkdir -p "$WAREHOUSE_ROOT"/models/{lora,blip2,qwen,llava,embeddings}
-mkdir -p "$WAREHOUSE_ROOT"/datasets/{raw,processed,metadata}
-mkdir -p "$WAREHOUSE_ROOT"/outputs/{multi-modal-lab,tests}
+echo -e "${BLUE}設置測試倉庫:${NC}"
+echo -e "  AI_CACHE_ROOT=$AI_CACHE_ROOT"
+echo -e "  AI_MODELS_ROOT=$AI_MODELS_ROOT"
+echo -e "  AI_OUTPUT_ROOT=$AI_OUTPUT_ROOT"
+echo -e "  AI_DATASETS_ROOT=$AI_DATASETS_ROOT"
+
+mkdir -p "$AI_CACHE_ROOT"/huggingface/{datasets,hub}
+mkdir -p "$AI_CACHE_ROOT"/torch
+mkdir -p "$AI_MODELS_ROOT"/{lora,blip2,qwen,llava,embeddings}
+mkdir -p "$AI_DATASETS_ROOT"/{raw,processed,metadata}
+mkdir -p "$AI_OUTPUT_ROOT"/{outputs,batch,training,tests,metadata,rag}
 
 # 設置環境變數
 echo -e "${BLUE}設置環境變數...${NC}"
-export AI_CACHE_ROOT="$WAREHOUSE_ROOT"
+export AI_CACHE_ROOT="$AI_CACHE_ROOT"
+export AI_MODELS_ROOT="$AI_MODELS_ROOT"
+export AI_OUTPUT_ROOT="$AI_OUTPUT_ROOT"
+export AI_DATASETS_ROOT="$AI_DATASETS_ROOT"
 export API_PREFIX="/api/v1"
-export ALLOWED_ORIGINS="http://localhost:3000,http://localhost:7860"
+export ALLOWED_ORIGINS="http://localhost:3000"
 export DEVICE="cpu"
 export DEBUG="true"
 
 # 創建 .env.test 文件
 cat > .env.test << EOF
-AI_CACHE_ROOT=$WAREHOUSE_ROOT
+AI_CACHE_ROOT=$AI_CACHE_ROOT
+AI_MODELS_ROOT=$AI_MODELS_ROOT
+AI_OUTPUT_ROOT=$AI_OUTPUT_ROOT
+AI_DATASETS_ROOT=$AI_DATASETS_ROOT
 API_PREFIX=/api/v1
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:7860
+ALLOWED_ORIGINS=http://localhost:3000
 DEVICE=cpu
 MAX_WORKERS=2
 MAX_BATCH_SIZE=4

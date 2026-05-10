@@ -71,24 +71,28 @@ def check_dependencies():
 
 def check_cache_directory():
     """檢查快取目錄"""
-    default_root = Path("/mnt/c/AI_LLM_projects/ai_warehouse")
-    cache_root = Path(os.getenv("AI_CACHE_ROOT", default_root))
-    cache_path = cache_root / "cache"
+    default_root = Path("/mnt/c/ai_cache")
+    cache_root = Path(os.getenv("AI_CACHE_ROOT", str(default_root)))
+    hf_home = Path(os.getenv("HF_HOME", str(cache_root / "huggingface")))
+    torch_home = Path(os.getenv("TORCH_HOME", str(cache_root / "torch")))
 
-    print(f"📁 快取目錄: {cache_root}")
+    print(f"📁 AI_CACHE_ROOT: {cache_root}")
+    print(f"📁 HF_HOME: {hf_home}")
+    print(f"📁 TORCH_HOME: {torch_home}")
 
-    if not cache_path.exists():
-        try:
-            cache_path.mkdir(parents=True, exist_ok=True)
-            print(f"   {Colors.GREEN}✅ 快取目錄已創建{Colors.ENDC}")
-        except Exception as e:
-            print(f"   {Colors.RED}❌ 無法創建快取目錄: {e}{Colors.ENDC}")
-            return False
-    else:
-        print(f"   {Colors.GREEN}✅ 快取目錄存在{Colors.ENDC}")
+    for path_obj, name in [(cache_root, "AI_CACHE_ROOT"), (hf_home, "HF_HOME"), (torch_home, "TORCH_HOME")]:
+        if not path_obj.exists():
+            try:
+                path_obj.mkdir(parents=True, exist_ok=True)
+                print(f"   {Colors.GREEN}✅ {name} 目錄已創建{Colors.ENDC}")
+            except Exception as e:
+                print(f"   {Colors.RED}❌ 無法創建 {name} 目錄: {e}{Colors.ENDC}")
+                return False
+        else:
+            print(f"   {Colors.GREEN}✅ {name} 目錄存在{Colors.ENDC}")
 
     # Check write permissions
-    test_file = cache_path / "test_write.tmp"
+    test_file = cache_root / "test_write.tmp"
     try:
         test_file.write_text("test")
         test_file.unlink()

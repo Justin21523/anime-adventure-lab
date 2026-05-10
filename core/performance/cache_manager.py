@@ -7,10 +7,14 @@ from pathlib import Path
 from typing import Any, Optional, Dict, List
 from dataclasses import dataclass, asdict
 import time
-import redis
 import logging
 
 logger = logging.getLogger(__name__)
+
+try:
+    import redis  # type: ignore
+except Exception:  # noqa: BLE001
+    redis = None  # type: ignore
 
 
 @dataclass
@@ -33,7 +37,7 @@ class CacheManager:
             disk_dir = config.disk_cache_dir
         else:
             root = Path(
-                os.getenv("AI_CACHE_ROOT", "/mnt/c/AI_LLM_projects/ai_warehouse")
+                os.getenv("AI_CACHE_ROOT", "/mnt/c/ai_cache")
             )
             disk_dir = root / "cache" / "pipeline_cache"
 
@@ -42,10 +46,12 @@ class CacheManager:
 
         # Redis connection for fast access
         try:
+            if redis is None:
+                raise RuntimeError("redis package not installed")
             self.redis_client = redis.from_url(config.redis_url)
             self.redis_client.ping()
             self.redis_available = True
-        except:
+        except Exception:
             logger.warning("Redis not available, using disk cache only")
             self.redis_available = False
             self.redis_client = None

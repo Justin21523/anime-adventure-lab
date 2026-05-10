@@ -76,8 +76,7 @@ export function SearchInterface({ worldId }: SearchInterfaceProps) {
             <div className="flex items-center justify-between">
               <CardTitle>搜索結果</CardTitle>
               <div className="text-sm text-slate-400">
-                找到 {searchMutation.data.total_results} 個結果
-                ({searchMutation.data.search_time_ms}ms)
+                找到 {searchMutation.data.total_found} 個結果
               </div>
             </div>
           </CardHeader>
@@ -88,12 +87,12 @@ export function SearchInterface({ worldId }: SearchInterfaceProps) {
               <div className="space-y-3">
                 {searchMutation.data.results.map((result, idx) => (
                   <div
-                    key={`${result.doc_id}-${result.chunk_id}`}
+                    key={`${result.doc_id}-${result.rank}`}
                     className="p-4 bg-slate-800/50 rounded-lg"
                   >
                     <div className="flex items-start gap-3">
                       <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-sm font-semibold">
-                        {idx + 1}
+                        {result.rank ?? idx + 1}
                       </div>
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-2">
@@ -103,14 +102,11 @@ export function SearchInterface({ worldId }: SearchInterfaceProps) {
                           <span className="text-xs text-slate-500">
                             Doc: {result.doc_id.slice(0, 8)}...
                           </span>
-                          <span className="text-xs text-slate-500">
-                            Chunk: {result.chunk_id.slice(0, 8)}...
-                          </span>
                         </div>
                         <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap">
                           {result.content}
                         </p>
-                        {result.metadata && (
+                        {result.metadata && Object.keys(result.metadata).length > 0 && (
                           <div className="mt-2 text-xs text-slate-500">
                             {JSON.stringify(result.metadata)}
                           </div>

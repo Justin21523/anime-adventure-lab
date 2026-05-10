@@ -15,13 +15,11 @@ from fastapi import Depends, HTTPException
 
 from core.config import get_config
 from core.shared_cache import get_shared_cache, bootstrap_cache
-from core.safety.detector import SafetyEngine
 from core.safety.license import LicenseManager
-from core.safety.watermark import AttributionManager, ComplianceLogger
 from core.story.engine import StoryEngine
 from core.story.persona import PersonaManager
 from core.performance import gpu_available  # optional, but useful for /health
-from core.t2i.engine import T2IEngine
+from core.model_registry import resolve_model_path
 
 # Replace with your actual implementation when ready
 # from core.t2i.pipeline import RealT2IEngine
@@ -136,21 +134,59 @@ def _new_t2i():
     try:
         cache = get_cache()
         settings = get_settings()
-        mock_flag = os.getenv("T2I_MOCK", "1").lower() not in {"0", "false", "no"}
+        mock_flag = os.getenv("T2I_MOCK", "0").lower() in {"1", "true", "yes", "on"}
+        from core.t2i.engine import T2IEngine
 
-        # Prefer本地 checkpoint，如不存在則使用設定值或目錄中第一個檔案
-        checkpoints_dir = Path(cache.cache_root) / "models" / "stable-diffusion" / "checkpoints"
-        default_checkpoint = checkpoints_dir / "sd_xl_base_1.0.safetensors"
-        default_model = settings.model.default_sd_model
-        if default_checkpoint.exists():
-            default_model = str(default_checkpoint)
-        else:
-            try:
-                first_ckpt = next(checkpoints_dir.glob("*.safetensors"))
-                default_model = str(first_ckpt)
-            except StopIteration:
-                # fallback to config default
-                default_model = settings.model.default_sd_model
+        # Prefer本地 SDXL，如不存在再退回設定值（避免在 restricted/network 下嘗試下載）
+        models_text2image = Path(cache.get_path("MODELS_TEXT2IMAGE"))
+        models_sdxl = Path(cache.get_path("MODELS_SDXL"))
+        diffusion_sd = Path(cache.models_root) / "diffusion" / "stable-diffusion"
+
+        configured_default = str(getattr(settings.model, "default_sd_model", "") or "").strip()
+        default_model = configured_default
+
+        # If config already points to an existing local path, use it directly.
+        try:
+            if configured_default and Path(configured_default).expanduser().exists():
+                default_model = str(Path(configured_default).expanduser())
+        except Exception:
+            pass
+
+        if not default_model or default_model == configured_default:
+            candidates: list[Path] = []
+            candidates.extend(
+                [
+                    models_sdxl / "checkpoints" / "sdxl_base_1.0.safetensors",
+                    models_sdxl / "checkpoints" / "sd_xl_base_1.0.safetensors",
+                    models_sdxl / "sdxl_base_1.0.safetensors",
+                    models_sdxl / "sd_xl_base_1.0.safetensors",
+                    models_text2image / "checkpoints" / "sdxl_base_1.0.safetensors",
+                    models_text2image / "checkpoints" / "sd_xl_base_1.0.safetensors",
+                    diffusion_sd / "stable-diffusion-xl-base-1.0",
+                ]
+            )
+            for p in candidates:
+                if p.exists():
+                    default_model = str(p)
+                    break
+
+        if not default_model:
+            # Try diffusers folder layouts (model_index.json)
+            for root in [models_sdxl, models_text2image]:
+                try:
+                    for d in root.iterdir():
+                        if d.is_dir() and (d / "model_index.json").exists():
+                            default_model = str(d)
+                            break
+                except Exception:
+                    continue
+                if default_model:
+                    break
+
+        if not default_model:
+            default_model = configured_default or "stabilityai/stable-diffusion-xl-base-1.0"
+
+        default_model = resolve_model_path(default_model, kind="t2i")
 
         safety_cfg = getattr(settings, "safety", None)
         if safety_cfg is None:
@@ -171,6 +207,7 @@ def _new_t2i():
                 "mock_generation": mock_flag,
                 "safety": safety_cfg,
                 "watermark_enabled": True,
+                "prefer_sdxl_lora": True,
             },
         )
         return engine
@@ -183,9 +220,10 @@ def _new_t2i():
 
 def _new_llm():
     try:
+        use_mock = os.getenv("LLM_MOCK", "0").lower() in {"1", "true", "yes", "on"}
+        from core.llm.adapter import get_llm_adapter
 
-        # return RealLLM()
-        return _MinimalLLM()
+        return get_llm_adapter(use_mock=use_mock)
     except Exception as e:
         raise RuntimeError(f"LLM engine init failed: {e}") from e
 
@@ -193,8 +231,9 @@ def _new_llm():
 def _new_vlm():
     try:
 
-        # Toggle mock via env; default mock to avoid heavy downloads unless user opts in
-        use_mock = os.getenv("VLM_MOCK", "1").lower() not in {"0", "false", "no"}
+        # Toggle mock via env. Default is real VLM so GPU-capable local runs do
+        # not silently skip model loading.
+        use_mock = os.getenv("VLM_MOCK", "0").lower() in {"1", "true", "yes", "on"}
         if use_mock:
             return _MinimalVLM()
 
@@ -316,34 +355,24 @@ def get_game():
 
 
 def get_safety_engine():
-    global _safety
-    if _safety is None:
-        _safety = SafetyEngine()
-    return _safety
+    raise HTTPException(status_code=410, detail="SafetyEngine is disabled")
 
 
 def get_license_manager():
+    """Shared license manager."""
     global _license_mgr
     if _license_mgr is None:
         cache = get_shared_cache()
-        _license_mgr = LicenseManager(cache.cache_root)
+        _license_mgr = LicenseManager(str(cache.cache_root))
     return _license_mgr
 
 
 def get_attribution_manager():
-    global _attr
-    if _attr is None:
-        cache = get_shared_cache()
-        _attr = AttributionManager(cache.cache_root)
-    return _attr
+    raise HTTPException(status_code=410, detail="Attribution/watermarking is disabled")
 
 
 def get_compliance_logger():
-    global _compliance
-    if _compliance is None:
-        cache = get_shared_cache()
-        _compliance = ComplianceLogger(cache.cache_root)
-    return _compliance
+    raise HTTPException(status_code=410, detail="Compliance logging is disabled")
 
 
 def get_story_engine(llm=None):

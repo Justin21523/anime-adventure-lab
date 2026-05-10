@@ -15,8 +15,8 @@ retrieval:
   rerank_top_k: 50
 
 storage:
-  index_dir: "${AI_CACHE_ROOT}/rag/indexes"
-  docs_dir: "${AI_CACHE_ROOT}/rag/documents"
+  index_dir: "${AI_RAG_ROOT}/indexes"
+  docs_dir: "${AI_RAG_ROOT}/documents"
   cache_embeddings: true
 
 chinese:

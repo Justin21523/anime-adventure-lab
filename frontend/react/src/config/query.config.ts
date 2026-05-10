@@ -1,19 +1,34 @@
-import { QueryClient, DefaultOptions } from '@tanstack/react-query'
+import { QueryClient, type QueryClientConfig } from '@tanstack/react-query'
 
 /**
  * Default query options for React Query
+ * Optimized for performance with longer stale times and smart refetching
  */
-const defaultOptions: DefaultOptions = {
+const defaultOptions: QueryClientConfig['defaultOptions'] = {
   queries: {
-    staleTime: 30_000, // 30 seconds
-    gcTime: 5 * 60_000, // 5 minutes (formerly cacheTime)
+    // Increase stale time to reduce unnecessary refetches
+    staleTime: 2 * 60_000, // 2 minutes (was 30s)
+
+    // Keep data in cache longer for better UX when navigating back
+    gcTime: 10 * 60_000, // 10 minutes (was 5 minutes)
+
+    // Disable window focus refetch to avoid unnecessary API calls
     refetchOnWindowFocus: false,
+
+    // Refetch on reconnect to get fresh data after network issues
     refetchOnReconnect: true,
-    retry: 1,
+
+    // Retry failed requests with exponential backoff
+    retry: 2, // Increased from 1 for better reliability
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+
+    // Network mode configuration
+    networkMode: 'online' as const,
   },
   mutations: {
     retry: 0,
+    // Network mode for mutations
+    networkMode: 'online' as const,
   },
 }
 
@@ -34,6 +49,8 @@ export const CACHE_KEYS = {
     all: ['story'] as const,
     sessions: () => ['story', 'sessions'] as const,
     session: (id: string) => ['story', 'session', id] as const,
+    context: (id: string) => ['story', 'context', id] as const,
+    agentProfile: (id: string) => ['story', 'agent_profile', id] as const,
     personas: () => ['story', 'personas'] as const,
     persona: (id: string) => ['story', 'persona', id] as const,
     turns: (sessionId: string) => ['story', 'turns', sessionId] as const,
@@ -49,6 +66,13 @@ export const CACHE_KEYS = {
       ['rag', 'search', query, worldId] as const,
     stats: (worldId?: string) =>
       worldId ? (['rag', 'stats', worldId] as const) : (['rag', 'stats'] as const),
+  },
+
+  // Worlds (World Studio)
+  worlds: {
+    all: ['worlds'] as const,
+    list: () => ['worlds', 'list'] as const,
+    detail: (worldId: string) => ['worlds', 'detail', worldId] as const,
   },
 
   // T2I module
@@ -69,6 +93,7 @@ export const CACHE_KEYS = {
     task: (id: string) => ['agent', 'task', id] as const,
     tools: () => ['agent', 'tools'] as const,
     tool: (name: string) => ['agent', 'tool', name] as const,
+    catalog: () => ['agent', 'catalog'] as const,
   },
 
   // Batch module
@@ -77,6 +102,19 @@ export const CACHE_KEYS = {
     jobs: () => ['batch', 'jobs'] as const,
     job: (id: string) => ['batch', 'job', id] as const,
     status: (id: string) => ['batch', 'status', id] as const,
+  },
+
+  // Jobs module
+  jobs: {
+    all: ['jobs'] as const,
+    list: () => ['jobs', 'list'] as const,
+    job: (id: string) => ['jobs', 'job', id] as const,
+  },
+
+  // Runtime presets
+  runtime: {
+    all: ['runtime'] as const,
+    presets: () => ['runtime', 'presets'] as const,
   },
 
   // Monitoring module

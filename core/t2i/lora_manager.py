@@ -4,7 +4,6 @@ import json
 import torch
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from peft import LoraConfig, get_peft_model
 import logging
 import time
 from safetensors.torch import load_file
@@ -22,11 +21,13 @@ logger = logging.getLogger(__name__)
 class LoRAManager:
     """Manage LoRA loading and unloading"""
 
-    def __init__(self, cache_root: str):
+    def __init__(self, cache_root: str, *, prefer_sdxl: bool = False):
         self.cache = get_shared_cache()
         self.cache_root = Path(cache_root)
         self.loaded_loras: Dict[str, dict] = {}
-        self.lora_cache_dir = Path(self.cache.get_path("MODELS_LORA"))
+        self.prefer_sdxl = bool(prefer_sdxl)
+        self.lora_dirs = self._resolve_lora_dirs()
+        self.lora_cache_dir = self.lora_dirs[0] if self.lora_dirs else Path(self.cache.get_path("MODELS_LORA"))
         self._scan_loras()
         self._registry_path = Path(self.cache.get_path("MODELS_LORA")) / "registry.json"
         self._load_registry()
@@ -37,37 +38,79 @@ class LoRAManager:
         self._load_lora_metadata()
         logger.info("LoRAManager initialized")
 
+    def _resolve_lora_dirs(self) -> List[Path]:
+        """Resolve LoRA directories (SDXL first when prefer_sdxl=True)."""
+        dirs: List[Path] = []
+        sd15_dir = Path(self.cache.get_path("MODELS_LORA"))
+        sdxl_dir: Optional[Path] = None
+        try:
+            sdxl_dir = Path(self.cache.get_path("MODELS_LORA_SDXL"))
+        except Exception:
+            sdxl_dir = None
+
+        ordered = []
+        if self.prefer_sdxl and sdxl_dir is not None:
+            ordered = [sdxl_dir, sd15_dir]
+        else:
+            ordered = [sd15_dir] + ([sdxl_dir] if sdxl_dir is not None else [])
+
+        for p in ordered:
+            if p is None:
+                continue
+            try:
+                p.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            dirs.append(p)
+
+        # Deduplicate while preserving order
+        seen = set()
+        unique: List[Path] = []
+        for p in dirs:
+            key = str(p.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(p)
+        return unique
+
     def _scan_loras(self):
         """Scan for available LoRA models"""
-        lora_path = Path(self.cache.get_path("MODELS_LORA"))
-        if not lora_path.exists():
-            return
+        for lora_path in self.lora_dirs:
+            if not lora_path.exists():
+                continue
 
-        for folder in lora_path.iterdir():
-            if folder.is_dir():
+            for folder in lora_path.iterdir():
+                if not folder.is_dir():
+                    continue
+
                 model_card = folder / "MODEL_CARD.md"
                 adapter_file = folder / "adapter_model.safetensors"
 
-                if adapter_file.exists():
-                    # Basic LoRA info
-                    info = {
-                        "id": folder.name,
-                        "path": str(folder),
-                        "model_type": "sd15",  # default
-                        "rank": 16,  # default
-                        "loaded": False,
-                    }
+                if not adapter_file.exists():
+                    continue
 
-                    # Try to parse metadata
-                    if model_card.exists():
-                        try:
-                            content = model_card.read_text()
-                            if "sdxl" in content.lower():
-                                info["model_type"] = "sdxl"
-                        except:
-                            pass
+                # Basic LoRA info
+                info = {
+                    "id": folder.name,
+                    "path": str(folder),
+                    "model_type": "sdxl" if str(lora_path).endswith("lora_sdxl") else "sd15",
+                    "rank": 16,  # default
+                    "loaded": False,
+                }
 
-                    self.loaded_loras[folder.name] = info
+                # Try to parse metadata
+                if model_card.exists():
+                    try:
+                        content = model_card.read_text()
+                        if "sdxl" in content.lower():
+                            info["model_type"] = "sdxl"
+                        if "sd15" in content.lower() or "sd1.5" in content.lower():
+                            info["model_type"] = "sd15"
+                    except Exception:
+                        pass
+
+                self.loaded_loras.setdefault(folder.name, info)
 
     def _load_registry(self):
         """Load LoRA registry"""
@@ -99,27 +142,38 @@ class LoRAManager:
         """List all available LoRA adapters"""
         loras = []
 
-        for lora_dir in self.lora_cache_dir.iterdir():
-            if not lora_dir.is_dir():
+        seen: set[str] = set()
+        for root in self.lora_dirs:
+            if not root.exists():
                 continue
+            for lora_dir in root.iterdir():
+                if not lora_dir.is_dir():
+                    continue
 
-            lora_id = lora_dir.name
-            lora_info = self._get_lora_info(lora_id)
+                lora_id = lora_dir.name
+                if lora_id in seen:
+                    continue
+                seen.add(lora_id)
 
-            if lora_info:
-                loras.append(
-                    {
-                        "lora_id": lora_id,
-                        "name": lora_info.get("name", lora_id),
-                        "description": lora_info.get("description", ""),
-                        "tags": lora_info.get("tags", []),
-                        "model_compatibility": lora_info.get("compatible_models", []),
-                        "file_size_mb": lora_info.get("file_size_mb", 0),
-                        "created_date": lora_info.get("created_date", ""),
-                        "loaded": lora_id in self.loaded_loras,
-                        "load_count": lora_info.get("load_count", 0),
-                    }
-                )
+                lora_info = self._get_lora_info(lora_id)
+                base_model = "sdxl" if str(root).endswith("lora_sdxl") else "sd15"
+
+                if lora_info:
+                    loras.append(
+                        {
+                            "lora_id": lora_id,
+                            "name": lora_info.get("name", lora_id),
+                            "path": str(lora_dir),
+                            "description": lora_info.get("description", ""),
+                            "tags": lora_info.get("tags", []),
+                            "base_model": base_model,
+                            "model_compatibility": lora_info.get("compatible_models", []),
+                            "file_size_mb": lora_info.get("file_size_mb", 0),
+                            "created_date": lora_info.get("created_date", ""),
+                            "loaded": lora_id in self.loaded_loras,
+                            "load_count": lora_info.get("load_count", 0),
+                        }
+                    )
 
         return sorted(loras, key=lambda x: x["name"])
 
@@ -128,8 +182,13 @@ class LoRAManager:
         if lora_id in self.lora_metadata:
             return self.lora_metadata[lora_id]
 
-        lora_path = self.lora_cache_dir / lora_id
-        if not lora_path.exists():
+        lora_path = None
+        for root in self.lora_dirs:
+            cand = root / lora_id
+            if cand.exists():
+                lora_path = cand
+                break
+        if lora_path is None or not lora_path.exists():
             return None
 
         # Try to extract info from files
@@ -163,9 +222,13 @@ class LoRAManager:
     def load_lora(self, pipeline, lora_id: str, weight: float = 1.0) -> bool:
         """Load LoRA adapter with proper diffusers integration"""
         try:
-            lora_path = self.lora_cache_dir / lora_id
-
-            if not lora_path.exists():
+            lora_path = None
+            for root in self.lora_dirs:
+                cand = root / lora_id
+                if cand.exists():
+                    lora_path = cand
+                    break
+            if lora_path is None or not lora_path.exists():
                 raise FileNotFoundError(f"LoRA not found: {lora_id}")
 
             # Find safetensors file

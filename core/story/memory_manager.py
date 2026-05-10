@@ -10,12 +10,16 @@ This allows the AI to remember and reference past events naturally.
 """
 
 import logging
+import time
 from collections import deque
 from typing import Dict, List, Optional, Any, Deque
 from datetime import datetime
 from dataclasses import dataclass, asdict
 
 logger = logging.getLogger(__name__)
+
+# TTL for retrieve_relevant_context cache (seconds)
+_RETRIEVE_CACHE_TTL = 15
 
 
 @dataclass
@@ -121,6 +125,11 @@ class StoryMemoryManager:
         self.compression_interval = 5  # Summarize every N turns
         self.turns_since_summary = 0
 
+        # Retrieve cache — avoid redundant RAG searches within TTL
+        self._retrieve_cache: Dict[str, Dict[str, Any]] = {}
+        self._retrieve_cache_ts: float = 0.0
+        self._retrieve_cache_key: str = ""
+
         logger.info(f"Memory manager initialized for session {session_id}")
 
     @property
@@ -171,6 +180,9 @@ class StoryMemoryManager:
         # Add to short-term memory
         self.short_term.append(turn_memory)
         logger.debug(f"Turn {turn_number} added to short-term memory")
+
+        # Invalidate retrieve cache — fresh turn means stale context
+        self._retrieve_cache_key = ""
 
         # Check if we need to compress to mid-term
         self.turns_since_summary += 1
@@ -259,7 +271,8 @@ class StoryMemoryManager:
             return
 
         try:
-            await self.rag_engine.add_document(
+            self.rag_engine.add_document(
+                doc_id=f"{self.session_id}_turn_{turn_memory.turn_number}",
                 content=turn_memory.to_text(),
                 metadata={
                     "type": "turn_memory",
@@ -280,7 +293,8 @@ class StoryMemoryManager:
             return
 
         try:
-            await self.rag_engine.add_document(
+            self.rag_engine.add_document(
+                doc_id=f"{self.session_id}_summary_{summary.turn_range[0]}_{summary.turn_range[1]}",
                 content=summary.to_text(),
                 metadata={
                     "type": "memory_summary",
@@ -297,7 +311,8 @@ class StoryMemoryManager:
         self,
         query: str,
         max_results: int = 5,
-        include_short_term: bool = True
+        include_short_term: bool = True,
+        force_rag: bool = False,
     ) -> Dict[str, Any]:
         """
         Retrieve relevant context for a query
@@ -306,10 +321,23 @@ class StoryMemoryManager:
             query: Query text (player input or context)
             max_results: Maximum RAG results to retrieve
             include_short_term: Whether to include short-term memories
+            force_rag: If True, skip cache and always run RAG search
 
         Returns:
             Dictionary with short_term, summaries, and rag_results
         """
+        # Cache key: query hash + include_short_term flag + short_term length
+        cache_key = f"{hash(query)}:{include_short_term}:{len(self.short_term)}"
+        now = time.monotonic()
+
+        # Return cached result if still fresh and not forcing RAG
+        if (
+            not force_rag
+            and self._retrieve_cache_key == cache_key
+            and (now - self._retrieve_cache_ts) < _RETRIEVE_CACHE_TTL
+        ):
+            return dict(self._retrieve_cache)
+
         context = {
             "short_term": [],
             "summaries": [],
@@ -338,7 +366,8 @@ class StoryMemoryManager:
             for s in self.summaries[-3:]  # Last 3 summaries
         ]
 
-        # RAG semantic search
+        # RAG semantic search — skip if no engine or RAG is not available
+        # (avoids lazy-load overhead when RAG is not configured)
         if self.rag_engine:
             try:
                 rag_results = await self.rag_engine.search(
@@ -357,6 +386,11 @@ class StoryMemoryManager:
                 ]
             except Exception as e:
                 logger.warning(f"RAG search failed: {e}")
+
+        # Store in cache for subsequent calls within TTL
+        self._retrieve_cache = dict(context)
+        self._retrieve_cache_key = cache_key
+        self._retrieve_cache_ts = now
 
         return context
 

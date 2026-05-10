@@ -7,6 +7,7 @@ Handles context window management, token counting, and intelligent truncation
 import re
 import json
 import logging
+import os
 try:
     import tiktoken  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -20,6 +21,7 @@ from pathlib import Path
 from .base import ChatMessage
 from ..config import get_config
 from ..shared_cache import get_shared_cache
+from ..model_registry import resolve_model_path
 from ..exceptions import ContextLengthExceededError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -236,19 +238,30 @@ class ContextManager:
         """Get or load tokenizer for token counting"""
         if model_name not in self._tokenizers:
             try:
+                local_model = resolve_model_path(model_name, kind="llm")
                 tokenizer = AutoTokenizer.from_pretrained(
-                    model_name,
+                    local_model,
                     trust_remote_code=True,
-                    cache_dir=Path(self.cache.cache_root) / "hf",
+                    cache_dir=Path(self.cache.get_path("CACHE_HF")),
                 )
                 self._tokenizers[model_name] = tokenizer
-                logger.info(f"Loaded tokenizer for context management: {model_name}")
+                logger.info(
+                    "Loaded tokenizer for context management: %s -> %s",
+                    model_name,
+                    local_model,
+                )
             except Exception as e:
                 logger.warning(f"Failed to load tokenizer {model_name}: {e}")
-                # Use a default tokenizer for rough estimation
+                # Use an already-local tokenizer for rough estimation.
                 if "default" not in self._tokenizers:
+                    default_model = resolve_model_path(
+                        os.getenv("MODEL_CHAT_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
+                        kind="llm",
+                    )
                     self._tokenizers["default"] = AutoTokenizer.from_pretrained(
-                        "gpt2", cache_dir=Path(self.cache.cache_root) / "hf"
+                        default_model,
+                        trust_remote_code=True,
+                        cache_dir=Path(self.cache.get_path("CACHE_HF")),
                     )
                 self._tokenizers[model_name] = self._tokenizers["default"]
 

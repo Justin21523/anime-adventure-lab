@@ -15,17 +15,25 @@ from typing import Dict, Any, Optional
 # Shared cache bootstrap
 import torch
 
-DEFAULT_WAREHOUSE = Path("/mnt/c/AI_LLM_projects/ai_warehouse")
-AI_CACHE_ROOT = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_WAREHOUSE))
-CACHE_ROOT = AI_CACHE_ROOT / "cache"
+DEFAULT_CACHE_ROOT = Path("/mnt/c/ai_cache")
+DEFAULT_MODELS_ROOT = Path("/mnt/c/ai_models")
+DEFAULT_OUTPUT_ROOT = Path("/mnt/c/ai_output/anime-adventure-lab")
+
+AI_CACHE_ROOT = Path(os.getenv("AI_CACHE_ROOT", DEFAULT_CACHE_ROOT))
+AI_MODELS_ROOT = Path(os.getenv("AI_MODELS_ROOT", DEFAULT_MODELS_ROOT))
+AI_OUTPUT_ROOT = Path(os.getenv("AI_OUTPUT_ROOT", DEFAULT_OUTPUT_ROOT))
+HF_HOME = Path(os.getenv("HF_HOME", str(AI_CACHE_ROOT / "huggingface")))
+TORCH_HOME = Path(os.getenv("TORCH_HOME", str(AI_CACHE_ROOT / "torch")))
 
 for k, v in {
     "AI_CACHE_ROOT": str(AI_CACHE_ROOT),
-    "HF_HOME": f"{CACHE_ROOT}/hf",
-    "TRANSFORMERS_CACHE": f"{CACHE_ROOT}/hf/transformers",
-    "HF_DATASETS_CACHE": f"{CACHE_ROOT}/hf/datasets",
-    "HUGGINGFACE_HUB_CACHE": f"{CACHE_ROOT}/hf/hub",
-    "TORCH_HOME": f"{CACHE_ROOT}/torch",
+    "AI_MODELS_ROOT": str(AI_MODELS_ROOT),
+    "AI_OUTPUT_ROOT": str(AI_OUTPUT_ROOT),
+    "HF_HOME": str(HF_HOME),
+    "TRANSFORMERS_CACHE": str(HF_HOME),
+    "HF_DATASETS_CACHE": str(HF_HOME / "datasets"),
+    "HUGGINGFACE_HUB_CACHE": str(HF_HOME / "hub"),
+    "TORCH_HOME": str(TORCH_HOME),
 }.items():
     os.environ[k] = str(v)
 
@@ -47,10 +55,7 @@ class LoRATrainer:
 
         # Setup output directory
         self.output_dir = (
-            Path(AI_CACHE_ROOT)
-            / "models"
-            / "lora"
-            / self.config["model"]["output_name"]
+            Path(AI_MODELS_ROOT) / "llm" / "lora" / self.config["model"]["output_name"]
         )
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -67,7 +72,7 @@ class LoRATrainer:
 
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name, trust_remote_code=True, cache_dir=f"{AI_CACHE_ROOT}/hf"
+            model_name, trust_remote_code=True, cache_dir=str(HF_HOME)
         )
 
         if self.tokenizer.pad_token is None:
@@ -79,7 +84,7 @@ class LoRATrainer:
             device_map="auto",
             torch_dtype=torch.float16,
             trust_remote_code=True,
-            cache_dir=f"{AI_CACHE_ROOT}/hf",
+            cache_dir=str(HF_HOME),
         )
 
         # Setup LoRA configuration

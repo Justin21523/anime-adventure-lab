@@ -62,6 +62,7 @@ class GameSession:
     updated_at: datetime
     turn_count: int
     is_active: bool = True
+    world_id: str = "default"
 
     current_state: "GameState" = field(
         default_factory=lambda: GameState("", "", [], {})
@@ -281,16 +282,30 @@ class GameSession:
     ) -> Dict[str, Any]:
         """Convert session to dictionary with all required parameters"""
 
-        if available_choices is None:
-            available_choices = []
-        if story_context is None:
-            story_context = {}
+        current_state = self.current_state
+        scene_id_value = getattr(current_state, "scene_id", None) or scene_id or ""
+        scene_description_value = (
+            getattr(current_state, "scene_description", None)
+            or scene_description
+            or ""
+        )
+        available_choices_value = (
+            getattr(current_state, "available_choices", None)
+            or available_choices
+            or []
+        )
+        story_context_value = (
+            getattr(current_state, "story_context", None)
+            or story_context
+            or {}
+        )
 
         # 基本會話數據
         data = {
             "session_id": self.session_id,
             "player_name": self.player_name,
             "persona_id": self.persona_id,
+            "world_id": self.world_id,
             "created_at": (
                 self.created_at.isoformat()
                 if isinstance(self.created_at, datetime)
@@ -306,17 +321,17 @@ class GameSession:
             "inventory": self.inventory.copy(),
             "history": self.history.copy(),
             # 必要的場景參數
-            "scene_id": scene_id,
-            "scene_description": scene_description,
-            "available_choices": available_choices.copy(),
-            "story_context": story_context.copy(),
+            "scene_id": scene_id_value,
+            "scene_description": scene_description_value,
+            "available_choices": list(available_choices_value),
+            "story_context": dict(story_context_value),
             # 遊戲狀態
             "current_state": (
                 self.current_state.to_dict()
                 if hasattr(self.current_state, "to_dict")
                 else {
-                    "scene_id": scene_id,
-                    "story_context": story_context,
+                    "scene_id": scene_id_value,
+                    "story_context": story_context_value,
                     "flags": getattr(self.current_state, "flags", {}),
                 }
             ),
@@ -371,31 +386,52 @@ class GameSession:
             else data["updated_at"]
         )
 
-        # 重建 GameState
-        current_state = GameState(
-            scene_id=data.get("scene_id", "scene_001"),
-            scene_description="",
-            available_choices=[],
-            story_context=data.get("story_context", {}),
-            flags=data.get("current_state", {}).get("flags", {}),
-        )
+        # 重建 GameState（優先使用 current_state；兼容舊格式）
+        current_state_payload = data.get("current_state") or {}
+        if isinstance(current_state_payload, dict) and current_state_payload:
+            try:
+                current_state = GameState.from_dict(current_state_payload)
+            except Exception:
+                current_state = GameState(
+                    scene_id=data.get("scene_id", "scene_001"),
+                    scene_description=data.get("scene_description", ""),
+                    available_choices=data.get("available_choices", []),
+                    story_context=data.get("story_context", {}),
+                    flags=current_state_payload.get("flags", {}),
+                )
+        else:
+            current_state = GameState(
+                scene_id=data.get("scene_id", "scene_001"),
+                scene_description=data.get("scene_description", ""),
+                available_choices=data.get("available_choices", []),
+                story_context=data.get("story_context", {}),
+                flags=data.get("flags", {}),
+            )
 
         # 重建 PlayerStats
-        stats_data = data.get("stats", {})
-        stats = PlayerStats(
-            health=stats_data.get("health", 100),
-            energy=stats_data.get("energy", 50),
-            experience=stats_data.get("experience", 10),
-            intelligence=stats_data.get("intelligence", 10),
-            charisma=stats_data.get("charisma", 10),
-            luck=stats_data.get("luck", 10),
-        )
+        stats_data = data.get("stats", {}) or {}
+        if isinstance(stats_data, dict):
+            try:
+                stats = PlayerStats.from_dict(stats_data)
+            except Exception:
+                stats = PlayerStats(
+                    health=int(stats_data.get("health", 100) or 100),
+                    energy=int(stats_data.get("energy", 100) or 100),
+                    intelligence=int(stats_data.get("intelligence", 10) or 10),
+                    charisma=int(stats_data.get("charisma", 10) or 10),
+                    luck=int(stats_data.get("luck", 10) or 10),
+                    experience=int(stats_data.get("experience", 0) or 0),
+                    level=int(stats_data.get("level", 1) or 1),
+                )
+        else:
+            stats = PlayerStats()
 
         # 創建會話實例
         session = cls(
             session_id=data["session_id"],
             player_name=data["player_name"],
             persona_id=data["persona_id"],
+            world_id=data.get("world_id", "default"),
             created_at=created_at,
             updated_at=updated_at,
             turn_count=data.get("turn_count", 0),

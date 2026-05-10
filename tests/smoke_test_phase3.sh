@@ -22,8 +22,8 @@ redis-cli ping
 
 # 4. Create required directories
 mkdir -p logs
-WAREHOUSE_ROOT=${AI_CACHE_ROOT:-/mnt/c/AI_LLM_projects/ai_warehouse}
-mkdir -p "$WAREHOUSE_ROOT"/outputs/multi-modal-lab/batch_results
+OUTPUT_ROOT=${AI_OUTPUT_ROOT:-/tmp/ai_output/anime-adventure-lab}
+mkdir -p "$OUTPUT_ROOT"/batch/batch_results
 
 # tests/smoke_test_phase3.sh
 
@@ -144,5 +144,5 @@ echo "🎉 Phase 3 smoke tests completed successfully!"
 echo ""
 echo "Next steps:"
 echo "1. Start Celery worker: python scripts/start_worker.py"
-echo "2. Start monitoring dashboard: python frontend/gradio_app/monitoring_dashboard.py"
+echo "2. Start frontend (React): cd frontend/react && npm run dev"
 echo "3. Test batch processing: python scripts/batch_test.py --monitor"

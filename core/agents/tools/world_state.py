@@ -10,6 +10,23 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
+_TRUE_STRINGS = {"true", "1", "yes", "y", "是", "對", "開", "啟用", "啟動"}
+_FALSE_STRINGS = {"false", "0", "no", "n", "否", "不", "關", "停用", "關閉"}
+
+
+def _coerce_flag_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _TRUE_STRINGS:
+            return True
+        if lowered in _FALSE_STRINGS:
+            return False
+    return bool(value)
+
 
 async def modify_world_state(session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -49,18 +66,37 @@ async def modify_world_state(session_id: str, params: Dict[str, Any]) -> Dict[st
                 "error": "No flags provided"
             }
 
+        context_memory = None
+        try:
+            if getattr(engine, "enhanced_mode", False) and hasattr(engine, "context_memories"):
+                context_memory = engine.context_memories.get(session_id)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            context_memory = None
+
         # Apply flag changes
         modified = {}
         for flag_name, flag_value in flags.items():
+            coerced_value = _coerce_flag_value(flag_value)
             old_value = session.current_state.flags.get(flag_name)
-            session.current_state.flags[flag_name] = flag_value
+            session.current_state.flags[flag_name] = coerced_value
+            old_context_value = None
+            if context_memory is not None:
+                try:
+                    old_context_value = context_memory.world_flags.get(flag_name)
+                    context_memory.world_flags[flag_name] = coerced_value
+                except Exception:  # noqa: BLE001
+                    old_context_value = None
             modified[flag_name] = {
                 "old": old_value,
-                "new": flag_value
+                "new": coerced_value,
+                **({"old_context": old_context_value} if context_memory is not None else {}),
             }
 
         # Save session
-        engine._save_session(session)
+        if hasattr(engine, "save_session"):
+            engine.save_session(session)
+        else:
+            engine._save_session(session)  # type: ignore[attr-defined]
 
         logger.info(
             f"Modified {len(modified)} flags for session {session_id}: "
