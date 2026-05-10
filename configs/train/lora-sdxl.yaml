@@ -38,14 +38,14 @@ lora:
   text_encoder_train: false
 
 dataset:
-  train_data_dir: "${AI_CACHE_ROOT}/datasets/processed"
+  train_data_dir: "${AI_DATASETS_ROOT}/processed"
   image_column: "image_path"
   caption_column: "text"
   max_train_samples: null
   cache_latents: true
 
 output:
-  output_dir: "${AI_CACHE_ROOT}/models/lora"
-  logging_dir: "${AI_CACHE_ROOT}/logs"
+  output_dir: "${AI_OUTPUT_ROOT}/training/lora_sdxl"
+  logging_dir: "${AI_OUTPUT_ROOT}/logs"
   save_model_card: true
   push_to_hub: false

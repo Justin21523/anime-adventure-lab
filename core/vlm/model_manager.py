@@ -16,12 +16,23 @@ from transformers import (
     LlavaNextProcessor,
     LlavaNextForConditionalGeneration,
     AutoProcessor,
-    AutoModelForVision2Seq,
     BitsAndBytesConfig,
 )
 
+try:
+    from transformers import AutoModelForImageTextToText
+except ImportError:  # pragma: no cover - older transformers fallback
+    AutoModelForImageTextToText = None  # type: ignore
+
+try:
+    from transformers import AutoModelForVision2Seq
+except ImportError:
+    # Fallback for older transformers versions or inconsistent installations
+    from transformers import AutoModel as AutoModelForVision2Seq
+
 from ..config import get_config
 from ..shared_cache import get_shared_cache
+from ..model_registry import resolve_model_path
 from ..exceptions import ModelLoadError, handle_cuda_oom, handle_model_error
 
 logger = logging.getLogger(__name__)
@@ -48,8 +59,8 @@ class VLMModelManager:
         self._vqa_loaded = False
 
         # Default models
-        self.default_caption_model = "Salesforce/blip2-opt-2.7b"
-        self.default_vqa_model = "llava-hf/llava-1.5-7b-hf"
+        self.default_caption_model = "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it"
+        self.default_vqa_model = "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it"
 
     def _get_device_map(self):
         """Get optimal device mapping based on available hardware"""
@@ -104,16 +115,17 @@ class VLMModelManager:
             return
 
         model_name = model_name or self.config.model.caption_model
-        self._caption_model_name = model_name
+        local_model_name = resolve_model_path(model_name, kind="vlm")
+        self._caption_model_name = local_model_name
 
         try:
-            logger.info(f"Loading caption model: {model_name}")
+            logger.info("Loading caption model: %s -> %s", model_name, local_model_name)
 
             # Setup configuration
             device_map = self._get_device_map()
             torch_dtype = self._get_torch_dtype()
             quantization_config = self._get_quantization_config()
-            cache_dir = str(self.cache.cache_root / "hf")
+            cache_dir = self.cache.get_path("CACHE_HF")
 
             # Model loading kwargs
             model_kwargs = {
@@ -127,15 +139,17 @@ class VLMModelManager:
                 model_kwargs["quantization_config"] = quantization_config
 
             # Load processor and model based on model type
-            if "blip2" in model_name.lower():
+            model_kind = f"{model_name} {local_model_name}".lower()
+            if "blip2" in model_kind:
                 self._caption_processor = Blip2Processor.from_pretrained(
-                    model_name, cache_dir=cache_dir
+                    local_model_name, cache_dir=cache_dir, local_files_only=True
                 )
                 self._caption_model = Blip2ForConditionalGeneration.from_pretrained(
-                    model_name,
+                    local_model_name,
                     device_map=device_map,
                     torch_dtype=torch_dtype,
                     cache_dir=cache_dir,
+                    local_files_only=True,
                     low_cpu_mem_usage=True,
                     load_in_8bit=(
                         self.config.performance.use_8bit
@@ -143,27 +157,38 @@ class VLMModelManager:
                         else False
                     ),
                 )
-            elif "blip" in model_name.lower():
+            elif "blip" in model_kind:
                 self._caption_processor = BlipProcessor.from_pretrained(
-                    model_name, cache_dir=cache_dir
+                    local_model_name, cache_dir=cache_dir, local_files_only=True
                 )
                 self._caption_model = BlipForConditionalGeneration.from_pretrained(
-                    model_name,
+                    local_model_name,
                     device_map=device_map,
                     torch_dtype=torch_dtype,
                     cache_dir=cache_dir,
+                    local_files_only=True,
                     low_cpu_mem_usage=True,
                 )
             else:
                 # Fallback to auto
                 self._caption_processor = AutoProcessor.from_pretrained(
-                    model_name, cache_dir=cache_dir
+                    local_model_name,
+                    cache_dir=cache_dir,
+                    trust_remote_code=True,
+                    local_files_only=True,
                 )
-                self._caption_model = AutoModelForVision2Seq.from_pretrained(
-                    model_name,
+                auto_model_cls = (
+                    AutoModelForImageTextToText
+                    if "gemma" in model_kind and AutoModelForImageTextToText is not None
+                    else AutoModelForVision2Seq
+                )
+                self._caption_model = auto_model_cls.from_pretrained(
+                    local_model_name,
                     device_map=device_map,
                     torch_dtype=torch_dtype,
                     cache_dir=cache_dir,
+                    trust_remote_code=True,
+                    local_files_only=True,
                     low_cpu_mem_usage=True,
                 )
 
@@ -171,7 +196,7 @@ class VLMModelManager:
             self._enable_memory_optimizations(self._caption_model)
 
             self._caption_loaded = True
-            logger.info(f"Caption model loaded successfully: {model_name}")
+            logger.info(f"Caption model loaded successfully: {local_model_name}")
 
         except Exception as e:
             logger.error(f"Failed to load caption model: {e}")
@@ -186,15 +211,16 @@ class VLMModelManager:
             return
 
         model_name = model_name or self.config.model.vqa_model
-        self._vqa_model_name = model_name
+        local_model_name = resolve_model_path(model_name, kind="vlm")
+        self._vqa_model_name = local_model_name
 
         try:
-            logger.info(f"Loading VQA model: {model_name}")
+            logger.info("Loading VQA model: %s -> %s", model_name, local_model_name)
 
             device_map = self._get_device_map()
             torch_dtype = self._get_torch_dtype()
             quantization_config = self._get_quantization_config()
-            cache_dir = str(self.cache.cache_root / "hf")
+            cache_dir = self.cache.get_path("CACHE_HF")
 
             model_kwargs = {
                 "device_map": device_map,
@@ -207,15 +233,17 @@ class VLMModelManager:
                 model_kwargs["quantization_config"] = quantization_config
 
             # Load processor and model based on model type
-            if "llava" in model_name.lower():
+            model_kind = f"{model_name} {local_model_name}".lower()
+            if "llava" in model_kind:
                 self._vqa_processor = LlavaNextProcessor.from_pretrained(
-                    model_name, cache_dir=cache_dir
+                    local_model_name, cache_dir=cache_dir, local_files_only=True
                 )
                 self._vqa_model = LlavaNextForConditionalGeneration.from_pretrained(
-                    model_name,
+                    local_model_name,
                     device_map=device_map,
                     torch_dtype=torch_dtype,
                     cache_dir=cache_dir,
+                    local_files_only=True,
                     low_cpu_mem_usage=True,
                     load_in_8bit=(
                         self.config.performance.use_8bit
@@ -223,27 +251,44 @@ class VLMModelManager:
                         else False
                     ),
                 )
-            elif "qwen" in model_name.lower():
+            elif "qwen" in model_kind:
                 self._vqa_processor = AutoProcessor.from_pretrained(
-                    model_name, cache_dir=cache_dir, trust_remote_code=True
+                    local_model_name,
+                    cache_dir=cache_dir,
+                    trust_remote_code=True,
+                    local_files_only=True,
                 )
                 self._vqa_model = AutoModelForVision2Seq.from_pretrained(
-                    model_name, trust_remote_code=True, **model_kwargs
+                    local_model_name,
+                    trust_remote_code=True,
+                    local_files_only=True,
+                    **model_kwargs,
                 )
             else:
                 # Generic fallback
                 self._vqa_processor = AutoProcessor.from_pretrained(
-                    model_name, cache_dir=cache_dir
+                    local_model_name,
+                    cache_dir=cache_dir,
+                    trust_remote_code=True,
+                    local_files_only=True,
                 )
-                self._vqa_model = AutoModelForVision2Seq.from_pretrained(
-                    model_name, **model_kwargs
+                auto_model_cls = (
+                    AutoModelForImageTextToText
+                    if "gemma" in model_kind and AutoModelForImageTextToText is not None
+                    else AutoModelForVision2Seq
+                )
+                self._vqa_model = auto_model_cls.from_pretrained(
+                    local_model_name,
+                    trust_remote_code=True,
+                    local_files_only=True,
+                    **model_kwargs,
                 )
 
             # Enable memory optimizations
             self._enable_memory_optimizations(self._vqa_model)
 
             self._vqa_loaded = True
-            logger.info(f"VQA model loaded successfully: {model_name}")
+            logger.info(f"VQA model loaded successfully: {local_model_name}")
 
         except Exception as e:
             logger.error(f"Failed to load VQA model: {e}")

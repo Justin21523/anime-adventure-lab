@@ -11,6 +11,18 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
+_STAT_ALIASES: Dict[str, str] = {
+    "hp": "health",
+    "mp": "energy",
+    "exp": "experience",
+}
+
+
+def _normalize_stat_name(stat_name: str) -> str:
+    key = str(stat_name or "").strip()
+    return _STAT_ALIASES.get(key, key)
+
+
 async def update_character_state(session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Update character stats
@@ -58,38 +70,58 @@ async def update_character_state(session_id: str, params: Dict[str, Any]) -> Dic
 
         # Apply stat changes
         modified = {}
+        unknown_stats = []
         for stat_name, value in stats.items():
+            canonical = _normalize_stat_name(stat_name)
             # Get current value
-            old_value = getattr(session.stats, stat_name, None)
+            old_value = getattr(session.stats, canonical, None)
             if old_value is None:
-                logger.warning(f"Unknown stat: {stat_name}")
+                unknown_stats.append(str(stat_name))
+                continue
+
+            # Coerce numeric value
+            try:
+                numeric_value: float = float(value)
+            except Exception:
+                unknown_stats.append(str(stat_name))
                 continue
 
             # Calculate new value
             if relative:
-                new_value = old_value + value
+                new_value = old_value + numeric_value
             else:
-                new_value = value
+                new_value = numeric_value
 
-            # Apply constraints (will be validated by safety wrapper)
-            # But we also apply common sense here
-            if stat_name == "hp":
-                max_hp = getattr(session.stats, "max_hp", 100)
-                new_value = max(0, min(new_value, max_hp))
-            elif stat_name == "mp":
-                max_mp = getattr(session.stats, "max_mp", 100)
-                new_value = max(0, min(new_value, max_mp))
+            # Basic common-sense bounds (more strict bounds handled by safety wrapper)
+            if canonical in {"health", "energy"}:
+                new_value = max(0, new_value)
+            if canonical == "level":
+                new_value = max(1, int(new_value))
+            if canonical in {"intelligence", "charisma", "luck"}:
+                new_value = int(new_value)
+            if canonical == "experience":
+                new_value = max(0, int(new_value))
 
             # Set value
-            setattr(session.stats, stat_name, new_value)
-            modified[stat_name] = {
+            setattr(session.stats, canonical, new_value)
+            modified[canonical] = {
                 "old": old_value,
                 "new": new_value,
                 "change": new_value - old_value
             }
 
+        if not modified:
+            return {
+                "success": False,
+                "error": f"No valid stats applied. Unknown stats: {unknown_stats}",
+                "unknown_stats": unknown_stats,
+            }
+
         # Save session
-        engine._save_session(session)
+        if hasattr(engine, "save_session"):
+            engine.save_session(session)
+        else:
+            engine._save_session(session)  # type: ignore[attr-defined]
 
         logger.info(
             f"Modified {len(modified)} stats for session {session_id}: "
@@ -144,34 +176,22 @@ async def add_inventory_item(session_id: str, params: Dict[str, Any]) -> Dict[st
         if not item:
             return {"success": False, "error": "No item specified"}
 
-        # Check if item already in inventory
-        existing = False
-        for inv_item in session.inventory:
-            if isinstance(inv_item, dict) and inv_item.get("id") == item:
-                inv_item["quantity"] = inv_item.get("quantity", 1) + quantity
-                existing = True
-                break
-            elif isinstance(inv_item, str) and inv_item == item:
-                # Convert string to dict format
-                session.inventory.remove(inv_item)
-                session.inventory.append({
-                    "id": item,
-                    "name": item,
-                    "quantity": quantity + 1
-                })
-                existing = True
-                break
+        try:
+            quantity_int = int(quantity)
+        except Exception:
+            quantity_int = 1
+        if quantity_int <= 0:
+            return {"success": False, "error": "quantity must be >= 1"}
 
-        # Add new item if not existing
-        if not existing:
-            session.inventory.append({
-                "id": item,
-                "name": item,
-                "quantity": quantity
-            })
+        # Inventory is List[str] in this project; represent quantity by repeating entries.
+        for _ in range(quantity_int):
+            session.inventory.append(str(item))
 
         # Save session
-        engine._save_session(session)
+        if hasattr(engine, "save_session"):
+            engine.save_session(session)
+        else:
+            engine._save_session(session)  # type: ignore[attr-defined]
 
         logger.info(
             f"Added {quantity}x {item} to session {session_id} | Reason: {reason}"
@@ -180,7 +200,7 @@ async def add_inventory_item(session_id: str, params: Dict[str, Any]) -> Dict[st
         return {
             "success": True,
             "item": item,
-            "quantity": quantity,
+            "quantity": quantity_int,
             "reason": reason
         }
 

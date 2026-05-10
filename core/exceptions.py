@@ -11,10 +11,10 @@ import time
 from typing import Any, Optional, Dict, List
 from functools import wraps, lru_cache
 from dataclasses import dataclass
-import torch
-import redis
-from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer, AutoModel
+try:
+    import torch  # type: ignore
+except Exception:  # noqa: BLE001
+    torch = None  # type: ignore
 
 from pathlib import Path
 import sys
@@ -578,7 +578,7 @@ def handle_cuda_oom(func):
                     model_name = args[0].model_name
 
                 # Clear GPU cache
-                if torch.cuda.is_available():
+                if torch is not None and getattr(torch, "cuda", None) and torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
                 raise CUDAOutOfMemoryError(model_name) from e
@@ -589,7 +589,7 @@ def handle_cuda_oom(func):
                 if hasattr(args[0], "model_name"):
                     model_name = args[0].model_name
 
-                if torch.cuda.is_available():
+                if torch is not None and getattr(torch, "cuda", None) and torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
                 raise CUDAOutOfMemoryError(model_name) from e
@@ -621,7 +621,7 @@ def handle_model_error(func):
                 if hasattr(args[0], "model_name"):
                     model_name = args[0].model_name
 
-                if torch.cuda.is_available():
+                if torch is not None and getattr(torch, "cuda", None) and torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
                 raise CUDAOutOfMemoryError(model_name) from e

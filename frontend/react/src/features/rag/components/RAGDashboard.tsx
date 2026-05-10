@@ -42,15 +42,15 @@ export function RAGDashboard({ worldId }: RAGDashboardProps) {
       color: 'text-green-400',
     },
     {
-      label: '向量總數',
-      value: stats.total_vectors,
+      label: '索引向量',
+      value: stats.index_size,
       icon: '🔢',
       color: 'text-purple-400',
     },
     {
-      label: '索引大小',
-      value: `${stats.index_size_mb.toFixed(2)} MB`,
-      icon: '💾',
+      label: 'Embedding 維度',
+      value: stats.embedding_dim,
+      icon: '🧠',
       color: 'text-orange-400',
     },
   ]

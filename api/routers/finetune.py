@@ -37,6 +37,7 @@ async def start_finetuning(request: FinetuneRequest, background_tasks: Backgroun
                 "dataset_path": request.dataset_path,
                 "output_name": request.output_name,
                 "parameters": request.parameters.dict() if request.parameters else {},
+                "simulate": True,
             },
             status="queued",
         )
@@ -49,6 +50,8 @@ async def start_finetuning(request: FinetuneRequest, background_tasks: Backgroun
             {
                 "model_name": request.model_name,
                 "output_name": request.output_name,
+                "dataset_path": request.dataset_path,
+                "simulate": True,
             },
         )
 
@@ -98,39 +101,42 @@ async def submit_lora_training(
     so callers can poll status via `/jobs/{job_id}`.
     """
     try:
-        job_id = train_job_manager.create_job("lora", payload, status="pending")
-        if background_tasks is not None:
-            background_tasks.add_task(
-                _simulate_training,
-                job_id,
-                "lora",
-                {
-                    "model_name": payload.get("base_model"),
-                    "output_name": payload.get("output_name", job_id),
-                },
+        job_type = str(payload.get("job_type") or payload.get("type") or "lora").strip()
+        simulate = payload.get("simulate")
+        if simulate is None:
+            simulate = True
+
+        stored_payload = dict(payload)
+        stored_payload["job_type"] = job_type
+        stored_payload["simulate"] = bool(simulate)
+
+        job_id = train_job_manager.create_job(job_type, stored_payload, status="queued")
+
+        # Prefer Celery if available; fallback to FastAPI background task
+        dispatched = False
+        try:
+            from workers.tasks.training import train_lora_task
+
+            async_result = train_lora_task.delay(
+                {"job_id": job_id, "job_type": job_type, "payload": stored_payload}
             )
+            try:
+                train_job_manager.update_job(job_id, celery_task_id=str(async_result.id))
+            except Exception:
+                pass
+            dispatched = True
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Celery dispatch skipped (%s), using background task", exc)
+
+        if (not dispatched) and background_tasks is not None:
+            background_tasks.add_task(_simulate_training, job_id, job_type, stored_payload)
+
         return {
             "job_id": job_id,
-            "status": "pending",
+            "status": "queued",
             "received": True,
         }
     except Exception as e:  # noqa: BLE001
         logger.error("Failed to submit LoRA training job: %s", e)
         raise HTTPException(500, f"Failed to submit LoRA training job: {e}") from e
 
-
-@router.get("/jobs/{job_id}")
-async def get_job_status(job_id: str):
-    """
-    Get training job status by id.
-    """
-    job = train_job_manager.get_job(job_id, auto_progress=True)
-    if not job:
-        raise HTTPException(404, f"Job {job_id} not found")
-    return {"job_id": job_id, "status": job.get("status"), **job}
-
-
-@router.get("/jobs")
-async def list_jobs():
-    """List all training jobs (with simulated progress)."""
-    return {"jobs": train_job_manager.list_jobs()}

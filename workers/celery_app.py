@@ -22,6 +22,9 @@ celery_app = Celery(
         "workers.tasks",
         "workers.tasks.batch",
         "workers.tasks.t2i",
+        "workers.tasks.story",
+        "workers.tasks.datasets",
+        "workers.tasks.rag",
         "workers.tasks.training",
     ],
 )
@@ -40,11 +43,17 @@ celery_app.conf.update(
     worker_max_tasks_per_child=50,
     # Custom queues for different task types
     task_routes={
-        "workers.tasks.batch_caption_task": {"queue": "vision"},
-        "workers.tasks.batch_vqa_task": {"queue": "vision"},
-        "workers.tasks.batch_chat_task": {"queue": "text"},
-        "workers.tasks.train_lora_task": {"queue": "training"},
-        "workers.tasks.generate_image_async": {"queue": "vision"},
+        # NOTE: task names use explicit `name=` in decorators; route by that.
+        "batch_caption_task": {"queue": "vision"},
+        "batch_vqa_task": {"queue": "vision"},
+        "batch_chat_task": {"queue": "text"},
+        "story_turn_task": {"queue": "text"},
+        "train_lora_task": {"queue": "training"},
+        "generate_image_async": {"queue": "vision"},
+        "story_scene_image_task": {"queue": "vision"},
+        "dataset_caption_task": {"queue": "vision"},
+        "rag_rebuild_task": {"queue": "training"},
+        "rag_upload_task": {"queue": "training"},
     },
     task_default_queue="default",
     task_queues=[
@@ -52,5 +61,114 @@ celery_app.conf.update(
         Queue("vision"),
         Queue("text"),
         Queue("training"),
+        Queue("postprocess"),
     ],
+    worker_send_task_events=True,
+    task_send_sent_event=True,
+    task_acks_late=True,
 )
+
+
+# ---- TaskProgress (absorbed from charaforge-T2I-Lab) ----
+#
+# Publishes progress events to Redis PubSub so the API WebSocket endpoint
+# can relay them to the client in real time.
+
+import json as _json
+from datetime import datetime as _dt
+
+
+class TaskProgress:
+    """Task progress tracker with Redis PubSub publishing."""
+
+    def __init__(self, task, total_steps: int = 100):
+        self.task = task
+        self.total_steps = total_steps
+        self.current_step = 0
+
+    def _publish_ws(self, state: str, payload: dict) -> None:
+        """Publish progress events to Redis PubSub for WebSocket consumers."""
+        try:
+            import redis as _redis
+        except Exception:
+            return
+
+        job_id = getattr(getattr(self.task, "request", None), "id", None)
+        if not job_id:
+            return
+
+        url = os.getenv("REDIS_URL") or os.getenv("CELERY_BROKER_URL") or REDIS_URL
+        if not url or not str(url).startswith("redis"):
+            return
+
+        channel = f"anime_adventure:train:{job_id}"
+        topic = (
+            "training.progress"
+            if state == "PROGRESS"
+            else "training.complete"
+            if state == "SUCCESS"
+            else "training.failure"
+        )
+
+        try:
+            client = _redis.Redis.from_url(
+                url,
+                socket_timeout=1,
+                socket_connect_timeout=1,
+                retry_on_timeout=False,
+                decode_responses=True,
+            )
+            client.publish(
+                channel,
+                _json.dumps(
+                    {
+                        "topic": topic,
+                        "job_id": job_id,
+                        "state": state,
+                        "progress": payload,
+                        "timestamp": _dt.now().isoformat(),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        except Exception:
+            return
+
+    def update(self, step: int, message: str = "", **extra_data):
+        self.current_step = step
+        progress_percent = (step / self.total_steps) * 100
+        state_data = {
+            "current": step,
+            "total": self.total_steps,
+            "percent": round(progress_percent, 1),
+            "message": message,
+            **extra_data,
+        }
+        self.task.update_state(state="PROGRESS", meta=state_data)
+        self._publish_ws("PROGRESS", state_data)
+        return state_data
+
+    def complete(self, result: dict):
+        final_data = {
+            "current": self.total_steps,
+            "total": self.total_steps,
+            "percent": 100.0,
+            "message": "Complete",
+            **result,
+        }
+        self.task.update_state(state="SUCCESS", meta=final_data)
+        self._publish_ws("SUCCESS", final_data)
+        return final_data
+
+    def fail(self, error_message: str, **extra_data):
+        error_data = {
+            "current": self.current_step,
+            "total": self.total_steps,
+            "percent": (self.current_step / self.total_steps) * 100,
+            "message": f"Failed: {error_message}",
+            "error": error_message,
+            **extra_data,
+        }
+        self.task.update_state(state="FAILURE", meta=error_data)
+        self._publish_ws("FAILURE", error_data)
+        return error_data

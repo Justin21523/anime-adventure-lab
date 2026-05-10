@@ -3,9 +3,10 @@ import { apiGet, apiPost } from '@/api/client'
 import { CACHE_KEYS } from '@/config/query.config'
 import { useSessionStore } from '@/stores/sessionStore'
 import type {
-  StorySession,
+  StorySessionDetail,
   StorySessionCreateRequest,
   StoryTurnRequest,
+  StoryTurnJobResponse,
   StoryTurnResponse,
 } from '../types/story.types'
 
@@ -25,22 +26,22 @@ export function useStorySession(sessionId?: string) {
   } = useQuery({
     queryKey: CACHE_KEYS.story.session(sessionId!),
     queryFn: async () => {
-      const response = await apiGet<StorySession>(`/story/session/${sessionId}`)
+      const response = await apiGet<StorySessionDetail>(`/story/session/${sessionId}`)
       return response
     },
     enabled: !!sessionId,
-    staleTime: 30_000, // 30 seconds
+    staleTime: 15_000,  // 15s — short enough for responsive turns
+    gcTime: 5 * 60_000, // keep in cache for 5min while playing
+    refetchOnWindowFocus: false, // avoid surprise refetch during active play
   })
 
   // Create new session
   const createSession = useMutation({
     mutationFn: async (request: StorySessionCreateRequest) => {
-      const response = await apiPost<StorySession>('/story/session', request)
+      const response = await apiPost<StoryTurnResponse>('/story/session', request)
       return response
     },
     onSuccess: (data) => {
-      // Update cache
-      queryClient.setQueryData(CACHE_KEYS.story.session(data.session_id), data)
       queryClient.invalidateQueries({ queryKey: CACHE_KEYS.story.sessions() })
 
       // Update global state
@@ -63,16 +64,11 @@ export function useStorySession(sessionId?: string) {
     },
   })
 
-  // Delete session
-  const deleteSession = useMutation({
-    mutationFn: async (sessionId: string) => {
-      await apiPost(`/story/session/${sessionId}/delete`)
-    },
-    onSuccess: () => {
-      if (sessionId) {
-        queryClient.removeQueries({ queryKey: CACHE_KEYS.story.session(sessionId) })
-        queryClient.invalidateQueries({ queryKey: CACHE_KEYS.story.sessions() })
-      }
+  // Execute story turn as background job (GPU worker recommended)
+  const executeTurnJob = useMutation({
+    mutationFn: async (request: StoryTurnRequest) => {
+      const response = await apiPost<StoryTurnJobResponse>('/story/turn_job', request)
+      return response
     },
   })
 
@@ -83,6 +79,6 @@ export function useStorySession(sessionId?: string) {
     refetch,
     createSession,
     executeTurn,
-    deleteSession,
+    executeTurnJob,
   }
 }

@@ -35,6 +35,7 @@ from schemas.agent import (
     AgentTaskRequest,
     AgentTaskResponse,
     AgentToolListResponse,
+    AgentCatalogResponse,
     AgentStatusResponse,
 )
 
@@ -217,6 +218,22 @@ async def _run_agent_task(
 # --------------------------------------------------------------------------- #
 # Tool endpoints
 # --------------------------------------------------------------------------- #
+
+
+@router.get("/agent/catalog", response_model=AgentCatalogResponse)
+async def get_agent_catalog():
+    """Return Story orchestrator catalog (sub-agents/tools/default profile) for UI."""
+    try:
+        from core.agents.catalog import get_story_agent_catalog
+
+        story = get_story_agent_catalog()
+        return AgentCatalogResponse(  # type: ignore[call-arg]
+            success=True,
+            story=story,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to build agent catalog: %s", exc)
+        raise HTTPException(500, f"Failed to build agent catalog: {str(exc)}") from exc
 
 
 @router.get("/agent/tools", response_model=AgentToolListResponse)

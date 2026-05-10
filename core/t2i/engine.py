@@ -5,6 +5,7 @@ Integrates pipeline management, LoRA, ControlNet, and safety
 """
 from typing import Dict, List, Optional, Union, Any, Tuple
 from PIL import Image
+import os
 import torch
 import asyncio
 import logging
@@ -37,11 +38,19 @@ from .controlnet import ControlNetManager
 from .memory_utils import MemoryOptimizer
 from .prompt_utils import PromptProcessor
 from .model_config import ModelConfigManager
-from ..safety.detector import SafetyEngine
-from ..safety.watermark import AttributionManager, ComplianceLogger
 from ..shared_cache import get_shared_cache
 
 logger = logging.getLogger(__name__)
+
+
+class DisabledSafety:
+    """No-op safety surface. The user requested safety handling disabled."""
+
+    def check_prompt_safety(self, prompt: str) -> Dict[str, Any]:
+        return {"is_safe": True, "clean_prompt": prompt, "disabled": True}
+
+    def check_image_safety(self, image: Image.Image) -> Dict[str, Any]:
+        return {"is_safe": True, "processed_image": image, "disabled": True}
 
 
 class T2IEngine:
@@ -49,6 +58,7 @@ class T2IEngine:
 
     def __init__(self, cache_root: str, device: str = "auto", config: Dict = None):  # type: ignore
         self.cache_root = Path(cache_root)
+        self.cache = get_shared_cache()
         self.device = self._resolve_device(device)
         self.config = config or {}
         # Default to real generation; can be overridden with config/mock env
@@ -73,7 +83,9 @@ class T2IEngine:
         self.optimization_settings = {
             "enable_attention_slicing": True,
             "enable_vae_slicing": True,
+            "enable_vae_tiling": False,
             "enable_cpu_offload": False,
+            "enable_sequential_cpu_offload": False,
             "use_fp16": torch.cuda.is_available(),
             "enable_xformers": True,
             "memory_optimization_level": 2,
@@ -81,16 +93,22 @@ class T2IEngine:
 
         # Core components
         self.pipeline_manager = PipelineManager(str(cache_root), self.device)
-        self.lora_manager = LoRAManager(str(cache_root))
+        default_model = str(self.config.get("default_model", "") or "")
+        prefer_sdxl_lora = bool(self.config.get("prefer_sdxl_lora", False))
+        if not prefer_sdxl_lora:
+            lowered = default_model.lower()
+            prefer_sdxl_lora = ("sdxl" in lowered) or ("xl" in lowered) or ("/xl/" in lowered) or ("\\xl\\" in lowered)
+
+        self.lora_manager = LoRAManager(str(cache_root), prefer_sdxl=prefer_sdxl_lora)
         self.controlnet_manager = ControlNetManager(str(cache_root))
         self.memory_optimizer = MemoryOptimizer()
         self.prompt_processor = PromptProcessor()
         self.model_config_manager = ModelConfigManager(str(cache_root))
 
-        # Safety and compliance components
-        self.safety_engine = SafetyEngine(self.config.get("safety", {}))
-        self.attribution_manager = AttributionManager(str(cache_root))
-        self.compliance_logger = ComplianceLogger(str(cache_root))
+        # Safety/watermark/compliance are intentionally disabled for local runs.
+        self.safety_engine = None
+        self.attribution_manager = None
+        self.compliance_logger = None
 
         # Apply optimization settings to pipeline manager
         self.pipeline_manager.optimization_settings.update(self.optimization_settings)
@@ -98,6 +116,52 @@ class T2IEngine:
         self._initialize_component_references()
 
         logger.info(f"T2I Engine initialized with device: {self.device}")
+
+    def _apply_request_optimizations(self, request: Dict[str, Any]) -> None:
+        """
+        Best-effort: apply per-request optimization overrides (e.g. from runtime preset).
+
+        Supported keys (bool):
+        - enable_attention_slicing
+        - enable_vae_slicing
+        - enable_vae_tiling
+        - enable_cpu_offload
+        - enable_sequential_cpu_offload
+        - enable_xformers
+        """
+        try:
+            if not isinstance(request, dict):
+                return
+
+            keys = [
+                "enable_attention_slicing",
+                "enable_vae_slicing",
+                "enable_vae_tiling",
+                "enable_cpu_offload",
+                "enable_sequential_cpu_offload",
+                "enable_xformers",
+            ]
+            overrides: Dict[str, bool] = {}
+            for k in keys:
+                if k in request:
+                    overrides[k] = bool(request.get(k))
+            if not overrides:
+                return
+
+            self.optimization_settings.update(overrides)
+            try:
+                self.pipeline_manager.optimization_settings.update(self.optimization_settings)
+            except Exception:
+                pass
+
+            # If already loaded, apply immediately (best-effort).
+            if self.current_pipeline is not None and not self.mock_generation:
+                try:
+                    self._apply_optimizations(self.current_pipeline)
+                except Exception:
+                    pass
+        except Exception:
+            return
 
     def _resolve_device(self, device: str) -> str:
         """Resolve device specification"""
@@ -128,7 +192,7 @@ class T2IEngine:
             # Initialize PromptProcessor with component references
             components = {
                 "lora_manager": self.lora_manager,
-                "safety_engine": self.safety_engine,
+                "safety_engine": None,
                 "compliance_logger": self.compliance_logger,
                 "controlnet_manager": self.controlnet_manager,
                 "attribution_manager": self.attribution_manager,
@@ -216,106 +280,279 @@ class T2IEngine:
         """Generate image from text prompt"""
         start_time = time.time()
 
-        try:
-            target_model = request.get("model_id") or request.get("model")
+        async def _run() -> Dict[str, Any]:
+            try:
+                target_model = request.get("model_id") or request.get("model")
+                self._apply_request_optimizations(request)
 
-            # Ensure model is loaded (in mock mode this is a lightweight noop)
-            if self.current_pipeline is None or (
-                target_model and target_model != self.current_model_id
-            ):
-                await self.initialize(target_model)  # type: ignore
+                # Ensure model is loaded (in mock mode this is a lightweight noop)
+                if self.current_pipeline is None or (
+                    target_model and target_model != self.current_model_id
+                ):
+                    await self.initialize(target_model)  # type: ignore
 
-            # Process and validate prompt
-            processed_prompt = self.prompt_processor.process(request.get("prompt", ""))
-            processed_negative = self.prompt_processor.process(
-                request.get("negative_prompt", ""), is_negative=True
-            )
-
-            # Safety check on prompt
-            safety_result = (
-                self.safety_engine.check_prompt_safety(processed_prompt)
-                if self.safety_engine
-                else {"is_safe": True}
-            )
-            if not safety_result.get("is_safe", True):
-                raise ValueError("Prompt safety violation detected")
-
-            # Prepare generation parameters
-            generation_params = self._prepare_generation_params(
-                request, processed_prompt, processed_negative
-            )
-
-            # Load LoRAs if specified (skipped in mock mode)
-            lora_info = []
-            if request.get("lora_configs") and not self.mock_generation:
-                lora_info = await self._apply_loras(request["lora_configs"])
-
-            # Setup ControlNet if specified (skipped in mock mode)
-            controlnet_info = None
-            if request.get("controlnet_config") and not self.mock_generation:
-                controlnet_info = await self._setup_controlnet(
-                    request["controlnet_config"]
+                # Process and validate prompt
+                processed_prompt = self.prompt_processor.process(request.get("prompt", ""))
+                processed_negative = self.prompt_processor.process(
+                    request.get("negative_prompt", ""), is_negative=True
                 )
-                generation_params.update(controlnet_info["params"])
 
-            # Generate images (mock-friendly)
-            images = await self._generate_images(generation_params)
+                safety_result = {"is_safe": True, "disabled": True}
 
-            # Post-process images (safety check, watermarking)
-            processed_images = []
-            for image in images:
-                processed_image = await self._post_process_image(
-                    image, request, safety_result
+                # Prepare generation parameters
+                generation_params = self._prepare_generation_params(
+                    request, processed_prompt, processed_negative
                 )
-                processed_images.append(processed_image)
 
-            # Prepare response
-            generation_time = time.time() - start_time
-            response = await self._prepare_response(
-                processed_images,
-                generation_params,
-                generation_time,
-                lora_info,
-                controlnet_info,  # type: ignore
-            )
+                # Load LoRAs if specified (skipped in mock mode)
+                lora_info = []
+                if request.get("lora_configs") and not self.mock_generation:
+                    lora_info = await self._apply_loras(request["lora_configs"])
 
-            # Update stats
-            self._update_generation_stats(generation_time)
-
-            # Log generation event
-            if self.compliance_logger:
-                try:
-                    self.compliance_logger.log_generation(
-                        response["metadata"]["output_paths"][0],
-                        request,
-                        safety_result,
+                # Setup ControlNet if specified (skipped in mock mode)
+                controlnet_info = None
+                if request.get("controlnet_config") and not self.mock_generation:
+                    controlnet_info = await self._setup_controlnet(
+                        request["controlnet_config"]
                     )
-                except Exception as log_err:
-                    logger.debug(f"Compliance log skipped: {log_err}")
+                    generation_params.update(controlnet_info["params"])
 
-            return response
+                # Generate images (mock-friendly)
+                images, oom_info = await self._generate_images(generation_params)
 
-        except Exception as e:
-            logger.error(f"txt2img generation failed: {e}")
-            raise RuntimeError(f"Generation failed: {e}")
+                # Post-process images (safety check, watermarking)
+                processed_images = []
+                for image in images:
+                    processed_image = await self._post_process_image(
+                        image, request, safety_result
+                    )
+                    processed_images.append(processed_image)
 
-        finally:
-            # Cleanup LoRAs after generation
-            if request.get("lora_configs") and not self.mock_generation:
-                self.lora_manager.unload_all_loras(self.current_pipeline)
+                # Prepare response
+                generation_time = time.time() - start_time
+                response = await self._prepare_response(
+                    processed_images,
+                    generation_params,
+                    generation_time,
+                    lora_info,
+                    controlnet_info,  # type: ignore
+                )
 
-    async def _generate_images(self, params: Dict[str, Any]) -> List[Image.Image]:
+                if oom_info:
+                    try:
+                        response["metadata"]["oom_fallback"] = oom_info
+                    except Exception:
+                        pass
+
+                # Update stats
+                self._update_generation_stats(generation_time)
+
+                # Log generation event
+                if self.compliance_logger:
+                    try:
+                        self.compliance_logger.log_generation(
+                            response["metadata"]["output_paths"][0],
+                            request,
+                            safety_result,
+                        )
+                    except Exception as log_err:
+                        logger.debug(f"Compliance log skipped: {log_err}")
+
+                return response
+
+            except Exception as e:
+                logger.error(f"txt2img generation failed: {e}")
+                raise RuntimeError(f"Generation failed: {e}")
+
+            finally:
+                # Cleanup LoRAs after generation
+                if request.get("lora_configs") and not self.mock_generation:
+                    self.lora_manager.unload_all_loras(self.current_pipeline)
+
+        if (not self.mock_generation) and str(self.device).startswith("cuda") and torch.cuda.is_available():
+            try:
+                from core.runtime import get_model_runtime
+
+                runtime = get_model_runtime()
+                async with runtime.exclusive_gpu_async(
+                    reason="t2i.txt2img", device=self.device
+                ):
+                    return await _run()
+            except Exception:
+                return await _run()
+
+        return await _run()
+
+    def _is_cuda_oom(self, exc: Exception) -> bool:
+        try:
+            if torch.cuda.is_available() and isinstance(exc, torch.cuda.OutOfMemoryError):
+                return True
+        except Exception:
+            pass
+
+        msg = str(exc).lower()
+        return ("out of memory" in msg) and (
+            "cuda" in msg or "cublas" in msg or "memory" in msg
+        )
+
+    def _round_down_multiple(self, value: int, multiple: int = 8) -> int:
+        if multiple <= 1:
+            return int(value)
+        return int(value) - (int(value) % int(multiple))
+
+    def _enable_aggressive_optimizations(self) -> None:
+        pipeline = self.current_pipeline
+        if pipeline is None:
+            return
+
+        try:
+            if hasattr(pipeline, "enable_attention_slicing"):
+                pipeline.enable_attention_slicing()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(pipeline, "enable_vae_slicing"):
+                pipeline.enable_vae_slicing()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(pipeline, "enable_vae_tiling"):
+                pipeline.enable_vae_tiling()
+        except Exception:
+            pass
+
+        # CPU offload is the last resort; may require accelerate and can be unavailable.
+        try:
+            if hasattr(pipeline, "enable_model_cpu_offload"):
+                pipeline.enable_model_cpu_offload()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(pipeline, "enable_sequential_cpu_offload"):
+                pipeline.enable_sequential_cpu_offload()
+        except Exception:
+            pass
+
+    async def _generate_images(self, params: Dict[str, Any]) -> Tuple[List[Image.Image], Dict[str, Any]]:
         """Generate images using the pipeline"""
         try:
             if not self.mock_generation and self.current_pipeline is not None:
-                with torch.autocast(
+                attempts = []
+
+                base_steps = int(params.get("num_inference_steps", 20) or 20)
+                base_width = int(params.get("width", 768) or 768)
+                base_height = int(params.get("height", 768) or 768)
+
+                attempts.append(("base", {}, False))
+
+                lowered_steps = max(8, int(base_steps * 0.75))
+                if lowered_steps < base_steps:
+                    attempts.append(
+                        (
+                            "lower_steps",
+                            {"num_inference_steps": lowered_steps},
+                            False,
+                        )
+                    )
+
+                scaled_width = max(512, self._round_down_multiple(int(base_width * 0.85), 8))
+                scaled_height = max(512, self._round_down_multiple(int(base_height * 0.85), 8))
+                if (scaled_width, scaled_height) != (base_width, base_height):
+                    attempts.append(
+                        (
+                            "lower_resolution",
+                            {"width": scaled_width, "height": scaled_height},
+                            False,
+                        )
+                    )
+
+                attempts.append(
+                    (
+                        "offload_vae_tiling",
+                        {
+                            "num_inference_steps": min(base_steps, max(8, lowered_steps)),
+                            "width": scaled_width,
+                            "height": scaled_height,
+                        },
+                        True,
+                    )
+                )
+
+                oom_info: Dict[str, Any] = {"attempts": []}
+                last_exc: Optional[Exception] = None
+
+                device_type = (
                     self.device.split(":")[0] if ":" in self.device else self.device
-                ):
-                    result = self.current_pipeline(**params)  # type: ignore
-                images = list(getattr(result, "images", []))  # type: ignore
-                if not images:
-                    raise RuntimeError("Pipeline returned no images")
-                return images
+                )
+
+                for label, overrides, aggressive in attempts:
+                    attempt_params = dict(params)
+                    attempt_params.update(dict(overrides or {}))
+                    attempt_steps = int(attempt_params.get("num_inference_steps", base_steps) or base_steps)
+                    attempt_width = int(attempt_params.get("width", base_width) or base_width)
+                    attempt_height = int(attempt_params.get("height", base_height) or base_height)
+
+                    if aggressive and torch.cuda.is_available() and str(self.device).startswith("cuda"):
+                        self._enable_aggressive_optimizations()
+
+                    try:
+                        with torch.autocast(device_type):
+                            result = self.current_pipeline(**attempt_params)  # type: ignore
+                        images = list(getattr(result, "images", []))  # type: ignore
+                        if not images:
+                            raise RuntimeError("Pipeline returned no images")
+
+                        # Update in-place for accurate metadata.
+                        params["num_inference_steps"] = attempt_steps
+                        params["width"] = attempt_width
+                        params["height"] = attempt_height
+
+                        used_label = None if label == "base" else label
+                        if used_label:
+                            oom_info["used"] = used_label
+                            oom_info["final_params"] = {
+                                "num_inference_steps": attempt_steps,
+                                "width": attempt_width,
+                                "height": attempt_height,
+                            }
+                            return images, oom_info
+                        return images, {}
+
+                    except Exception as exc:  # noqa: BLE001
+                        last_exc = exc
+                        is_oom = self._is_cuda_oom(exc)
+                        oom_info["attempts"].append(
+                            {
+                                "label": label,
+                                "params": {
+                                    "num_inference_steps": attempt_steps,
+                                    "width": attempt_width,
+                                    "height": attempt_height,
+                                },
+                                "oom": bool(is_oom),
+                                "aggressive": bool(aggressive),
+                                "error": str(exc)[:500],
+                            }
+                        )
+
+                        if not is_oom:
+                            raise
+
+                        try:
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                        except Exception:
+                            pass
+
+                        logger.warning("CUDA OOM on %s; retrying with fallback", label)
+                        continue
+
+                raise RuntimeError(
+                    f"Failed to generate images after OOM fallbacks: {last_exc}"
+                )
             elif not self.mock_generation:
                 raise RuntimeError("Pipeline not initialized")
 
@@ -361,7 +598,7 @@ class T2IEngine:
 
             await asyncio.sleep(0.05)  # Short delay to simulate processing
 
-            return images
+            return images, {}
 
         except Exception as e:
             logger.error(f"Image generation failed: {e}")
@@ -481,28 +718,9 @@ class T2IEngine:
     async def _post_process_image(
         self, image: Image.Image, request: Dict, safety_result: Dict
     ) -> Dict:
-        """Post-process generated image with safety checks and attribution."""
-        image_safety: Dict[str, Any] = {}
-        if self.safety_engine:
-            try:
-                image_safety = self.safety_engine.check_image_safety(image)
-                if not image_safety.get("is_safe", True):
-                    safety_result.update(image_safety)
-                    image = image_safety.get("processed_image", image)
-            except Exception as e:
-                logger.warning(f"Image safety check failed: {e}")
-
+        """Post-process generated image without safety checks or watermarking."""
+        image_safety: Dict[str, Any] = {"is_safe": True, "disabled": True}
         metadata: Optional[Dict[str, Any]] = None
-        if self.attribution_manager:
-            try:
-                image, metadata = self.attribution_manager.process_generated_image(
-                    image,
-                    generation_params=request,
-                    model_info={"name": self.current_model_id or "mock-model"},
-                    add_visible_watermark=self.config.get("watermark_enabled", True),
-                )
-            except Exception as e:
-                logger.debug(f"Watermarking skipped: {e}")
 
         output_path = await self._save_image_with_metadata(
             image, request, safety_result, metadata
@@ -531,13 +749,23 @@ class T2IEngine:
     ) -> str:
         """Save image with comprehensive metadata"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        session_id = request.get("session_id") or "general"
         output_dir = (
-            self.cache_root
-            / "outputs"
-            / "charaforge-t2i-lab"
+            Path(get_shared_cache().get_path("OUTPUT_DIR"))
+            / "t2i"
+            / str(session_id)
             / datetime.now().strftime("%Y-%m-%d")
         )
-        output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            output_dir = (
+                Path("/tmp/ai_output/outputs")
+                / "t2i"
+                / str(session_id)
+                / datetime.now().strftime("%Y-%m-%d")
+            )
+            output_dir.mkdir(parents=True, exist_ok=True)
 
         output_path = (
             output_dir / f"{timestamp}_{hash(str(request)) & 0x7FFFFFFF:08x}.png"
@@ -669,22 +897,44 @@ class T2IEngine:
         """Apply memory and performance optimizations"""
 
         # Enable attention slicing for memory efficiency
-        if self.optimization_settings["enable_attention_slicing"]:
+        if self.optimization_settings.get("enable_attention_slicing"):
             pipeline.enable_attention_slicing()
             logger.debug("Attention slicing enabled")
 
         # Enable VAE slicing for large images
-        if self.optimization_settings["enable_vae_slicing"]:
+        if self.optimization_settings.get("enable_vae_slicing"):
             pipeline.enable_vae_slicing()
             logger.debug("VAE slicing enabled")
 
-        # Enable CPU offload if needed
-        if self.optimization_settings["enable_cpu_offload"]:
-            pipeline.enable_model_cpu_offload()
-            logger.debug("CPU offload enabled")
+        # Enable VAE tiling (memory saver; esp. SDXL 1024)
+        if self.optimization_settings.get("enable_vae_tiling"):
+            try:
+                if hasattr(pipeline, "enable_vae_tiling"):
+                    pipeline.enable_vae_tiling()
+                    logger.debug("VAE tiling enabled")
+            except Exception:
+                pass
+
+        # CPU offload: sequential > model offload (best-effort)
+        if self.optimization_settings.get("enable_sequential_cpu_offload"):
+            try:
+                if hasattr(pipeline, "enable_sequential_cpu_offload"):
+                    pipeline.enable_sequential_cpu_offload()
+                    logger.debug("Sequential CPU offload enabled")
+            except Exception:
+                pass
+        elif self.optimization_settings.get("enable_cpu_offload"):
+            try:
+                if hasattr(pipeline, "enable_model_cpu_offload"):
+                    pipeline.enable_model_cpu_offload()
+                elif hasattr(pipeline, "enable_cpu_offload"):
+                    pipeline.enable_cpu_offload()
+                logger.debug("CPU offload enabled")
+            except Exception:
+                pass
 
         # Enable xFormers if available
-        if self.optimization_settings["enable_xformers"]:
+        if self.optimization_settings.get("enable_xformers"):
             try:
                 pipeline.enable_xformers_memory_efficient_attention()
                 logger.debug("xFormers attention enabled")
@@ -717,3 +967,40 @@ class T2IEngine:
                 self.pipeline.scheduler.config
             )
             logger.info(f"Scheduler changed to: {scheduler_name}")
+
+
+# ---------------------------------------------------------------------------
+# Global engine singleton (used by Story integration)
+# ---------------------------------------------------------------------------
+
+_t2i_engine: Optional[T2IEngine] = None
+
+
+def get_t2i_engine() -> T2IEngine:
+    """Get global T2I engine instance (singleton)."""
+    global _t2i_engine
+    if _t2i_engine is None:
+        from core.config import get_config
+
+        cfg = get_config()
+        cache = get_shared_cache()
+        from core.model_registry import resolve_model_path
+
+        mock_flag = os.getenv("T2I_MOCK", "0").lower() in {"1", "true", "yes", "on"}
+        default_model = resolve_model_path(
+            getattr(cfg.model, "default_sd_model", "stabilityai/stable-diffusion-xl-base-1.0"),
+            kind="t2i",
+        )
+
+        _t2i_engine = T2IEngine(
+            cache_root=str(cache.cache_root),
+            device=getattr(cfg.model, "device", "auto"),
+            config={
+                "default_model": default_model,
+                "mock_generation": mock_flag,
+                "safety": {},
+                "watermark_enabled": True,
+            },
+        )
+
+    return _t2i_engine

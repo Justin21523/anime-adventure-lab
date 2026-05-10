@@ -1,0 +1,340 @@
+{
+  "scenarios": [
+    {
+      "id": "scenario_1_basic_dialogue",
+      "name": "基礎對話測試",
+      "description": "測試基本的 NPC 對話和選擇系統",
+      "persona_id": "cheerful_companion",
+      "initial_prompt": "你來到了一個神秘的村莊，遇到了村長。",
+      "turns": [
+        {
+          "turn": 1,
+          "user_input": "向村長打招呼並詢問村莊的情況",
+          "expected_elements": ["村長", "村莊", "對話"],
+          "agent_action": null
+        },
+        {
+          "turn": 2,
+          "user_input": "詢問村莊最近有什麼奇怪的事情發生",
+          "expected_elements": ["奇怪", "事件", "線索"],
+          "agent_action": null
+        },
+        {
+          "turn": 3,
+          "user_input": "表示願意幫助調查",
+          "expected_elements": ["調查", "任務", "幫助"],
+          "agent_action": null
+        }
+      ]
+    },
+    {
+      "id": "scenario_2_multi_npc",
+      "name": "多 NPC 互動測試",
+      "description": "測試與多個 NPC 的複雜對話",
+      "persona_id": "mysterious_guide",
+      "initial_prompt": "你在酒館裡，看到了幾個可以交談的人物：老闆娘、冒險者、神秘旅人。",
+      "turns": [
+        {
+          "turn": 1,
+          "user_input": "先和老闆娘聊天，詢問酒館的招牌菜",
+          "expected_elements": ["老闆娘", "酒館", "食物"],
+          "agent_action": null
+        },
+        {
+          "turn": 2,
+          "user_input": "轉向冒險者，詢問他的冒險經歷",
+          "expected_elements": ["冒險者", "經歷", "故事"],
+          "agent_action": null
+        },
+        {
+          "turn": 3,
+          "user_input": "觀察神秘旅人，看看他有什麼可疑之處",
+          "expected_elements": ["神秘", "旅人", "觀察"],
+          "agent_action": {
+            "type": "autonomous_action",
+            "description": "Agent 應該分析情境並提供觀察結果"
+          }
+        },
+        {
+          "turn": 4,
+          "user_input": "主動搭話神秘旅人",
+          "expected_elements": ["對話", "回應", "資訊"],
+          "agent_action": null
+        }
+      ]
+    },
+    {
+      "id": "scenario_3_combat_situation",
+      "name": "戰鬥情境測試",
+      "description": "測試戰鬥相關的決策和 Agent 輔助",
+      "persona_id": "noble_knight",
+      "initial_prompt": "你在森林中遇到了三個哥布林，它們發現了你並準備攻擊！",
+      "turns": [
+        {
+          "turn": 1,
+          "user_input": "快速評估戰鬥情況，查看周圍環境",
+          "expected_elements": ["哥布林", "環境", "評估"],
+          "agent_action": {
+            "type": "autonomous_action",
+            "description": "Agent 應該分析戰鬥情況並提供建議"
+          }
+        },
+        {
+          "turn": 2,
+          "user_input": "使用戰術，先攻擊最左邊的哥布林",
+          "expected_elements": ["攻擊", "戰鬥", "結果"],
+          "agent_action": {
+            "type": "tool_use",
+            "tool": "calculator",
+            "params": {
+              "expression": "1d20+5"
+            },
+            "description": "計算攻擊骰"
+          }
+        },
+        {
+          "turn": 3,
+          "user_input": "防禦並尋找逃跑路線",
+          "expected_elements": ["防禦", "逃跑", "選擇"],
+          "agent_action": null
+        }
+      ]
+    },
+    {
+      "id": "scenario_4_knowledge_search",
+      "name": "知識檢索測試",
+      "description": "測試 RAG 系統整合和知識查詢",
+      "persona_id": "wise_sage",
+      "initial_prompt": "你在古老的圖書館中研究魔法文獻。",
+      "turns": [
+        {
+          "turn": 1,
+          "user_input": "搜尋關於古代魔法陣的資料",
+          "expected_elements": ["魔法陣", "資料", "搜尋"],
+          "agent_action": {
+            "type": "tool_use",
+            "tool": "rag_search",
+            "params": {
+              "query": "古代魔法陣",
+              "top_k": 3
+            },
+            "description": "從 RAG 系統檢索相關知識"
+          }
+        },
+        {
+          "turn": 2,
+          "user_input": "根據找到的資料，嘗試解讀魔法陣的含義",
+          "expected_elements": ["解讀", "含義", "分析"],
+          "agent_action": {
+            "type": "autonomous_action",
+            "description": "Agent 應該整合 RAG 結果並提供解讀"
+          }
+        },
+        {
+          "turn": 3,
+          "user_input": "記錄重要發現到筆記本",
+          "expected_elements": ["記錄", "筆記", "發現"],
+          "agent_action": {
+            "type": "tool_use",
+            "tool": "file_write",
+            "params": {
+              "file_path": "outputs/magic_research.txt",
+              "content": "魔法陣研究筆記"
+            },
+            "description": "將研究結果記錄到文件"
+          }
+        }
+      ]
+    },
+    {
+      "id": "scenario_5_emotional_journey",
+      "name": "情感歷程測試",
+      "description": "測試角色情感變化和記憶系統",
+      "persona_id": "mysterious_guide",
+      "initial_prompt": "你獨自在雨中行走，想起了過去的夥伴。",
+      "turns": [
+        {
+          "turn": 1,
+          "user_input": "回憶與夥伴的美好時光",
+          "expected_elements": ["回憶", "夥伴", "情感"],
+          "agent_action": {
+            "type": "autonomous_action",
+            "description": "Agent 應該根據記憶系統生成相關回憶"
+          }
+        },
+        {
+          "turn": 2,
+          "user_input": "決定尋找一個避雨的地方",
+          "expected_elements": ["避雨", "地方", "決定"],
+          "agent_action": null
+        },
+        {
+          "turn": 3,
+          "user_input": "在避雨處遇到一個陌生人，開始對話",
+          "expected_elements": ["陌生人", "對話", "新角色"],
+          "agent_action": null
+        },
+        {
+          "turn": 4,
+          "user_input": "向陌生人分享自己的故事",
+          "expected_elements": ["分享", "故事", "連結"],
+          "agent_action": {
+            "type": "autonomous_action",
+            "description": "Agent 應該整合之前的對話記憶"
+          }
+        }
+      ]
+    },
+    {
+      "id": "scenario_6_puzzle_solving",
+      "name": "謎題解決測試",
+      "description": "測試邏輯推理和工具使用",
+      "persona_id": "wise_sage",
+      "initial_prompt": "你在調查一起神秘事件，房間裡有幾個可疑的線索。",
+      "turns": [
+        {
+          "turn": 1,
+          "user_input": "仔細檢查房間的所有線索",
+          "expected_elements": ["線索", "檢查", "發現"],
+          "agent_action": {
+            "type": "tool_use",
+            "tool": "file_list",
+            "params": {
+              "path": "outputs/clues",
+              "pattern": "*"
+            },
+            "description": "列出所有可用線索文件"
+          }
+        },
+        {
+          "turn": 2,
+          "user_input": "分析線索之間的關聯性",
+          "expected_elements": ["分析", "關聯", "推理"],
+          "agent_action": {
+            "type": "autonomous_action",
+            "description": "Agent 應該進行邏輯推理"
+          }
+        },
+        {
+          "turn": 3,
+          "user_input": "做出推論並提出解決方案",
+          "expected_elements": ["推論", "解決", "結論"],
+          "agent_action": null
+        }
+      ]
+    },
+    {
+      "id": "scenario_7_moral_choice",
+      "name": "道德選擇測試",
+      "description": "測試複雜的道德決策和後果系統",
+      "persona_id": "noble_knight",
+      "initial_prompt": "你發現一個小偷偷了麵包，但他說是為了餵飽生病的妹妹。",
+      "turns": [
+        {
+          "turn": 1,
+          "user_input": "詢問小偷更多關於他妹妹的情況",
+          "expected_elements": ["詢問", "妹妹", "情況"],
+          "agent_action": null
+        },
+        {
+          "turn": 2,
+          "user_input": "檢查小偷說的是否屬實",
+          "expected_elements": ["檢查", "真實性", "判斷"],
+          "agent_action": {
+            "type": "autonomous_action",
+            "description": "Agent 應該提供判斷建議"
+          }
+        },
+        {
+          "turn": 3,
+          "user_input": "決定幫助小偷並給他錢買藥",
+          "expected_elements": ["幫助", "決定", "後果"],
+          "agent_action": null
+        },
+        {
+          "turn": 4,
+          "user_input": "觀察這個決定帶來的影響",
+          "expected_elements": ["影響", "後果", "反饋"],
+          "agent_action": {
+            "type": "autonomous_action",
+            "description": "Agent 應該生成決定的後續影響"
+          }
+        }
+      ]
+    }
+  ],
+  "test_personas": [
+    {
+      "id": "adventurer",
+      "name": "冒險者",
+      "archetype": "探險家",
+      "background": "一個勇敢的冒險者，總是尋找新的挑戰",
+      "traits": ["勇敢", "好奇", "樂觀"],
+      "stats": {
+        "strength": 15,
+        "intelligence": 12,
+        "charisma": 14
+      }
+    },
+    {
+      "id": "warrior",
+      "name": "戰士",
+      "archetype": "戰鬥專家",
+      "background": "經驗豐富的戰士，擅長戰術和戰鬥",
+      "traits": ["強壯", "戰術", "堅韌"],
+      "stats": {
+        "strength": 18,
+        "intelligence": 10,
+        "charisma": 12
+      }
+    },
+    {
+      "id": "scholar",
+      "name": "學者",
+      "archetype": "知識追求者",
+      "background": "博學多聞的學者，熱愛研究古老知識",
+      "traits": ["聰明", "好學", "細心"],
+      "stats": {
+        "strength": 8,
+        "intelligence": 18,
+        "charisma": 11
+      }
+    },
+    {
+      "id": "traveler",
+      "name": "旅行者",
+      "archetype": "流浪者",
+      "background": "四處旅行的浪人，有著豐富的人生閱歷",
+      "traits": ["適應力強", "經驗豐富", "神秘"],
+      "stats": {
+        "strength": 12,
+        "intelligence": 14,
+        "charisma": 15
+      }
+    },
+    {
+      "id": "detective",
+      "name": "偵探",
+      "archetype": "推理專家",
+      "background": "善於觀察和推理的偵探",
+      "traits": ["敏銳", "邏輯", "謹慎"],
+      "stats": {
+        "strength": 10,
+        "intelligence": 16,
+        "charisma": 13
+      }
+    },
+    {
+      "id": "hero",
+      "name": "英雄",
+      "archetype": "正義使者",
+      "background": "堅持正義的英雄，總是幫助需要幫助的人",
+      "traits": ["正義", "勇敢", "同情心"],
+      "stats": {
+        "strength": 16,
+        "intelligence": 13,
+        "charisma": 16
+      }
+    }
+  ]
+}

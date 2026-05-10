@@ -75,15 +75,25 @@ class StorySafetyWrapper:
         r"^_.*",                # Internal flags (start with underscore)
     ]
 
-    # Stat constraints
+    # Stat constraints (align with core/story/game_state.py PlayerStats)
     STAT_CONSTRAINTS = {
+        "health": {"min": 0, "max": 9999},
+        "energy": {"min": 0, "max": 9999},
+        "intelligence": {"min": 0, "max": 999},
+        "charisma": {"min": 0, "max": 999},
+        "luck": {"min": 0, "max": 999},
+        "experience": {"min": 0, "max": 999999},
+        "level": {"min": 1, "max": 100},
+        # Legacy aliases (accepted, normalized internally)
         "hp": {"min": 0, "max": 9999},
         "mp": {"min": 0, "max": 9999},
-        "max_hp": {"min": 1, "max": 9999},
-        "max_mp": {"min": 1, "max": 9999},
-        "level": {"min": 1, "max": 100},
         "exp": {"min": 0, "max": 999999},
-        "gold": {"min": 0, "max": 999999},
+    }
+
+    _STAT_ALIASES = {
+        "hp": "health",
+        "mp": "energy",
+        "exp": "experience",
     }
 
     def __init__(self, tool_registry=None, audit_logger=None):
@@ -144,7 +154,9 @@ class StorySafetyWrapper:
         Raises:
             ToolValidationError if invalid
         """
-        if stat_name not in self.STAT_CONSTRAINTS:
+        key = str(stat_name or "").strip()
+        canonical = self._STAT_ALIASES.get(key, key)
+        if canonical not in self.STAT_CONSTRAINTS:
             raise ToolValidationError(
                 f"Unknown stat '{stat_name}'. Allowed stats: {list(self.STAT_CONSTRAINTS.keys())}"
             )
@@ -158,7 +170,7 @@ class StorySafetyWrapper:
             )
 
         # Check bounds
-        constraints = self.STAT_CONSTRAINTS[stat_name]
+        constraints = self.STAT_CONSTRAINTS[canonical]
         if numeric_value < constraints["min"] or numeric_value > constraints["max"]:
             raise ToolValidationError(
                 f"Stat '{stat_name}' value {numeric_value} outside allowed range "
@@ -167,12 +179,13 @@ class StorySafetyWrapper:
 
         return True
 
-    def validate_tool_params(self, tool_name: str, params: Dict[str, Any]) -> bool:
+    def validate_tool_params(self, tool_name: str, session_id: str, params: Dict[str, Any]) -> bool:
         """
         Validate tool parameters based on tool type
 
         Args:
             tool_name: Name of tool being called
+            session_id: Story session ID (for validating relative changes)
             params: Parameters passed to tool
 
         Returns:
@@ -189,10 +202,90 @@ class StorySafetyWrapper:
                 self.validate_flag_name(flag_name)
 
         elif tool_name == "update_character_state":
-            # Validate stat changes
-            stats = params.get("stats", {})
+            # Validate stat changes (support relative deltas)
+            from core.story.engine import get_story_engine
+
+            engine = get_story_engine()
+            session = engine.get_session(session_id)
+
+            stats = params.get("stats", {}) or {}
+            relative = bool(params.get("relative", False))
+
             for stat_name, value in stats.items():
-                self.validate_stat_change(stat_name, value)
+                key = str(stat_name or "").strip()
+                canonical = self._STAT_ALIASES.get(key, key)
+                if not hasattr(session.stats, canonical):
+                    raise ToolValidationError(f"Unknown stat '{stat_name}'")
+
+                try:
+                    numeric_value = float(value)
+                except (ValueError, TypeError) as exc:
+                    raise ToolValidationError(
+                        f"Stat '{stat_name}' must be numeric, got {type(value)}"
+                    ) from exc
+
+                current_value = getattr(session.stats, canonical)
+                proposed = current_value + numeric_value if relative else numeric_value
+
+                # Mirror tool-side normalization/clamping.
+                if canonical in {"health", "energy"}:
+                    proposed = max(0, proposed)
+                if canonical == "level":
+                    proposed = max(1, int(proposed))
+                if canonical in {"intelligence", "charisma", "luck"}:
+                    proposed = int(proposed)
+                if canonical == "experience":
+                    proposed = max(0, int(proposed))
+
+                self.validate_stat_change(canonical, proposed)
+
+        elif tool_name == "add_inventory_item":
+            item = params.get("item")
+            if not item or not str(item).strip():
+                raise ToolValidationError("add_inventory_item requires non-empty 'item'")
+            qty = params.get("quantity", 1)
+            try:
+                qty_int = int(qty)
+            except Exception as exc:  # noqa: BLE001
+                raise ToolValidationError(f"Invalid quantity: {qty}") from exc
+            if qty_int < 1 or qty_int > 99:
+                raise ToolValidationError("quantity must be between 1 and 99")
+
+        elif tool_name == "update_relationship_state":
+            from core.story.engine import get_story_engine
+
+            engine = get_story_engine()
+            if not getattr(engine, "enhanced_mode", False) or session_id not in getattr(engine, "context_memories", {}):
+                raise ToolValidationError("update_relationship_state requires enhanced mode context memory")
+
+            context_memory = engine.context_memories[session_id]  # type: ignore[attr-defined]
+
+            rels = params.get("relationships", {}) or {}
+            if not isinstance(rels, dict) or not rels:
+                raise ToolValidationError("relationships must be a non-empty dict")
+
+            relative = bool(params.get("relative", True))
+            for raw_id, raw_value in rels.items():
+                char_id = str(raw_id or "").strip()
+                if not char_id:
+                    raise ToolValidationError("character_id cannot be empty")
+                if len(char_id) > 64 or "\n" in char_id or "\r" in char_id:
+                    raise ToolValidationError("character_id is invalid")
+
+                try:
+                    change_int = int(raw_value)
+                except Exception as exc:  # noqa: BLE001
+                    raise ToolValidationError(f"Invalid relationship value: {raw_value}") from exc
+
+                if change_int < -10 or change_int > 10:
+                    raise ToolValidationError("relationship change must be between -10 and 10")
+
+                if char_id != "any":
+                    current = int(context_memory.player_relationships.get(char_id, 0) or 0)
+                    proposed = current + change_int if relative else change_int
+                    proposed = max(-10, min(10, proposed))
+                    if proposed < -10 or proposed > 10:
+                        raise ToolValidationError("relationship score out of range")
 
         elif tool_name == "generate_scene_image":
             # Validate scene context has required fields
@@ -229,6 +322,19 @@ class StorySafetyWrapper:
                 "timestamp": datetime.now().isoformat()
             }
 
+            # Enhanced mode context snapshots (world_flags / relationships)
+            try:
+                if getattr(engine, "enhanced_mode", False) and session_id in getattr(engine, "context_memories", {}):
+                    context_memory = engine.context_memories[session_id]  # type: ignore[attr-defined]
+                    snapshot["context_world_flags"] = copy.deepcopy(
+                        getattr(context_memory, "world_flags", {}) or {}
+                    )
+                    snapshot["context_player_relationships"] = copy.deepcopy(
+                        getattr(context_memory, "player_relationships", {}) or {}
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+
             return snapshot
 
         except Exception as e:
@@ -257,6 +363,28 @@ class StorySafetyWrapper:
             stats_data = snapshot.get("stats", {})
             for key, value in stats_data.items():
                 setattr(session.stats, key, value)
+
+            # Restore enhanced context if present
+            try:
+                if getattr(engine, "enhanced_mode", False) and session_id in getattr(engine, "context_memories", {}):
+                    context_memory = engine.context_memories[session_id]  # type: ignore[attr-defined]
+                    if "context_world_flags" in snapshot:
+                        context_memory.world_flags = copy.deepcopy(snapshot.get("context_world_flags", {}))
+                    if "context_player_relationships" in snapshot:
+                        context_memory.player_relationships = copy.deepcopy(
+                            snapshot.get("context_player_relationships", {})
+                        )
+            except Exception:  # noqa: BLE001
+                pass
+
+            # Persist rollback so session/context files remain consistent
+            try:
+                if hasattr(engine, "save_session"):
+                    engine.save_session(session)
+                else:
+                    engine._save_session(session)  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                pass
 
             logger.info(f"Rolled back session {session_id} to snapshot from {snapshot.get('timestamp')}")
 
@@ -287,7 +415,7 @@ class StorySafetyWrapper:
         try:
             # 1. Validate parameters
             logger.info(f"Validating tool '{tool_name}' params for session {session_id}")
-            self.validate_tool_params(tool_name, params)
+            self.validate_tool_params(tool_name, session_id, params)
 
             # 2. Create state snapshot
             snapshot = await self._snapshot_state(session_id)
@@ -296,10 +424,20 @@ class StorySafetyWrapper:
             logger.info(f"Executing tool '{tool_name}' for session {session_id}")
 
             if self.tool_registry:
-                tool_func = self.tool_registry.get(tool_name)
+                tool_func = None
+                if hasattr(self.tool_registry, "get_function"):
+                    tool_func = self.tool_registry.get_function(tool_name)  # type: ignore[attr-defined]
+                elif isinstance(self.tool_registry, dict):
+                    tool_func = self.tool_registry.get(tool_name)
                 if not tool_func:
                     raise ValueError(f"Tool '{tool_name}' not found in registry")
-                result = await tool_func(session_id, params)
+
+                # Prefer calling signature: tool(session_id, params) for story tools.
+                try:
+                    result = await tool_func(session_id, params)
+                except TypeError:
+                    # Fallback to keyword style: tool(session_id=..., **params)
+                    result = await tool_func(session_id=session_id, **(params or {}))
             else:
                 # Fallback: import and call directly
                 result = await self._execute_tool_direct(tool_name, session_id, params)
@@ -397,6 +535,9 @@ class StorySafetyWrapper:
         elif tool_name == "update_character_state":
             from core.agents.tools.character_state import update_character_state
             return await update_character_state(session_id, params)
+        elif tool_name == "add_inventory_item":
+            from core.agents.tools.character_state import add_inventory_item
+            return await add_inventory_item(session_id, params)
         elif tool_name == "generate_scene_image":
             from core.story.t2i_integration import get_t2i_integration
             t2i = get_t2i_integration()
@@ -408,6 +549,9 @@ class StorySafetyWrapper:
         elif tool_name == "rag_search":
             from core.agents.tools.rag_search import rag_search
             return await rag_search(session_id, params)
+        elif tool_name == "update_relationship_state":
+            from core.agents.tools.relationship_state import update_relationship_state
+            return await update_relationship_state(session_id, params)
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
 

@@ -35,6 +35,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
 
 from core.shared_cache import get_shared_cache
+from core.model_registry import resolve_model_path
 
 logger = logging.getLogger(__name__)
 
@@ -43,17 +44,26 @@ class PipelineManager:
     """Manages diffusion pipeline lifecycle and optimization - COMPLETE"""
 
     def __init__(self, cache_root: str, device: str = "cuda"):
+        self.cache = get_shared_cache()
         self.cache_root = Path(cache_root)
         self.device = device
         self.pipeline = None
-        self.model_cache_dir = self.cache_root / "models"
-        self.model_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.model_cache_dir = (
+            Path(self.cache.get_path("MODELS_TEXT2IMAGE")) / "hf"
+        )  # keep HF snapshots out of cache root
+        try:
+            self.model_cache_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            self.model_cache_dir = Path("/tmp/ai_models/stable-diffusion/hf")
+            self.model_cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize optimization settings
         self.optimization_settings = {
             "enable_attention_slicing": True,
             "enable_vae_slicing": True,
+            "enable_vae_tiling": False,
             "enable_cpu_offload": False,
+            "enable_sequential_cpu_offload": False,
             "use_fp16": torch.cuda.is_available(),
             "enable_xformers": True,
         }
@@ -63,10 +73,11 @@ class PipelineManager:
     async def load_pipeline(self, model_id: str, **kwargs) -> DiffusionPipeline:
         """Load diffusion pipeline with optimizations"""
         try:
-            logger.info(f"Loading pipeline: {model_id}")
+            local_model_id = resolve_model_path(model_id, kind="t2i")
+            logger.info("Loading pipeline: %s -> %s", model_id, local_model_id)
 
             # Determine pipeline type
-            pipeline_class = self._get_pipeline_class(model_id)
+            pipeline_class = self._get_pipeline_class(local_model_id)
 
             load_args = {
                 "torch_dtype": (
@@ -77,7 +88,7 @@ class PipelineManager:
                 **kwargs,
             }
 
-            model_path = Path(model_id)
+            model_path = Path(local_model_id)
             if model_path.suffix in {".safetensors", ".ckpt"} and model_path.exists():
                 # Local single-file checkpoint
                 load_args.setdefault("use_safetensors", model_path.suffix == ".safetensors")
@@ -85,7 +96,8 @@ class PipelineManager:
                 pipeline = pipeline_class.from_single_file(str(model_path), **load_args)
             else:
                 load_args.setdefault("cache_dir", str(self.model_cache_dir))
-                pipeline = pipeline_class.from_pretrained(model_id, **load_args)
+                load_args.setdefault("local_files_only", True)
+                pipeline = pipeline_class.from_pretrained(local_model_id, **load_args)
 
             # Move to device
             if self.device != "auto":
@@ -95,7 +107,7 @@ class PipelineManager:
             pipeline = self._apply_optimizations(pipeline)
 
             self.pipeline = pipeline
-            logger.info(f"Pipeline loaded and optimized: {model_id}")
+            logger.info(f"Pipeline loaded and optimized: {local_model_id}")
             return pipeline
 
         except Exception as e:
@@ -130,10 +142,29 @@ class PipelineManager:
             except Exception as e:
                 logger.warning(f"Failed to enable VAE slicing: {e}")
 
-        # Enable CPU offload if needed
-        if self.optimization_settings["enable_cpu_offload"]:
+        # Enable VAE tiling (best-effort; esp. SDXL 1024 on 16GB)
+        if self.optimization_settings.get("enable_vae_tiling"):
             try:
-                pipeline.enable_model_cpu_offload()
+                if hasattr(pipeline, "enable_vae_tiling"):
+                    pipeline.enable_vae_tiling()
+                    logger.debug("VAE tiling enabled")
+            except Exception as e:
+                logger.warning(f"Failed to enable VAE tiling: {e}")
+
+        # Enable CPU offload if needed (sequential > model offload)
+        if self.optimization_settings.get("enable_sequential_cpu_offload"):
+            try:
+                if hasattr(pipeline, "enable_sequential_cpu_offload"):
+                    pipeline.enable_sequential_cpu_offload()
+                    logger.debug("Sequential CPU offload enabled")
+            except Exception as e:
+                logger.warning(f"Failed to enable sequential CPU offload: {e}")
+        elif self.optimization_settings["enable_cpu_offload"]:
+            try:
+                if hasattr(pipeline, "enable_model_cpu_offload"):
+                    pipeline.enable_model_cpu_offload()
+                elif hasattr(pipeline, "enable_cpu_offload"):
+                    pipeline.enable_cpu_offload()
                 logger.debug("CPU offload enabled")
             except Exception as e:
                 logger.warning(f"Failed to enable CPU offload: {e}")
@@ -191,7 +222,9 @@ def get_t2i_pipeline(model_id: str = "runwayml/stable-diffusion-v1-5"):
             model_id,
             torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
             device_map="auto" if torch.cuda.is_available() else None,
-            cache_dir=f"{get_shared_cache().cache_root}/models",
+            cache_dir=str(
+                Path(get_shared_cache().get_path("MODELS_TEXT2IMAGE")) / "hf"
+            ),
         )
 
         if torch.cuda.is_available():

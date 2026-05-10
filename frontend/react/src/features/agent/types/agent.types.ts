@@ -2,6 +2,8 @@
  * Agent system types
  */
 
+import type { WorldAgentProfile } from '@/features/worlds/types/world.types'
+
 export interface AgentTool {
   name: string
   description: string
@@ -41,4 +43,26 @@ export interface AgentToolsResponse {
   tools: AgentTool[]
   categories: string[]
   total: number
+}
+
+export interface StorySubAgentInfo {
+  id: string
+  name: string
+  description?: string
+}
+
+export interface StoryAllowedToolInfo {
+  id: string
+  description?: string
+}
+
+export interface StoryAgentCatalog {
+  sub_agents: StorySubAgentInfo[]
+  allowed_tools: StoryAllowedToolInfo[]
+  default_agent_profile: WorldAgentProfile
+}
+
+export interface AgentCatalogResponse {
+  success: boolean
+  story: StoryAgentCatalog
 }

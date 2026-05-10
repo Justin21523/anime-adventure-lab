@@ -6,6 +6,7 @@ Integrates with model loader, chat manager, and context manager
 
 import torch
 import logging
+import os
 from typing import List, Dict, Any, Optional, Union
 from transformers import (
     AutoTokenizer,
@@ -30,6 +31,13 @@ from ..config import get_config
 from ..shared_cache import get_shared_cache
 
 logger = logging.getLogger(__name__)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class EnhancedTransformersLLM(BaseLLM):
@@ -124,35 +132,56 @@ class EnhancedTransformersLLM(BaseLLM):
             # Build final prompt
             final_prompt = prepared_messages[0].content
 
-            # Tokenize input
-            inputs = self.tokenizer(
+            # Tokenize input (CPU)
+            tokenized = self.tokenizer(
                 final_prompt,
                 return_tensors="pt",
                 truncation=True,
                 max_length=token_usage.prompt_tokens + 100,  # Safety margin
             )
 
-            # Move to model device
-            device = next(self.model.parameters()).device
-            inputs = {k: v.to(device) for k, v in inputs.items()}
+            input_length = tokenized["input_ids"].shape[1]
 
-            # Generate with improved parameters
-            with torch.no_grad():
-                outputs = self.model.generate(  # type: ignore
-                    **inputs,
-                    max_new_tokens=max_length,
-                    temperature=temperature,
-                    do_sample=do_sample,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                    repetition_penalty=kwargs.get("repetition_penalty", 1.1),
-                    top_p=kwargs.get("top_p", 0.9),
-                    top_k=kwargs.get("top_k", 50),
-                    **kwargs,
-                )
+            def _do_generate():
+                # Move to model device
+                device = next(self.model.parameters()).device
+                dev_inputs = {k: v.to(device) for k, v in tokenized.items()}
+
+                # Generate with improved parameters
+                with torch.no_grad():
+                    return self.model.generate(  # type: ignore
+                        **dev_inputs,
+                        max_new_tokens=max_length,
+                        temperature=temperature,
+                        do_sample=do_sample,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                        repetition_penalty=kwargs.get("repetition_penalty", 1.1),
+                        top_p=kwargs.get("top_p", 0.9),
+                        top_k=kwargs.get("top_k", 50),
+                        **kwargs,
+                    )
+
+            use_gpu_lock = False
+            try:
+                device_map = str(getattr(self.load_config, "device_map", "") or "").strip().lower()  # type: ignore[union-attr]
+                use_gpu_lock = torch.cuda.is_available() and device_map != "cpu"
+            except Exception:
+                use_gpu_lock = torch.cuda.is_available()
+
+            if use_gpu_lock:
+                try:
+                    from core.runtime import get_model_runtime
+
+                    runtime = get_model_runtime()
+                    with runtime.exclusive_gpu(reason=f"llm.generate:{self.model_name}", device="cuda"):
+                        outputs = _do_generate()
+                except Exception:
+                    outputs = _do_generate()
+            else:
+                outputs = _do_generate()
 
             # Decode only the new tokens
-            input_length = inputs["input_ids"].shape[1]
             generated_tokens = outputs[0][input_length:]
             generated_text = self.tokenizer.decode(
                 generated_tokens, skip_special_tokens=True
@@ -188,35 +217,54 @@ class EnhancedTransformersLLM(BaseLLM):
             # Build chat prompt using model-specific formatting
             chat_prompt = self._build_chat_prompt(prepared_messages)
 
-            # Tokenize
-            inputs = self.tokenizer(
+            # Tokenize (CPU)
+            tokenized = self.tokenizer(
                 chat_prompt,
                 return_tensors="pt",
                 truncation=True,
                 max_length=token_usage.prompt_tokens + 100,
             )
 
-            # Move to device
-            device = next(self.model.parameters()).device
-            inputs = {k: v.to(device) for k, v in inputs.items()}
+            input_length = tokenized["input_ids"].shape[1]
 
-            # Generate response
-            with torch.no_grad():
-                outputs = self.model.generate(  # type: ignore
-                    **inputs,
-                    max_new_tokens=max_length,
-                    temperature=temperature,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                    repetition_penalty=kwargs.get("repetition_penalty", 1.1),
-                    top_p=kwargs.get("top_p", 0.9),
-                    top_k=kwargs.get("top_k", 50),
-                    **kwargs,
-                )
+            def _do_chat_generate():
+                device = next(self.model.parameters()).device
+                dev_inputs = {k: v.to(device) for k, v in tokenized.items()}
+                with torch.no_grad():
+                    return self.model.generate(  # type: ignore
+                        **dev_inputs,
+                        max_new_tokens=max_length,
+                        temperature=temperature,
+                        do_sample=True,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                        repetition_penalty=kwargs.get("repetition_penalty", 1.1),
+                        top_p=kwargs.get("top_p", 0.9),
+                        top_k=kwargs.get("top_k", 50),
+                        **kwargs,
+                    )
+
+            use_gpu_lock = False
+            try:
+                device_map = str(getattr(self.load_config, "device_map", "") or "").strip().lower()  # type: ignore[union-attr]
+                use_gpu_lock = torch.cuda.is_available() and device_map != "cpu"
+            except Exception:
+                use_gpu_lock = torch.cuda.is_available()
+
+            if use_gpu_lock:
+                try:
+                    from core.runtime import get_model_runtime
+
+                    runtime = get_model_runtime()
+                    with runtime.exclusive_gpu(reason=f"llm.chat:{self.model_name}", device="cuda"):
+                        outputs = _do_chat_generate()
+                except Exception:
+                    outputs = _do_chat_generate()
+            else:
+                outputs = _do_chat_generate()
 
             # Decode response
-            response_tokens = outputs[0][inputs["input_ids"].shape[1] :]
+            response_tokens = outputs[0][input_length:]
             response_text = self.tokenizer.decode(
                 response_tokens, skip_special_tokens=True
             ).strip()
@@ -733,27 +781,91 @@ _enhanced_llm_adapter: Optional["LLMAdapter"] = None
 class LLMAdapter(EnhancedLLMAdapter):
     """Backward-compatible adapter wrapper used by API/workers."""
 
-    def __init__(self, model_name: str = "microsoft/DialoGPT-medium", use_mock=None, **kwargs):
+    def __init__(self, model_name: str, use_mock=None, **kwargs):
         super().__init__()
         self.model_name = model_name
         self.use_mock = use_mock
         self._kwargs = kwargs
         self._llm = self._create_llm()
 
+    def reconfigure(self, model_name: str, use_mock=None, **kwargs) -> None:
+        """
+        Reconfigure the adapter in-place.
+
+        Why in-place:
+        - Many subsystems keep a reference to the global adapter object.
+        - Replacing the global singleton would leave stale references behind.
+        """
+        next_model = str(model_name or "").strip()
+        if not next_model:
+            return
+
+        next_kwargs = dict(kwargs or {})
+        if (
+            str(getattr(self, "model_name", "") or "") == next_model
+            and getattr(self, "use_mock", None) == use_mock
+            and isinstance(getattr(self, "_kwargs", None), dict)
+            and dict(getattr(self, "_kwargs", {}) or {}) == next_kwargs
+        ):
+            return
+
+        try:
+            self.unload_all()
+        except Exception:
+            pass
+
+        self.model_name = next_model
+        self.use_mock = use_mock
+        self._kwargs = next_kwargs
+        self._llm = self._create_llm()
+
     def _create_llm(self) -> Union[EnhancedTransformersLLM, MockLLMAdapter]:
-        """Instantiate underlying LLM (mock when GPU unavailable)."""
+        """Instantiate underlying LLM.
+
+        Priority order:
+        1. Mock (opt-in via `use_mock`, `mock=True`, or `LLM_MOCK=1`)
+        2. llama.cpp server (env `LLAMA_SERVER_URL` or `LLM_BACKEND=llamacpp`)
+        3. Local HuggingFace Transformers (Qwen / Llama / generic)
+
+        Lack of CUDA should not silently force story generation into mock mode
+        when the operator requested real local inference.
+        """
         use_mock = (
-            self.use_mock
+            bool(self.use_mock)
             if self.use_mock is not None
-            else (not torch.cuda.is_available() or self._kwargs.get("mock", False))
+            else bool(self._kwargs.get("mock", False) or _env_flag("LLM_MOCK", False))
         )
 
         if use_mock or self.model_name == "mock":
             return MockLLMAdapter("mock")
 
+        # --- llama.cpp server (OpenAI-compatible) ---
+        backend = os.getenv("LLM_BACKEND", "").strip().lower()
+        server_url = os.getenv("LLAMA_SERVER_URL", "http://localhost:8080").strip()
+        if backend == "llamacpp" or server_url != "http://localhost:8080" or _env_flag("LLAMA_CPP_SERVER", False):
+            try:
+                from .llamacpp_server_adapter import LlamaCppServerLLM
+
+                return LlamaCppServerLLM(
+                    model_name=self.model_name,
+                    server_url=server_url,
+                    timeout=int(os.getenv("LLAMA_SERVER_TIMEOUT", "300")),
+                    **self._kwargs,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to create LlamaCppServerLLM (%s); falling back to Transformers", exc
+                )
+
+        # --- Local HuggingFace Transformers (original path) ---
         from .model_loader import ModelLoadConfig
 
         load_config = ModelLoadConfig(model_name=self.model_name, **self._kwargs)  # type: ignore
+        lowered = str(self.model_name or "").lower()
+        if "qwen" in lowered:
+            return QwenLLM(self.model_name, load_config)  # type: ignore[arg-type]
+        if "llama" in lowered:
+            return LlamaLLM(self.model_name, load_config)  # type: ignore[arg-type]
         return EnhancedTransformersLLM(self.model_name, load_config)
 
     def chat_completion(
@@ -794,20 +906,57 @@ class LLMAdapter(EnhancedLLMAdapter):
         if hasattr(self._llm, "load_model"):
             try:
                 self._llm.load_model()  # type: ignore
-            except Exception:
-                # Fall back to mock if real load fails
-                self._llm = MockLLMAdapter("mock")
+            except Exception as exc:
+                if self._mock_fallback_allowed():
+                    logger.warning("LLM load failed; using explicit mock fallback: %s", exc)
+                    self._llm = MockLLMAdapter("mock")
+                else:
+                    raise
 
-        return self._llm.chat(messages=messages, max_length=max_length, temperature=temperature, **kwargs)  # type: ignore
+        try:
+            return self._llm.chat(messages=messages, max_length=max_length, temperature=temperature, **kwargs)  # type: ignore
+        except Exception as exc:
+            logger.warning("LLM chat failed: %s", exc)
+            if self._mock_fallback_allowed():
+                logger.warning("Switching to mock fallback after chat failure")
+                self._llm = MockLLMAdapter("mock")
+                return self._llm.chat(messages=messages, max_length=max_length, temperature=temperature, **kwargs)  # type: ignore
+            raise
 
     def generate_text(self, prompt: str, max_tokens: int = 256, temperature: float = 0.7, **kwargs) -> str:
         """Simple text generation helper."""
         if hasattr(self._llm, "load_model"):
             try:
                 self._llm.load_model()  # type: ignore
-            except Exception:
+            except Exception as exc:
+                if self._mock_fallback_allowed():
+                    logger.warning("LLM load failed; using explicit mock fallback: %s", exc)
+                    self._llm = MockLLMAdapter("mock")
+                else:
+                    raise
+        try:
+            return self._llm.generate(prompt, max_length=max_tokens, temperature=temperature, **kwargs)  # type: ignore
+        except Exception as exc:
+            logger.warning("LLM generate failed: %s", exc)
+            if self._mock_fallback_allowed():
+                logger.warning("Switching to mock fallback after generate failure")
                 self._llm = MockLLMAdapter("mock")
-        return self._llm.generate(prompt, max_length=max_tokens, temperature=temperature, **kwargs)  # type: ignore
+                return self._llm.generate(prompt, max_length=max_tokens, temperature=temperature, **kwargs)  # type: ignore
+            raise
+
+    def _mock_fallback_allowed(self) -> bool:
+        return bool(
+            self.use_mock
+            or self._kwargs.get("mock", False)
+            or _env_flag("LLM_MOCK", False)
+            or self.model_name == "mock"
+        )
+
+    def is_available(self) -> bool:
+        """Check if underlying LLM is available"""
+        if hasattr(self._llm, "is_available"):
+            return self._llm.is_available()  # type: ignore
+        return False
 
     def list_loaded_models(self) -> List[str]:
         if hasattr(self._llm, "is_available") and self._llm.is_available():  # type: ignore
@@ -822,16 +971,83 @@ class LLMAdapter(EnhancedLLMAdapter):
                 return False
         return True
 
+    def health_check(self) -> Dict[str, Any]:
+        """Return LLM health status for /healthz monitoring."""
+        info: Dict[str, Any] = {
+            "model": getattr(self._llm, "model_name", self.model_name),
+            "available": self.is_available(),
+            "type": type(self._llm).__name__,
+        }
+        # For llama.cpp server, do a lightweight connectivity probe
+        try:
+            from .llamacpp_server_adapter import LlamaCppServerLLM as _LlamaCppServerLLM
+        except ImportError:
+            _LlamaCppServerLLM = type(None)  # type: ignore[misc,assignment]
+
+        if isinstance(self._llm, _LlamaCppServerLLM):
+            import httpx as _httpx
+
+            # Sync probe — health_check is called from sync context
+            try:
+                with _httpx.Client(
+                    base_url=getattr(self._llm, "server_url", ""),
+                    timeout=_httpx.Timeout(5, connect=3),
+                ) as c:
+                    r = c.get("/health")
+                    info["server_reachable"] = r.status_code == 200
+                    if r.status_code == 200:
+                        # Server reachable → mark as available and load it
+                        self._llm.load_model()
+                        info["available"] = True
+            except Exception:
+                info["server_reachable"] = False
+                info["error"] = "Cannot reach llama.cpp server"
+            info["server_url"] = getattr(self._llm, "server_url", "")
+        return info
+
 
 def get_llm_adapter(
-    model_name: str = "microsoft/DialoGPT-medium", use_mock: bool = None, **kwargs  # type: ignore
+    model_name: Optional[str] = None, use_mock: bool = None, **kwargs  # type: ignore
 ) -> LLMAdapter:
     """Get or create LLM adapter instance"""
     global _enhanced_llm_adapter
 
-    if _enhanced_llm_adapter is None or _enhanced_llm_adapter.model_name != model_name:
-        _enhanced_llm_adapter = LLMAdapter(model_name=model_name, use_mock=use_mock, **kwargs)
-        logger.info(f"Created LLM adapter for: {model_name} (mock={use_mock})")
+    explicit_request = (
+        model_name is not None
+        or use_mock is not None
+        or bool(kwargs)
+    )
+
+    # When no explicit model/config is requested, prefer reusing the already-created
+    # adapter to keep Story/agents consistent (runtime_preset may have configured it).
+    if not explicit_request and _enhanced_llm_adapter is not None:
+        return _enhanced_llm_adapter
+
+    resolved_name: Optional[str] = None
+    if model_name is not None and str(model_name).strip():
+        resolved_name = str(model_name).strip()
+    else:
+        try:
+            cfg = get_config()
+            resolved_name = str(getattr(cfg.model, "chat_model", "") or "").strip() or None
+        except Exception:
+            resolved_name = None
+
+        if resolved_name is None:
+            resolved_name = os.getenv("MODEL_CHAT_MODEL") or "Qwen/Qwen-7B-Chat"
+
+    if _enhanced_llm_adapter is None:
+        _enhanced_llm_adapter = LLMAdapter(model_name=str(resolved_name), use_mock=use_mock, **kwargs)
+        logger.info(f"Created LLM adapter for: {resolved_name} (mock={use_mock})")
+        return _enhanced_llm_adapter
+
+    # Explicit request: update adapter in-place if needed.
+    if explicit_request:
+        try:
+            _enhanced_llm_adapter.reconfigure(str(resolved_name), use_mock=use_mock, **kwargs)
+        except Exception:
+            # Fall back to replacing the singleton as a last resort.
+            _enhanced_llm_adapter = LLMAdapter(model_name=str(resolved_name), use_mock=use_mock, **kwargs)
 
     return _enhanced_llm_adapter
 

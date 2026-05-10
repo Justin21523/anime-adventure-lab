@@ -1,0 +1,186 @@
+name: anime-adventure-lab
+
+x-backend-build: &backend_build
+  context: .
+  dockerfile: Dockerfile
+  args:
+    REQUIREMENTS_FILE: ${BACKEND_REQUIREMENTS_FILE:-requirements-docker.txt}
+
+x-backend-env: &backend_env
+  AI_CACHE_ROOT: /warehouse/ai_cache
+  AI_MODELS_ROOT: /warehouse/ai_models
+  AI_OUTPUT_ROOT: /warehouse/ai_output
+  HF_HOME: /warehouse/ai_cache/huggingface
+  TRANSFORMERS_CACHE: /warehouse/ai_cache/huggingface
+  TORCH_HOME: /warehouse/ai_cache/torch
+  XDG_CACHE_HOME: /warehouse/ai_cache
+
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/0
+
+  DATABASE_URL: ${DATABASE_URL:-postgresql://saga:saga123@postgres:5432/sagaforge}
+
+  T2I_MOCK: ${T2I_MOCK:-1}
+  VLM_MOCK: ${VLM_MOCK:-1}
+  CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}
+
+x-backend-volumes: &backend_volumes
+  - ${AI_CACHE_ROOT:-./warehouse/ai_cache}:/warehouse/ai_cache
+  - ${AI_MODELS_ROOT:-./warehouse/ai_models}:/warehouse/ai_models
+  - ${AI_OUTPUT_ROOT:-./warehouse/ai_output}:/warehouse/ai_output
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sagaforge}
+      POSTGRES_USER: ${POSTGRES_USER:-saga}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-saga123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: *backend_build
+    environment:
+      <<: *backend_env
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost,http://localhost:3000}
+    volumes: *backend_volumes
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  worker-default:
+    build: *backend_build
+    environment: *backend_env
+    volumes: *backend_volumes
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app:celery_app",
+        "worker",
+        "-l",
+        "INFO",
+        "-Q",
+        "default",
+        "-n",
+        "worker_default@%h",
+      ]
+    restart: unless-stopped
+
+  worker-vision:
+    build: *backend_build
+    environment: *backend_env
+    volumes: *backend_volumes
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app:celery_app",
+        "worker",
+        "-l",
+        "INFO",
+        "-Q",
+        "vision",
+        "-n",
+        "worker_vision@%h",
+      ]
+    restart: unless-stopped
+
+  worker-text:
+    build: *backend_build
+    environment: *backend_env
+    volumes: *backend_volumes
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command:
+      ["celery", "-A", "workers.celery_app:celery_app", "worker", "-l", "INFO", "-Q", "text", "-n", "worker_text@%h"]
+    restart: unless-stopped
+
+  worker-training:
+    build: *backend_build
+    environment: *backend_env
+    volumes: *backend_volumes
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app:celery_app",
+        "worker",
+        "-l",
+        "INFO",
+        "-Q",
+        "training",
+        "-n",
+        "worker_training@%h",
+      ]
+    restart: unless-stopped
+
+  flower:
+    image: mher/flower:latest
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      FLOWER_PORT: 5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

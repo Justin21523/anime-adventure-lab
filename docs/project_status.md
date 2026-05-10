@@ -24,13 +24,13 @@ Anime-Adventure-Lab 是一個完整的 AI 驅動故事生成平台，整合了 L
 ### ✅ Stage 1: Bootstrap (100%)
 - [x] `/healthz` 端點
 - [x] 共享快取系統
-- [x] 基礎 WebUI (Gradio)
+- [x] 基礎 WebUI (React / Vite)
 - [x] 項目結構和配置
 
 **關鍵檔案**:
 - `api/main.py`: FastAPI 應用主入口
 - `core/shared_cache.py`: 統一快取管理
-- `frontend/gradio/app.py`: Gradio UI
+- `frontend/react/src/App.tsx`: React UI（Story-first）
 
 ---
 
@@ -306,8 +306,7 @@ Anime-Adventure-Lab 是一個完整的 AI 驅動故事生成平台，整合了 L
 - **Training**: PyTorch 2.1+, Accelerate
 
 ### 前端
-- **UI**: Gradio 4.10+
-- **Theme**: Soft
+- **UI**: React + Vite
 
 ### 部署
 - **Container**: Docker 20.10+
@@ -394,7 +393,6 @@ Anime-Adventure-Lab 是一個完整的 AI 驅動故事生成平台，整合了 L
 - sentence-transformers>=2.2.0
 - faiss-cpu>=1.7.4
 - celery[redis]>=5.3.0
-- gradio>=4.10.0
 
 ---
 
@@ -534,7 +532,7 @@ Apache-2.0（待確認）
 - HuggingFace 團隊（Transformers, Diffusers）
 - FAISS 團隊
 - FastAPI 團隊
-- Gradio 團隊
+- React / Vite / Radix UI 團隊
 - 所有依賴項目的維護者
 
 ---

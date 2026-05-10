@@ -4,18 +4,34 @@ Text-to-Image core functionality
 Exports all main classes for the T2I module
 """
 
-# Core engine and pipeline
-from .engine import T2IEngine
-from .pipeline import PipelineManager
+from __future__ import annotations
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _optional_import(module_name: str, attr_name: str):
+    try:
+        module = __import__(f"{__name__}.{module_name}", fromlist=[attr_name])
+        return getattr(module, attr_name)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("core.t2i optional import failed: %s.%s (%s)", module_name, attr_name, exc)
+        return None
+
+
+# Core engine and pipeline (optional in lite/test environments)
+T2IEngine = _optional_import("engine", "T2IEngine")  # type: ignore[assignment]
+PipelineManager = _optional_import("pipeline", "PipelineManager")  # type: ignore[assignment]
 
 # Component managers
-from .lora_manager import LoRAManager
-from .controlnet import ControlNetManager
-from .model_config import ModelConfigManager
+LoRAManager = _optional_import("lora_manager", "LoRAManager")  # type: ignore[assignment]
+ControlNetManager = _optional_import("controlnet", "ControlNetManager")  # type: ignore[assignment]
+ModelConfigManager = _optional_import("model_config", "ModelConfigManager")  # type: ignore[assignment]
 
 # Utilities
-from .memory_utils import MemoryOptimizer
-from .prompt_utils import PromptProcessor
+MemoryOptimizer = _optional_import("memory_utils", "MemoryOptimizer")  # type: ignore[assignment]
+PromptProcessor = _optional_import("prompt_utils", "PromptProcessor")  # type: ignore[assignment]
 
 # Public API exports
 __all__ = [
@@ -71,7 +87,9 @@ def save_image_to_cache(image, cache_root: str = "./cache", filename: str = None
     from pathlib import Path
     from datetime import datetime
 
-    cache_path = Path(cache_root) / "outputs" / "t2i"
+    from core.shared_cache import get_shared_cache
+
+    cache_path = Path(get_shared_cache().get_path("OUTPUT_DIR")) / "t2i"
     cache_path.mkdir(parents=True, exist_ok=True)
 
     if filename is None:

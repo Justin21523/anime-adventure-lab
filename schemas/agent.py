@@ -6,6 +6,7 @@ Agent API Schemas
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Dict, Any, Optional
 from .schemas_base import BaseRequest, BaseResponse, BaseParameters
+from schemas.world import WorldAgentProfile
 
 
 class AgentParameters(BaseParameters):
@@ -101,3 +102,26 @@ class AgentStatusResponse(BaseResponse):
         ..., description="Max tools per iteration setting"
     )
     config_file: str = Field(..., description="Configuration file path")
+
+
+class StorySubAgentInfo(BaseModel):
+    id: str = Field(..., description="Sub-agent identifier (must match orchestrator agent name)")
+    name: str = Field(..., description="Display name")
+    description: str = Field("", description="Short description for UI")
+
+
+class StoryAllowedToolInfo(BaseModel):
+    id: str = Field(..., description="Tool identifier")
+    description: str = Field("", description="Short description for UI")
+
+
+class StoryAgentCatalog(BaseModel):
+    sub_agents: List[StorySubAgentInfo] = Field(default_factory=list)
+    allowed_tools: List[StoryAllowedToolInfo] = Field(default_factory=list)
+    default_agent_profile: WorldAgentProfile = Field(default_factory=WorldAgentProfile)
+
+
+class AgentCatalogResponse(BaseResponse):
+    """Single-source catalog for Story orchestrator UI (agents/tools/default profile)."""
+
+    story: StoryAgentCatalog = Field(default_factory=StoryAgentCatalog)

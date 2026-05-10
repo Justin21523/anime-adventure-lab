@@ -1,13 +1,15 @@
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { apiGet, apiPost, apiUploadFile } from '@/api/client'
+import { apiDelete, apiGet, apiUploadFile, apiUploadFiles } from '@/api/client'
 import { CACHE_KEYS } from '@/config/query.config'
-import type { RAGDocument, RAGDocumentListResponse, RAGUploadRequest } from '../types/rag.types'
+import type { RAGDocumentListResponse, RAGUploadBatchRequest, RAGUploadJobResponse, RAGUploadRequest } from '../types/rag.types'
 
 /**
  * Hook for managing RAG documents
  */
 export function useRAGDocuments(worldId?: string) {
   const queryClient = useQueryClient()
+  const [uploadProgress, setUploadProgress] = useState<number>(0)
 
   // Fetch all documents
   const {
@@ -27,27 +29,57 @@ export function useRAGDocuments(worldId?: string) {
 
   // Upload document
   const uploadDocument = useMutation({
-    mutationFn: async ({ file, world_id, metadata }: RAGUploadRequest) => {
-      const response = await apiUploadFile<RAGDocument>(
-        '/rag/upload',
+    mutationFn: async ({ file, world_id, tags }: RAGUploadRequest) => {
+      const response = await apiUploadFile<RAGUploadJobResponse>(
+        '/rag/upload_job',
         file,
         {
           world_id: world_id || 'default',
-          ...(metadata && { metadata: JSON.stringify(metadata) }),
+          ...(tags && tags.trim() ? { tags: tags.trim() } : {}),
+        },
+        // Progress callback
+        (progress) => {
+          setUploadProgress(Math.round(progress))
         }
       )
       return response
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: CACHE_KEYS.rag.documents(worldId) })
-      queryClient.invalidateQueries({ queryKey: CACHE_KEYS.rag.stats(worldId) })
+      setUploadProgress(0) // Reset progress
+    },
+    onError: () => {
+      setUploadProgress(0) // Reset progress on error
+    },
+  })
+
+  // Batch upload documents (multi-file or zip)
+  const uploadDocumentsBatch = useMutation({
+    mutationFn: async ({ files, world_id, tags }: RAGUploadBatchRequest) => {
+      const response = await apiUploadFiles<RAGUploadJobResponse>(
+        '/rag/upload_batch_job',
+        files,
+        {
+          world_id: world_id || 'default',
+          ...(tags && tags.trim() ? { tags: tags.trim() } : {}),
+        },
+        (progress) => {
+          setUploadProgress(Math.round(progress))
+        }
+      )
+      return response
+    },
+    onSuccess: () => {
+      setUploadProgress(0)
+    },
+    onError: () => {
+      setUploadProgress(0)
     },
   })
 
   // Delete document
   const deleteDocument = useMutation({
     mutationFn: async (docId: string) => {
-      await apiPost(`/rag/document/${docId}/delete`)
+      await apiDelete(`/rag/documents/${docId}`)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: CACHE_KEYS.rag.documents(worldId) })
@@ -62,6 +94,8 @@ export function useRAGDocuments(worldId?: string) {
     error,
     refetch,
     uploadDocument,
+    uploadDocumentsBatch,
+    uploadProgress,
     deleteDocument,
   }
 }

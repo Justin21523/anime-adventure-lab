@@ -37,8 +37,9 @@ class VLMEngine:
         self.cache = get_shared_cache()
         import os
 
-        # 若環境變數指定，啟用輕量模擬模式（避免下載大型模型）
-        self.mock_mode = os.getenv("VLM_MOCK", "1").lower() not in {"0", "false", "no"}
+        # Mock must be explicit. GPU-capable local runs should use real VLM
+        # models unless VLM_MOCK=1 is set.
+        self.mock_mode = os.getenv("VLM_MOCK", "0").lower() in {"1", "true", "yes", "on"}
         # Core processors
         self.image_processor = ImageProcessor()
         self.vlm_image_processor = VLMImageProcessor(self.config)

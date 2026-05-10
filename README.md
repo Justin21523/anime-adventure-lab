@@ -1,13 +1,16 @@
 # Anime-Adventure-lab
 
 **LLM + RAG + T2I + VLM + LoRA** service stack for story-driven experiences.
-FastAPI backend, Celery workers, a minimal Gradio WebUI, and a shared model/data warehouse via `AI_CACHE_ROOT`.
+FastAPI backend, Celery workers, and a React (Vite) WebUI, with AI_WAREHOUSE 3.0 storage roots.
 
 ---
 
 ## Key Principles
 
-- **Shared Warehouse Only**: No large models/datasets in the repo. Everything lives under `/mnt/c/AI_LLM_projects/ai_warehouse` (configurable via `AI_CACHE_ROOT`).
+- **AI_WAREHOUSE 3.0**: No large models/datasets in the repo. Use split roots:
+  - `AI_CACHE_ROOT` (HF/torch/XDG cache) → `/mnt/c/ai_cache`
+  - `AI_MODELS_ROOT` (managed weights / LoRAs / checkpoints) → `/mnt/c/ai_models`
+  - `AI_OUTPUT_ROOT` (runs / generated media / exports) → `/mnt/c/ai_output/anime-adventure-lab`
 - **Low-VRAM Defaults**: Prefer device_map="auto", fp16/bf16, gradient checkpointing, and LoRA over full fine-tuning.
 - **Security & Governance**: Never commit secrets; use `.env`. Optional NSFW/face-blur for public demos.
 
@@ -28,10 +31,13 @@ pip install -r requirements.txt -r requirements-test.txt
 cp .env.example .env  # if present
 ```
 
-Set `AI_CACHE_ROOT` in `.env` to your warehouse root (not the `cache` subfolder), e.g.:
+Set these in `.env` (see `.env.example`):
 
 ```
-AI_CACHE_ROOT=/mnt/c/AI_LLM_projects/ai_warehouse
+AI_CACHE_ROOT=/mnt/c/ai_cache
+AI_MODELS_ROOT=/mnt/c/ai_models
+AI_OUTPUT_ROOT=/mnt/c/ai_output/anime-adventure-lab
+AI_DATASETS_ROOT=/mnt/c/ai_datasets/anime-adventure-lab
 ```
 
 ### 2) Run API
@@ -47,20 +53,13 @@ uvicorn api.main:app --reload
 REDIS_URL=redis://localhost:6379/0 celery -A workers.celery_app:celery_app worker -l INFO
 ```
 
-### 4) WebUI (Gradio demo)
+### 4) WebUI (React / Vite)
 
 ```bash
-python frontend/gradio/app.py
-# -> http://localhost:7860
-```
-
-### 5) Docker Compose (dev)
-
-```bash
-docker compose up --build
-# API:  http://localhost:8000/healthz
-# REDIS:localhost:6379
-# Set AI_WAREHOUSE_HOST to your host warehouse path if not using /mnt/c/AI_LLM_projects/ai_warehouse
+cd frontend/react
+npm install
+npm run dev
+# -> http://localhost:3000
 ```
 
 ---
@@ -86,34 +85,12 @@ docker compose up --build
 api/          # FastAPI app, routers, middleware, dependencies
 core/         # Business logic (LLM, RAG, Story, T2I, VLM, Train)
 workers/      # Celery tasks and utilities
-frontend/     # Gradio demo + Desktop shell
+frontend/     # React (Vite) WebUI
 configs/      # app/models/rag/train/presets
 worldpacks/   # tiny samples (no large assets)
 tests/        # unit + integration
 docs/         # developer & deployment docs, notebooks
 .github/      # CI/CD workflows and issue templates
-```
-
----
-
-## Shared Cache Bootstrap
-
-Each entrypoint prepares caches under `AI_CACHE_ROOT/cache`:
-
-```python
-import os, pathlib, torch
-AI_CACHE_ROOT = os.getenv("AI_CACHE_ROOT", "/mnt/c/AI_LLM_projects/ai_warehouse")
-cache_root = pathlib.Path(AI_CACHE_ROOT) / "cache"
-for k, v in {
-    "HF_HOME": f"{cache_root}/hf",
-    "TRANSFORMERS_CACHE": f"{cache_root}/hf/transformers",
-    "HF_DATASETS_CACHE": f"{cache_root}/hf/datasets",
-    "HUGGINGFACE_HUB_CACHE": f"{cache_root}/hf/hub",
-    "TORCH_HOME": f"{cache_root}/torch",
-}.items():
-    os.environ[k] = v
-    pathlib.Path(v).mkdir(parents=True, exist_ok=True)
-print("[cache]", AI_CACHE_ROOT, "| GPU:", torch.cuda.is_available())
 ```
 
 ---

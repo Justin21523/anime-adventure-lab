@@ -257,3 +257,79 @@ class StoryPromptGenerator:
             positive=positive_prompt,
             negative=", ".join(self.base_negative_tags)
         )
+
+    async def generate_character_portrait(
+        self,
+        character_name: str,
+        appearance_desc: str,
+        visual_style: Optional[str] = None
+    ) -> T2IPrompt:
+        """
+        Generate T2I prompt for a character portrait (sprite)
+
+        Args:
+            character_name: Name of the character
+            appearance_desc: Physical appearance description
+            visual_style: Optional visual style hints
+
+        Returns:
+            T2IPrompt with optimized character sprite tags
+        """
+        # Character-specific portrait tags
+        portrait_tags = [
+            "full body",
+            "standing",
+            "facing viewer",
+            "simple white background",
+            "transparent background",
+            "character concept art",
+            "high quality anime style",
+            "solo"
+        ]
+
+        prompt_parts = []
+
+        # 1. Subject and basic appearance
+        if character_name:
+            # Avoid using name directly if it's a generic prompt,
+            # but for anime characters it sometimes helps with consistency.
+            prompt_parts.append(f"1character, {character_name}")
+        else:
+            prompt_parts.append("1character")
+
+        prompt_parts.append(appearance_desc)
+
+        # 2. Portrait specific constraints
+        prompt_parts.extend(portrait_tags)
+
+        # 3. Quality and style tags
+        if visual_style:
+            prompt_parts.append(visual_style)
+
+        prompt_parts.extend(self.base_quality_tags)
+
+        # Combine positive prompt
+        positive_prompt = ", ".join(prompt_parts)
+
+        # Build negative prompt - extra emphasis on no backgrounds
+        negative_parts = list(self.base_negative_tags)
+        negative_parts.extend([
+            "background",
+            "landscape",
+            "complex background",
+            "cityscape",
+            "forest",
+            "nature",
+            "scenery",
+            "multiple characters",
+            "group",
+            "words",
+            "border",
+            "frame"
+        ])
+        negative_prompt = ", ".join(negative_parts)
+
+        return T2IPrompt(
+            positive=positive_prompt,
+            negative=negative_prompt
+        )

@@ -717,17 +717,19 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 
         return suggestions_map.get((stage, momentum), ["繼續發展當前情節"])
 
-    def generate_contextual_narrative(
+    async def generate_contextual_narrative(
         self,
         context_memory: Any,
         player_input: str,
         choice_result: Optional[Dict[str, Any]] = None,
         forced_scene_type: Optional[Any] = None,
+        inventory: List[str] = None,
+        stats: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
-        """Generate narrative with full context awareness (完整實作)"""
+        """Generate narrative with full context awareness (Async Implementation)"""
 
         try:
-            # 基本上下文分析
+            # 1. Basic Context Analysis
             current_scene = (
                 context_memory.get_current_scene()
                 if hasattr(context_memory, "get_current_scene")
@@ -739,7 +741,6 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
                 else []
             )
 
-            # 建構分析上下文
             analysis_context = {
                 "player_input": player_input,
                 "current_location": (
@@ -750,26 +751,54 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
                 ],
                 "scene_description": current_scene.description if current_scene else "",
                 "choice_result": choice_result,
-                "recent_events": (
-                    getattr(context_memory, "narrative_memory", [])[-3:]
-                    if hasattr(context_memory, "narrative_memory")
-                    else []
-                ),
+                "inventory": inventory or [],
+                "stats": stats or {},
             }
 
-            # 進行上下文分析
+            # 2. Analyze context
             mood_analysis = self._analyze_mood_context(analysis_context)
             character_analysis = self._analyze_character_context(analysis_context)
             location_analysis = self._analyze_location_context(analysis_context)
             progression_analysis = self._analyze_story_progression(analysis_context)
 
-            # 生成主要敘事
-            main_narrative = self._generate_enhanced_narrative(
-                analysis_context, mood_analysis, character_analysis, location_analysis
+            # 3. Generate prompt using REAL memory
+            context_prompt = self._build_comprehensive_context_prompt(
+                context_memory,
+                player_input,
+                "劇情發展",
+                inventory=inventory,
+                stats=stats,
             )
 
+            # 4. Call LLM
+            persona_prompt = "你是一個專業的文字冒險遊戲敘事者，擅長營造氛圍與維持邏輯一致性。請根據歷史紀錄推進劇情，嚴禁重複已發生的對話或情節。"
+            messages = [
+                ChatMessage(role="system", content=persona_prompt),
+                ChatMessage(role="user", content=context_prompt),
+            ]
+
+            raw_narrative = ""
+            if self.llm:
+                response = await self._chat(messages)
+                if response and hasattr(response, "content"):
+                    raw_narrative = response.content.strip()
+                else:
+                    raw_narrative = str(response or "").strip()
+            
+            if not raw_narrative:
+                raw_narrative = self.generate_narrative(analysis_context, choice_result)
+
+            # 5. Extract state delta
+            state_delta = self._extract_state_delta(raw_narrative)
+            
+            # Clean JSON from narrative if present to avoid UI artifacts
+            import re
+            clean_narrative = re.sub(r"```json\s*\{.*?\}\s*```", "", raw_narrative, flags=re.DOTALL).strip()
+            clean_narrative = re.sub(r"\{.*?\}\s*$", "", clean_narrative, flags=re.DOTALL).strip()
+
             return {
-                "main_narrative": main_narrative,
+                "main_narrative": clean_narrative or raw_narrative,
+                "state_delta": state_delta,
                 "character_reactions": self._generate_character_reactions_enhanced(
                     present_characters, mood_analysis
                 ),
@@ -789,19 +818,13 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
             }
 
         except Exception as e:
-            import logging
-
-            logger = logging.getLogger(__name__)
-            logger.error(f"Enhanced narrative generation failed: {e}")
-
-            # 降級到基本生成
+            logger.error(f"Enhanced narrative generation failed: {e}", exc_info=True)
             return {
-                "main_narrative": self.generate_narrative(
-                    {"player_input": player_input}, choice_result
-                ),
+                "main_narrative": self.generate_narrative({"player_input": player_input}, choice_result),
+                "state_delta": {},
                 "character_reactions": {},
                 "scene_developments": {},
-                "narrative_suggestions": ["繼續探索", "與角色交談", "觀察環境"],
+                "narrative_suggestions": ["繼續探索"],
                 "mood_indicators": ["neutral"],
                 "context_analysis": {},
             }
@@ -812,54 +835,118 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         mood_analysis: Dict[str, Any],
         character_analysis: Dict[str, Any],
         location_analysis: Dict[str, Any],
+        inventory: List[str] = None,
+        stats: Dict[str, Any] = None,
     ) -> str:
         """Generate enhanced narrative based on comprehensive analysis"""
 
-        # 基本敘事框架
-        location = context.get("current_location", "未知地點")
-        player_input = context.get("player_input", "")
-        choice_result = context.get("choice_result", {})
+        # 這裡改為調用 LLM 生成，而不僅僅是模板組合
+        if self.llm is None:
+            return self.generate_narrative(context, context.get("choice_result"))
 
-        # 根據分析結果調整敘事風格
-        mood = mood_analysis.get("dominant_mood", "neutral")
-        social_complexity = character_analysis.get("social_complexity", "low")
-        environmental_mood = location_analysis.get("environmental_mood", "neutral")
+        # 獲取 Persona
+        # 注意：這裡需要 context_memory 中有 persona 資訊，或者從外部傳入
+        persona_prompt = "你是一個專業的文字冒險遊戲敘事者，擅長營造氛圍與維持邏輯一致性。"
 
-        narrative_parts = []
+        # 建立全面上下文 Prompt
+        # 我們假設 context 已經包含了必要的 context_memory 資訊（或偽裝成它）
+        # 實際上 EnhancedNarrativeGenerator 的原實作比較簡略，我們現在強化它
+        class MockMemory:
+            def __init__(self, ctx):
+                self.ctx = ctx
+                self.scene_sequence = []
+                self.scenes = {}
+                self.player_relationships = {}
+                self.world_flags = {}
+                self.main_plot_points = []
+                self.player_decisions = []
 
-        # 環境設定
-        if location != "未知地點":
-            env_desc = self._get_enhanced_environment_description(
-                location, environmental_mood
-            )
-            narrative_parts.append(f"在{location}的{env_desc}中")
+            def get_current_scene(self):
+                from dataclasses import dataclass
 
-        # 社交情境
-        if social_complexity != "low":
-            present_chars = context.get("present_characters", [])
-            if present_chars:
-                char_context = self._generate_character_context_narrative(
-                    present_chars, character_analysis
+                @dataclass
+                class Scene:
+                    title: str
+                    location: str
+                    time_of_day: str
+                    atmosphere: Any
+                    scene_objectives: List[str]
+                    description: str
+
+                @dataclass
+                class Atmosphere:
+                    value: str
+
+                return Scene(
+                    title="當前場景",
+                    location=self.ctx.get("current_location", "未知"),
+                    time_of_day="未知",
+                    atmosphere=Atmosphere(value="中性"),
+                    scene_objectives=[],
+                    description=self.ctx.get("scene_description", ""),
                 )
-                narrative_parts.append(char_context)
 
-        # 行動回應
-        if player_input:
-            action_response = self._generate_mood_adjusted_action_response(
-                player_input, choice_result, mood
-            )
-            narrative_parts.append(action_response)
+            def get_characters_in_scene(self):
+                return []
 
-        # 合併並添加情緒調節
-        base_narrative = (
-            "，".join(narrative_parts) if narrative_parts else "故事在這裡繼續發展"
+        mock_mem = MockMemory(context)
+        context_prompt = self._build_comprehensive_context_prompt(
+            mock_mem,
+            context.get("player_input", ""),
+            "劇情發展",
+            inventory=inventory,
+            stats=stats,
         )
 
-        # 根據情緒強度調整結尾
-        emotional_intensity = mood_analysis.get("emotional_intensity", 0.5)
-        ending = self._generate_mood_appropriate_ending(mood, emotional_intensity)
+        messages = [
+            ChatMessage(role="system", content=persona_prompt),
+            ChatMessage(role="user", content=context_prompt),
+        ]
 
-        return base_narrative + ending
+        try:
+            # 由於是異步方法調用，這裡需要小心處理
+            # 但 NarrativeGenerator._chat 已經是異步了
+            # 我們假設 generate_enhanced_narrative 應該也是異步的
+            # 但父類定義它是同步的，這是一個架構不一致點
+            # 為了解決，我們使用 event loop 或改為異步（推薦改為異步）
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 如果已經在 loop 中，我們不能用 run_until_complete
+                # 這在 FastAPI 中很常見，所以我們應該將此方法標記為 async
+                # 但為了最小化改動，我們先嘗試同步包裝
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    result = executor.submit(asyncio.run, self._chat(messages)).result()
+            else:
+                result = asyncio.run(self._chat(messages))
+
+            if result and hasattr(result, "content"):
+                return result.content.strip()
+            return str(result or "").strip()
+        except Exception as e:
+            logger.error(f"LLM call in enhanced narrative failed: {e}")
+            return self.generate_narrative(context, context.get("choice_result"))
+
+    def _extract_state_delta(self, narrative: str) -> Dict[str, Any]:
+        """Extract JSON state delta from narrative text"""
+        import json
+        import re
+
+        try:
+            # 尋找 markdown json 區塊
+            match = re.search(r"```json\s*(\{.*?\})\s*```", narrative, re.DOTALL)
+            if match:
+                return json.loads(match.group(1))
+
+            # 嘗試尋找任何看起來像 JSON 的大括號內容（在結尾）
+            match = re.search(r"(\{.*?\})\s*$", narrative, re.DOTALL)
+            if match:
+                return json.loads(match.group(1))
+        except Exception:
+            pass
+
+        return {}
 
     def _get_enhanced_environment_description(self, location: str, mood: str) -> str:
         """Get enhanced environment description based on mood"""
@@ -1589,7 +1676,12 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         return "general_progression"
 
     def _build_comprehensive_context_prompt(
-        self, context_memory: Any, player_input: str, narrative_focus: str
+        self,
+        context_memory: Any,
+        player_input: str,
+        narrative_focus: str,
+        inventory: List[str] = None,
+        stats: Dict[str, Any] = None,
     ) -> str:
         """Build comprehensive context prompt for narrative generation"""
 
@@ -1602,6 +1694,15 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
             scene = context_memory.scenes.get(scene_id)
             if scene:
                 recent_scenes.append(f"- {scene.title}: {scene.description[:100]}...")
+
+        # Recent narrative history (Last 5 turns) - CRITICAL for preventing repetition
+        recent_narrative = []
+        if hasattr(context_memory, "narrative_memory"):
+            for entry in list(context_memory.narrative_memory)[-5:]:
+                if isinstance(entry, dict) and "narrative" in entry:
+                    recent_narrative.append(f"> {entry['narrative'][:200]}...")
+                elif isinstance(entry, str):
+                    recent_narrative.append(f"> {entry[:200]}...")
 
         # Character context
         character_context = []
@@ -1645,6 +1746,10 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         context_prompt = f"""
 故事上下文資訊：
 
+【當前狀態】
+持有物品: {', '.join(inventory) if inventory else '空手'}
+角色屬性: {', '.join([f'{k}:{v}' for k, v in stats.items()]) if stats else '正常'}
+
 【當前場景】
 場景: {current_scene.title if current_scene else '未知'}
 位置: {current_scene.location if current_scene else '未知'}
@@ -1654,6 +1759,9 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 
 【在場角色】
 {chr(10).join(character_context) if character_context else '無其他角色'}
+
+【最近故事發展】
+{chr(10).join(recent_narrative) if recent_narrative else '尚無近期紀錄'}
 
 【最近場景歷史】
 {chr(10).join(recent_scenes) if recent_scenes else '故事剛開始'}
@@ -1669,11 +1777,17 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 敘述重點: {narrative_focus}
 
 【生成要求】
-1. 根據上下文生成連貫的故事敘述
-2. 體現角色個性和當前狀態
-3. 推進劇情但保持適度懸念
-4. 字數控制在200-400字之間
-5. 考慮場景氣氛和時間流逝
+1. 根據上下文生成連貫的故事敘述，字數控制在200-400字之間。
+2. **務必維持邏輯一致性**：若玩家手中無劍，則不能描述揮劍；若 NPC 已死亡，則不能描述其說話。
+3. **狀態更新**：在敘述結尾，請務必以 JSON 格式提供本回合導致的狀態變更（若無變更則回傳空物件）：
+```json
+{{
+  "inventory_add": ["物品名"],
+  "inventory_remove": ["物品名"],
+  "stat_changes": {{"health": -10}},
+  "flags_triggered": ["flag_name"]
+}}
+```
         """
 
         return context_prompt

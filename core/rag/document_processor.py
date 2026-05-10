@@ -34,7 +34,10 @@ try:
 except ImportError:
     EXCEL_AVAILABLE = False
 
-import opencc
+try:
+    import opencc  # type: ignore
+except Exception:  # noqa: BLE001
+    opencc = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 

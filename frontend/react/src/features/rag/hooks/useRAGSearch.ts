@@ -10,9 +10,11 @@ export function useRAGSearch() {
     mutationFn: async (request: RAGSearchRequest) => {
       const response = await apiPost<RAGSearchResponse>('/rag/search', {
         query: request.query,
-        world_id: request.world_id || 'default',
-        top_k: request.top_k || 5,
-        score_threshold: request.score_threshold,
+        filters: request.world_id ? { world_id: request.world_id } : undefined,
+        parameters: {
+          top_k: request.top_k || 5,
+          ...(request.min_score !== undefined ? { min_score: request.min_score } : {}),
+        },
       })
       return response
     },

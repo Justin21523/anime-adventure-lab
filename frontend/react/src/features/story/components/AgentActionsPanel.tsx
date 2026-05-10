@@ -17,6 +17,7 @@ import {
   Undo2,
   Flag,
   Heart,
+  Handshake,
   Package,
   Search,
   Image as ImageIcon
@@ -36,6 +37,7 @@ export function AgentActionsPanel({ agentActions, className = '' }: AgentActions
 
   const successCount = agentActions.tool_results.filter(r => r.success).length
   const totalCount = agentActions.tool_results.length
+  const contributorCount = agentActions.contributors?.length || 0
 
   return (
     <Card className={`p-4 border-2 ${agentActions.overall_success ? 'border-green-500/50' : 'border-red-500/50'} ${className}`}>
@@ -50,6 +52,11 @@ export function AgentActionsPanel({ agentActions, className = '' }: AgentActions
           <Badge variant={agentActions.overall_success ? 'default' : 'destructive'}>
             {successCount}/{totalCount}
           </Badge>
+          {contributorCount > 0 && (
+            <Badge variant="outline">
+              {contributorCount} 個子代理
+            </Badge>
+          )}
         </div>
         {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
       </button>
@@ -62,6 +69,34 @@ export function AgentActionsPanel({ agentActions, className = '' }: AgentActions
             <div className="font-medium mb-1 text-xs text-muted-foreground">決策推理</div>
             <div className="text-foreground">{agentActions.reasoning}</div>
           </div>
+
+          {/* Contributors */}
+          {agentActions.contributors && agentActions.contributors.length > 0 && (
+            <div className="text-sm bg-muted/30 p-3 rounded border border-border">
+              <div className="font-medium mb-2 text-xs text-muted-foreground">子代理貢獻</div>
+              <div className="space-y-2">
+                {agentActions.contributors.map((c, idx) => (
+                  <div key={idx} className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="truncate">
+                          {c.agent || 'agent'}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {(c.tool_calls?.length ?? 0)} 個 tool_calls
+                        </span>
+                      </div>
+                      {c.reasoning && (
+                        <div className="text-xs text-muted-foreground mt-1 break-words">
+                          {c.reasoning}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Tool Results */}
           <div className="space-y-2">
@@ -113,6 +148,11 @@ function AgentToolResultCard({ result, index }: AgentToolResultCardProps) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <span className="font-medium text-sm">{toolName}</span>
+              {result.agent && (
+                <Badge variant="outline" className="text-xs">
+                  {result.agent}
+                </Badge>
+              )}
               {result.success ? (
                 <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
               ) : (
@@ -167,6 +207,8 @@ function getToolIcon(toolName: string) {
       return <Flag className="w-4 h-4" />
     case 'update_character_state':
       return <Heart className="w-4 h-4" />
+    case 'update_relationship_state':
+      return <Handshake className="w-4 h-4" />
     case 'add_inventory_item':
       return <Package className="w-4 h-4" />
     case 'rag_search':
@@ -182,6 +224,7 @@ function getToolDisplayName(toolName: string): string {
   const names: Record<string, string> = {
     'modify_world_state': '修改世界狀態',
     'update_character_state': '更新角色狀態',
+    'update_relationship_state': '更新關係分數',
     'add_inventory_item': '添加物品',
     'rag_search': '記憶搜索',
     'generate_scene_image': '生成場景圖像'
@@ -218,6 +261,17 @@ function getToolDescription(result: AgentToolResult): string {
         return changes.join(', ')
       }
       return '角色狀態已更新'
+
+    case 'update_relationship_state':
+      if (data.modified_relationships) {
+        const rels = Object.keys(data.modified_relationships)
+        const preview = rels.slice(0, 2).map(cid => {
+          const change = data.modified_relationships[cid]?.change || 0
+          return `${cid} ${change > 0 ? '+' : ''}${change}`
+        })
+        return `關係變更 ${rels.length} 筆: ${preview.join(', ')}${rels.length > 2 ? '...' : ''}`
+      }
+      return '關係分數已更新'
 
     case 'add_inventory_item':
       if (data.item && data.quantity) {

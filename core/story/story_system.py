@@ -358,7 +358,7 @@ class StoryContextMemory:
         self.session_id = session_id
 
         # Player tracking
-        self.player_name: str
+        self.player_name: str = ""  # Initialize with empty string
         self.player_choices_history: List[Dict[str, Any]] = []
         self.player_personality_profile: Dict[str, Any] = {}
 
@@ -388,6 +388,10 @@ class StoryContextMemory:
     main_plot_points: List[str] = field(default_factory=list)
     subplot_threads: Dict[str, List[str]] = field(default_factory=dict)
     completed_objectives: List[str] = field(default_factory=list)
+
+    # Turn history mirror — populated by engine so narrative generator
+    # can see recent turn I/O and avoid regenerating the same content.
+    turn_history: List[Dict[str, Any]] = field(default_factory=list)
 
     # Player Progress
     player_decisions: List[Dict[str, Any]] = field(default_factory=list)
@@ -774,6 +778,8 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         player_input: str,
         choice_result: Optional[Dict[str, Any]] = None,
         forced_scene_type: Optional[SceneType] = None,
+        inventory: Optional[List[str]] = None,
+        stats: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Generate narrative with full context awareness"""
 
@@ -908,6 +914,21 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         for decision in context_memory.player_decisions[-3:]:
             recent_decisions.append(f"- 第{decision['turn']}回: {decision['decision']}")
 
+        # Recent turn-by-turn history (last 5 turns) — prevents the LLM from
+        # regenerating the same opening/initial narrative every turn.
+        recent_history = []
+        history = getattr(context_memory, "turn_history", []) or []
+        for entry in history[-5:]:
+            if not isinstance(entry, dict):
+                continue
+            inp = str(entry.get("player_input") or "").strip()
+            out = str(entry.get("ai_response") or "").strip()
+            turn_num = entry.get("turn", "?")
+            if inp and out:
+                recent_history.append(
+                    f"  Turn {turn_num}: 玩家→{inp[:80]} | 敘事者→{out[:120]}"
+                )
+
         context_prompt = f"""
 故事上下文資訊：
 
@@ -930,16 +951,20 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 【最近玩家決定】
 {chr(10).join(recent_decisions) if recent_decisions else '尚無重要決定'}
 
+【最近回合紀錄】（防止重複生成相同的初始敘述）
+{chr(10).join(recent_history) if recent_history else '故事剛開始，尚無回合紀錄'}
+
 【當前玩家行動】
 玩家輸入: {player_input}
 敘述重點: {narrative_focus}
 
 【生成要求】
-1. 根據上下文生成連貫的故事敘述
-2. 體現角色個性和當前狀態
-3. 推進劇情但保持適度懸念
+1. 根據上下文和【最近回合紀錄】生成連貫的故事敘述
+2. 絕對不要重複已經在回合紀錄中出現過的內容
+3. 推進劇情，而不是重新描述已經發生的事件
 4. 字數控制在200-400字之間
 5. 考慮場景氣氛和時間流逝
+6. 如果玩家的行動與之前的回合紀錄相關，請延續而不是重複
         """
 
         return context_prompt
@@ -962,12 +987,18 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 5. 使用生動的感官描述和情感表達
 6. 為玩家的下一步行動設置自然的情境
 
-敘述風格：
-- 使用第二人稱 ("你")
-- 現在式描述
-- 富有畫面感的描述
-- 適度的情感渲染
-        """
+⚠️ 絕對重要規則（違反將導致遊戲崩潰）：
+- **每次回應都必須推進劇情**。不要停留在原地描述，不要重複上一回合的場景。
+- **從上一回合的最後一刻繼續**。如果上一回合玩家走到岔路口，這一回合要描述玩家進入其中一條路後發生的事。
+- **絕對不要重新描述已經發生的事**。【最近回合紀錄】中的內容已經發生過了，不要再寫一遍。
+- **每個回合都要有「新事件」**：新的發現、新的角色、新的危險、新的對話、新的選擇、場景轉換……至少有一件新事。
+- **不要只描述環境**。環境描述佔 20% 以下，剩下的都是動作、對話、事件。
+- **回應長度控制在 300-600 字**，不要過長或過短。
+- **如果玩家做出了選擇，直接描述選擇後的結果**，不要問「你要做什麼」。"""
+
+        # 追加 scene_type 相關的額外指引
+        if forced_scene_type:
+            system_prompt += f"\n\n當前場景類型: {forced_scene_type.value}"
 
         messages = [
             ChatMessage(role="system", content=system_prompt),

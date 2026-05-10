@@ -15,13 +15,28 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field
 
-from fastapi import APIRouter, HTTPException, File, UploadFile
+from fastapi import APIRouter, HTTPException, File, UploadFile, Form, Query
 
-from core.rag.engine import get_rag_engine
+_rag_engine_instance = None
+
+def get_rag_engine():
+    """Get or create singleton RAG engine instance"""
+    global _rag_engine_instance
+    if _rag_engine_instance is None:
+        try:
+            from core.rag.engine import get_rag_engine as get_engine
+            _rag_engine_instance = get_engine()
+        except Exception as e:
+            logger.error(f"Failed to initialize RAG engine: {e}")
+            # Return a mock or raise a more specific error
+            raise HTTPException(503, detail=f"RAG service unavailable: {str(e)}")
+    return _rag_engine_instance
 from core.rag.document_processor import DocumentProcessor
 from core.exceptions import RAGError
+from core.train.job_manager import TrainJobManager
 from schemas.rag import (
     RAGAddDocumentRequest,
     RAGAddDocumentResponse,
@@ -43,6 +58,99 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 
+@router.post("/rag/analyze")
+async def analyze_document_metadata(
+    file: UploadFile = File(...),
+    world_id: str = Form("default"),
+):
+    """
+    Analyze a document using LLM to extract summary, tags, and key entities.
+    Returns suggested metadata and content preview for the user to review.
+    """
+    try:
+        if not file.filename:
+            raise HTTPException(400, "No filename provided")
+
+        # Save uploaded file temporarily
+        suffix = Path(file.filename).suffix
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+            content = await file.read()
+            tmp_file.write(content)
+            tmp_file_path = tmp_file.name
+
+        try:
+            # 1. Extract raw text
+            processor = DocumentProcessor()
+            processed_doc = processor.process_file(
+                file_path=tmp_file_path,
+                metadata={"world_id": world_id}
+            )
+            
+            # 2. Use LLM to analyze (first 4000 chars to avoid token limits)
+            sample_text = processed_doc.content[:4000]
+            
+            from core.llm import get_llm_adapter
+            llm = get_llm_adapter()
+            
+            prompt = f"""
+請分析以下文件內容，並提取其關鍵中繼資料 (Metadata)。
+文件內容：
+---
+{sample_text}
+---
+
+請以 JSON 格式回傳分析結果，包含以下欄位：
+- title: 文件標題 (簡短)
+- summary: 一句話摘要 (50字以內)
+- tags: 關鍵標籤列表 (例如：人物、地點、歷史、法術)
+- entities: 提到的重要角色或實體列表
+- category: 分類 (如：World Building, Character Bio, Plot Event)
+
+回傳範例：
+{{
+  "title": "...",
+  "summary": "...",
+  "tags": ["...", "..."],
+  "entities": ["...", "..."],
+  "category": "..."
+}}
+            """
+            
+            from schemas.chat import ChatMessage
+            messages = [ChatMessage(role="user", content=prompt)]
+            
+            response = await llm.chat(messages)
+            import json
+            import re
+            
+            # Extract JSON from LLM response
+            analysis_data = {}
+            if response and response.content:
+                json_match = re.search(r"(\{.*?\})", response.content, re.DOTALL)
+                if json_match:
+                    try:
+                        analysis_data = json.loads(json_match.group(1))
+                    except Exception:
+                        logger.warning("Failed to parse LLM JSON response")
+
+            return {
+                "success": True,
+                "original_filename": file.filename,
+                "content_preview": processed_doc.content[:2000],
+                "full_content": processed_doc.content,
+                "suggested_metadata": analysis_data,
+                "world_id": world_id
+            }
+
+        finally:
+            if os.path.exists(tmp_file_path):
+                os.remove(tmp_file_path)
+
+    except Exception as e:
+        logger.error(f"Document analysis failed: {e}")
+        raise HTTPException(500, f"Analysis error: {str(e)}")
+
+
 @router.post("/rag/add", response_model=RAGAddDocumentResponse)
 async def add_document(request: RAGAddDocumentRequest):
     """
@@ -60,6 +168,10 @@ async def add_document(request: RAGAddDocumentRequest):
             content=request.content,
             metadata=metadata,
         )
+        try:
+            rag_engine.save_index()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("RAG index save skipped: %s", exc)
 
         # Safe estimation of created chunks
         default_chunk_size = 512
@@ -88,8 +200,8 @@ async def add_document(request: RAGAddDocumentRequest):
 @router.post("/rag/upload", response_model=RAGAddDocumentResponse)
 async def upload_document(
     file: UploadFile = File(...),
-    world_id: str = "default",
-    tags: Optional[str] = None,
+    world_id: str = Form("default"),
+    tags: Optional[str] = Form(None),
 ):
     """
     Upload a file, run it through DocumentProcessor, and add it to the RAG index.
@@ -104,8 +216,11 @@ async def upload_document(
         with tempfile.NamedTemporaryFile(
             delete=False, suffix=Path(file.filename).suffix
         ) as tmp_file:
-            content = await file.read()
-            tmp_file.write(content)
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                tmp_file.write(chunk)
             tmp_file_path = tmp_file.name
 
         try:
@@ -126,6 +241,10 @@ async def upload_document(
                 content=processed_doc.content,
                 metadata=processed_doc.metadata,
             )
+            try:
+                rag_engine.save_index()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("RAG index save skipped: %s", exc)
 
             return RAGAddDocumentResponse(  # type: ignore[call-arg]
                 doc_id=processed_doc.doc_id,
@@ -146,6 +265,149 @@ async def upload_document(
     except Exception as e:
         logger.error(f"Upload document failed: {e}")
         raise HTTPException(500, f"Upload error: {str(e)}")
+
+
+@router.post("/rag/upload_job")
+async def upload_document_job(
+    file: UploadFile = File(...),
+    world_id: str = Form("default"),
+    tags: Optional[str] = Form(None),
+):
+    """
+    Upload a file and ingest it into RAG as a background job.
+
+    - API 只負責接收檔案並建立 job
+    - 實際的文字抽取/embedding/寫入索引交給 Celery worker
+    - 前端可用 `/jobs/{job_id}` 輪詢進度、取消
+    """
+    if not file.filename:
+        raise HTTPException(400, "No filename provided")
+
+    # Save uploaded file temporarily (worker will clean up on best-effort).
+    tmp_file_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=Path(file.filename).suffix
+        ) as tmp_file:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                tmp_file.write(chunk)
+            tmp_file_path = tmp_file.name
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"Failed to save upload: {exc}") from exc
+
+    tags_str = str(tags or "").strip()
+    payload: Dict[str, Any] = {
+        "job_type": "rag_upload",
+        "file_path": tmp_file_path,
+        "world_id": str(world_id or "default").strip() or "default",
+        "original_filename": file.filename,
+        "content_type": file.content_type,
+        "tags": tags_str,
+    }
+
+    job_manager = TrainJobManager()
+    job_id = job_manager.create_job("rag_upload", payload, status="queued")
+
+    # Prefer Celery; fallback to sync (dev/test) if dispatch fails.
+    try:
+        from workers.tasks.rag import rag_upload_task
+
+        async_result = rag_upload_task.delay({"job_id": job_id, "payload": payload})
+        try:
+            job_manager.update_job(job_id, celery_task_id=str(async_result.id))
+        except Exception:
+            pass
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Celery dispatch skipped (%s), running sync", exc)
+        try:
+            from core.rag.job_runner import run_rag_upload_job
+
+            run_rag_upload_job(job_id, payload, job_manager=job_manager)
+        except Exception:
+            pass
+
+    return {"success": True, "job_id": job_id, "status": "queued"}
+
+
+@router.post("/rag/upload_batch_job")
+async def upload_documents_batch_job(
+    files: List[UploadFile] = File(...),
+    world_id: str = Form("default"),
+    tags: Optional[str] = Form(None),
+):
+    """
+    Upload multiple files (or a single zip) and ingest into RAG as a background job.
+
+    - 支援多檔選取、拖拉多檔
+    - zip 會在 worker 端解壓後批次匯入（忽略不支援的副檔名）
+    """
+    if not files:
+        raise HTTPException(400, "No files provided")
+
+    world = str(world_id or "default").strip() or "default"
+    tags_str = str(tags or "").strip()
+
+    file_specs: List[Dict[str, Any]] = []
+    for f in files:
+        if not f.filename:
+            continue
+
+        tmp_file_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                delete=False, suffix=Path(f.filename).suffix
+            ) as tmp_file:
+                while True:
+                    chunk = await f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    tmp_file.write(chunk)
+                tmp_file_path = tmp_file.name
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(500, f"Failed to save upload: {exc}") from exc
+
+        file_specs.append(
+            {
+                "file_path": tmp_file_path,
+                "original_filename": f.filename,
+                "content_type": f.content_type,
+            }
+        )
+
+    if not file_specs:
+        raise HTTPException(400, "No valid filenames provided")
+
+    payload: Dict[str, Any] = {
+        "job_type": "rag_upload",
+        "world_id": world,
+        "tags": tags_str,
+        "files": file_specs,
+    }
+
+    job_manager = TrainJobManager()
+    job_id = job_manager.create_job("rag_upload", payload, status="queued")
+
+    try:
+        from workers.tasks.rag import rag_upload_task
+
+        async_result = rag_upload_task.delay({"job_id": job_id, "payload": payload})
+        try:
+            job_manager.update_job(job_id, celery_task_id=str(async_result.id))
+        except Exception:
+            pass
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Celery dispatch skipped (%s), running sync", exc)
+        try:
+            from core.rag.job_runner import run_rag_upload_job
+
+            run_rag_upload_job(job_id, payload, job_manager=job_manager)
+        except Exception:
+            pass
+
+    return {"success": True, "job_id": job_id, "status": "queued"}
 
 
 # ---------------------------------------------------------------------------
@@ -170,10 +432,33 @@ async def search_documents(request: RAGSearchRequest):
             else 0.3
         )
 
+        # Optional world filter + rerank override (prefer request.filters; accept legacy extra field)
+        world_filter = None
+        enable_rerank = None
+        rerank_top_k = None
+        try:
+            if request.filters and isinstance(request.filters, dict):
+                world_filter = request.filters.get("world_id")
+                if "enable_rerank" in request.filters:
+                    enable_rerank = bool(request.filters.get("enable_rerank"))
+                if "rerank_top_k" in request.filters:
+                    try:
+                        rerank_top_k = int(request.filters.get("rerank_top_k") or 0)
+                    except Exception:
+                        rerank_top_k = None
+            if not world_filter:
+                extra = getattr(request, "model_extra", None) or {}
+                world_filter = extra.get("world_id")
+        except Exception:
+            world_filter = None
+
         results = rag_engine.search(
             query=request.query,
             top_k=top_k,
             min_score=min_score,
+            world_id=str(world_filter).strip() if world_filter else None,
+            enable_rerank=enable_rerank,
+            rerank_top_k=rerank_top_k,
         )
 
         return RAGSearchResponse(  # type: ignore[call-arg]
@@ -183,9 +468,16 @@ async def search_documents(request: RAGSearchRequest):
                     "doc_id": r.document.doc_id,
                     "content": r.document.content,
                     "score": r.score,
-                    "metadata": r.document.metadata,
+                    "rank": idx + 1,
+                    "metadata": {
+                        **(r.document.metadata or {}),
+                        "semantic_score": getattr(r, "semantic_score", None),
+                        "bm25_score": getattr(r, "bm25_score", None),
+                        "combined_score": getattr(r, "combined_score", None),
+                        "rerank_score": getattr(r, "rerank_score", None),
+                    },
                 }
-                for r in results
+                for idx, r in enumerate(results)
             ],
             total_found=len(results),
             parameters=request.parameters,
@@ -236,6 +528,61 @@ async def build_context(request: RAGSearchRequest):
     except Exception as e:  # noqa: BLE001
         logger.error(f"Context generation failed: {e}")
         raise HTTPException(500, f"Context generation failed: {str(e)}")
+
+
+class StructuredIngestRequest(BaseModel):
+    content: str
+    title: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    world_id: str = "default"
+    tags: List[str] = Field(default_factory=list)
+
+@router.post("/rag/ingest_structured")
+async def ingest_structured_data(request: StructuredIngestRequest):
+    """
+    Ingest structured data (like role settings or world info) into RAG.
+    The content is expected to be a pre-formatted Markdown string or structured text.
+    """
+    try:
+        from core.rag.parsers import MarkdownParser
+        
+        parser = MarkdownParser()
+        # Combine title and content for better indexing
+        full_text = f"# {request.title}\n\n{request.content}"
+        chunks = parser.parse_text(full_text, source=f"structured_{request.title}")
+        
+        rag_engine = get_rag_engine()
+        added_count = 0
+        
+        for i, chunk in enumerate(chunks):
+            # Merge requested metadata with parser metadata
+            meta = {**chunk["metadata"], **request.metadata}
+            meta["world_id"] = request.world_id
+            meta["tags"] = request.tags
+            meta["doc_title"] = request.title
+            
+            doc_id = f"struct_{request.title}_{i}"
+            added = rag_engine.add_document(
+                doc_id=doc_id,
+                content=chunk["content"],
+                metadata=meta
+            )
+            if added:
+                added_count += 1
+                
+        try:
+            rag_engine.save_index()
+        except Exception:
+            pass
+            
+        return {
+            "success": True, 
+            "chunks_added": added_count,
+            "message": f"Successfully ingested {request.title} into RAG index."
+        }
+    except Exception as e:
+        logger.error(f"Structured ingestion failed: {e}")
+        raise HTTPException(500, f"Ingestion error: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -348,11 +695,25 @@ async def rag_query(request: RAGQueryRequest):
 
 
 @router.get("/rag/stats", response_model=RAGStatsResponse)
-async def get_rag_stats():
+async def get_rag_stats(world_id: Optional[str] = None):
     """Get RAG engine statistics."""
     try:
         rag_engine = get_rag_engine()
         stats = rag_engine.get_stats()
+
+        if world_id:
+            unique_docs = set()
+            chunks = 0
+            for chunk_id, doc in rag_engine.documents.items():
+                metadata = doc.metadata or {}
+                doc_world = str(metadata.get("world_id", "default")).strip() or "default"
+                if doc_world != str(world_id).strip():
+                    continue
+                parent_id = metadata.get("parent_doc_id", chunk_id)
+                unique_docs.add(parent_id)
+                chunks += 1
+
+            stats = {**stats, "total_documents": len(unique_docs), "total_chunks": chunks}
 
         return RAGStatsResponse(  # type: ignore[call-arg]
             success=True,
@@ -369,22 +730,66 @@ async def get_rag_stats():
 
 
 @router.post("/rag/rebuild")
-async def rebuild_index():
-    """Rebuild FAISS / BM25 index from current documents."""
+async def rebuild_index(
+    async_job: bool = Query(True, description="Dispatch as background job (recommended)"),
+    session_id: Optional[str] = Query(None, description="Optional story session to attach artifacts"),
+    turn: Optional[int] = Query(None, description="Optional story turn number for artifact attachment"),
+):
+    """Rebuild FAISS / BM25 index from current documents (job-based by default)."""
     try:
         rag_engine = get_rag_engine()
 
-        start = time.time()
-        success = rag_engine.rebuild_index()
-        duration = time.time() - start
-        stats = rag_engine.get_stats() if success else {}
+        if not async_job:
+            start = time.time()
+            success = rag_engine.rebuild_index()
+            duration = time.time() - start
+            stats = rag_engine.get_stats() if success else {}
+            if success:
+                try:
+                    rag_engine.save_index()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("RAG index save skipped: %s", exc)
 
-        return {
-            "success": success,
-            "message": "Index rebuild completed" if success else "Index rebuild failed",
-            "time_taken_seconds": duration,
-            "documents_processed": stats.get("total_documents", 0) if success else 0,
-        }
+            return {
+                "success": success,
+                "message": "Index rebuild completed" if success else "Index rebuild failed",
+                "time_taken_seconds": duration,
+                "documents_processed": stats.get("total_documents", 0) if success else 0,
+            }
+
+        job_manager = TrainJobManager()
+        payload: Dict[str, Any] = {"job_type": "rag_rebuild", "requested_at": time.time()}
+        if session_id:
+            payload["session_id"] = str(session_id).strip()
+        if turn is not None:
+            try:
+                payload["turn"] = int(turn)
+            except Exception:
+                payload["turn"] = turn
+        job_id = job_manager.create_job(
+            "rag_rebuild",
+            payload,
+            status="queued",
+        )
+
+        try:
+            from workers.tasks.rag import rag_rebuild_task
+
+            async_result = rag_rebuild_task.delay({"job_id": job_id, "payload": payload})
+            try:
+                job_manager.update_job(job_id, celery_task_id=str(async_result.id))
+            except Exception:
+                pass
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Celery dispatch skipped (%s), running sync", exc)
+            try:
+                from core.rag.job_runner import run_rag_rebuild_job
+
+                run_rag_rebuild_job(job_id, payload, job_manager=job_manager)
+            except Exception:
+                pass
+
+        return {"success": True, "job_id": job_id, "status": "queued"}
     except Exception as e:
         logger.error(f"Rebuild failed: {e}")
         raise HTTPException(500, f"Rebuild error: {str(e)}")
@@ -401,6 +806,10 @@ async def clear_index():
         rag_engine.index = rag_engine._create_index()
         rag_engine.bm25 = None
         rag_engine.bm25_corpus = []
+        try:
+            rag_engine.save_index()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("RAG index save skipped: %s", exc)
 
         return {"success": True, "message": "RAG index cleared"}
     except Exception as e:
@@ -414,24 +823,29 @@ async def clear_index():
 
 
 @router.get("/rag/documents")
-async def list_documents(limit: int = 50, offset: int = 0):
+async def list_documents(limit: int = 50, offset: int = 0, world_id: Optional[str] = None):
     """List logical documents (grouping chunks by parent_doc_id)."""
     try:
         rag_engine = get_rag_engine()
 
         unique_docs = {}
         for doc_id, doc in rag_engine.documents.items():
-            parent_id = doc.metadata.get("parent_doc_id", doc_id)
+            metadata = doc.metadata or {}
+            doc_world = str(metadata.get("world_id", "default")).strip() or "default"
+            if world_id and doc_world != str(world_id).strip():
+                continue
+
+            parent_id = metadata.get("parent_doc_id", doc_id)
             if parent_id not in unique_docs:
                 unique_docs[parent_id] = {
                     "doc_id": parent_id,
-                    "title": doc.metadata.get("title", parent_id),
+                    "title": metadata.get("title", parent_id),
                     "chunks": 0,
                     "total_chars": 0,
                     "created_at": doc.created_at.isoformat()
                     if doc.created_at
                     else None,
-                    "metadata": doc.metadata,
+                    "metadata": metadata,
                 }
 
             unique_docs[parent_id]["chunks"] += 1
@@ -482,6 +896,10 @@ async def delete_document(doc_id: str):
 
         # Rebuild index to keep FAISS/doc_id_map consistent
         rag_engine.rebuild_index()
+        try:
+            rag_engine.save_index()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("RAG index save skipped: %s", exc)
         after_count = len(rag_engine.documents)
         removed = before_count - after_count
 
@@ -495,6 +913,66 @@ async def delete_document(doc_id: str):
     except Exception as e:
         logger.error(f"Delete document failed: {e}")
         raise HTTPException(500, f"Delete error: {str(e)}")
+
+
+@router.delete("/rag/worlds/{world_id}/documents")
+async def clear_world_documents(world_id: str):
+    """
+    Clear all logical documents/chunks for a given world_id.
+
+    - 移除該 world 的所有 chunks
+    - 重建 index（若還有其他 world 的資料）
+    """
+    try:
+        rag_engine = get_rag_engine()
+        target = str(world_id or "default").strip() or "default"
+
+        chunks_to_remove: List[str] = []
+        logical_docs = set()
+        for chunk_id, doc in rag_engine.documents.items():
+            metadata = doc.metadata or {}
+            doc_world = str(metadata.get("world_id", "default")).strip() or "default"
+            if doc_world != target:
+                continue
+            chunks_to_remove.append(chunk_id)
+            logical_docs.add(metadata.get("parent_doc_id", chunk_id))
+
+        if not chunks_to_remove:
+            return {
+                "success": True,
+                "world_id": target,
+                "documents_removed": 0,
+                "chunks_removed": 0,
+                "message": f"No documents found for world_id={target}",
+            }
+
+        for chunk_id in chunks_to_remove:
+            rag_engine.documents.pop(chunk_id, None)
+
+        # Rebuild index if anything remains; otherwise reset
+        if rag_engine.documents:
+            rag_engine.rebuild_index()
+        else:
+            rag_engine.index = None
+            rag_engine.doc_id_map.clear()
+            rag_engine.bm25 = None
+            rag_engine.bm25_corpus = []
+
+        try:
+            rag_engine.save_index()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("RAG index save skipped: %s", exc)
+
+        return {
+            "success": True,
+            "world_id": target,
+            "documents_removed": len(logical_docs),
+            "chunks_removed": len(chunks_to_remove),
+            "message": f"Cleared world_id={target} ({len(logical_docs)} docs / {len(chunks_to_remove)} chunks)",
+        }
+    except Exception as e:
+        logger.error("Clear world documents failed: %s", e, exc_info=True)
+        raise HTTPException(500, f"Clear world error: {str(e)}")
 
 
 @router.post("/rag/batch_add", response_model=RAGBatchAddResponse)
@@ -522,6 +1000,11 @@ async def batch_add_documents(request: RAGBatchAddRequest):
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Batch add failed for {doc['doc_id']}: {exc}")
             failed_docs.append(doc["doc_id"])
+
+    try:
+        rag_engine.save_index()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("RAG index save skipped: %s", exc)
 
     return RAGBatchAddResponse(
         success=True,

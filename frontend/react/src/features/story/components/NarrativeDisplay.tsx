@@ -37,7 +37,7 @@ export function NarrativeDisplay({ narrative, dialogue, choices }: NarrativeDisp
           <h4 className="text-sm font-semibold text-slate-300 mb-2">可選動作：</h4>
           <ul className="space-y-1">
             {choices.map((choice) => (
-              <li key={choice.id} className="text-sm text-slate-400">
+              <li key={choice.choice_id} className="text-sm text-slate-400">
                 • {choice.text}
                 {choice.description && (
                   <span className="text-slate-500 ml-2">({choice.description})</span>

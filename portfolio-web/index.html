@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Anime Adventure Lab — Live Demo</title>
+    <meta name="description" content="Anime Adventure Lab：LLM+RAG+T2I+VLM 故事系統（此線上版本為輕量可操作 demo）。" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="hero">
+        <p class="kicker">Portfolio Live Demo</p>
+        <h1>Anime Adventure Lab</h1>
+        <p class="sub">
+          這是線上可操作 demo：提供 <code>/turn</code>（故事回合）與 <code>/txt2img</code>（placeholder 生圖）API。
+          此版本不載入 LLM/RAG/SD 模型，重點展示部署、反向代理與互動流程。
+        </p>
+      </header>
+
+      <section class="card">
+        <h2>1) 系統狀態</h2>
+        <div class="row">
+          <button id="btn-health" class="btn">刷新 Health</button>
+          <code class="muted">GET api/v1/health</code>
+        </div>
+        <pre id="health-out" class="pre">點「刷新 Health」測試 API 是否正常。</pre>
+      </section>
+
+      <section class="grid">
+        <section class="card">
+          <h2>2) Story Turn（Demo）</h2>
+          <p class="muted">輸入一句話 → 回傳 deterministic narrative + choices（示範故事引擎的 API 介面）。</p>
+
+          <label class="label">User Input</label>
+          <textarea id="turn-user" class="textarea" rows="5" placeholder="例如：我走進霓虹巷弄，看到一個神秘商人..."></textarea>
+
+          <div class="grid2">
+            <div>
+              <label class="label">Seed（可空）</label>
+              <input id="turn-seed" class="input" placeholder="例如：12345（留空 auto）" />
+            </div>
+            <div>
+              <label class="label">Temperature</label>
+              <input id="turn-temp" class="input" value="0.7" />
+            </div>
+          </div>
+
+          <div class="row">
+            <button id="btn-turn" class="btn">送出 Turn</button>
+            <code class="muted">POST api/v1/turn</code>
+          </div>
+
+          <pre id="turn-out" class="pre">尚未送出。</pre>
+        </section>
+
+        <section class="card">
+          <h2>3) txt2img（Demo）</h2>
+          <p class="muted">輸入 prompt → 產生 deterministic PNG（非 diffusion）。</p>
+
+          <label class="label">Prompt</label>
+          <textarea id="t2i-prompt" class="textarea" rows="4" placeholder="例如：anime portrait, soft lighting, detailed eyes"></textarea>
+
+          <div class="grid2">
+            <div>
+              <label class="label">Seed（可空）</label>
+              <input id="t2i-seed" class="input" placeholder="例如：42（留空 auto）" />
+            </div>
+            <div>
+              <label class="label">Size</label>
+              <div class="row">
+                <input id="t2i-w" class="input" value="640" />
+                <span class="muted">×</span>
+                <input id="t2i-h" class="input" value="640" />
+              </div>
+            </div>
+          </div>
+
+          <div class="row">
+            <button id="btn-t2i" class="btn">生成 PNG</button>
+            <code class="muted">POST api/v1/txt2img</code>
+          </div>
+
+          <div id="t2i-img" class="imgWrap muted">尚未生成。</div>
+          <pre id="t2i-dbg" class="pre">尚未生成。</pre>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      async function apiJson(url, options) {
+        const res = await fetch(url, options);
+        const text = await res.text();
+        try {
+          const data = JSON.parse(text);
+          if (!res.ok) throw Object.assign(new Error("HTTP " + res.status), { data });
+          return data;
+        } catch (e) {
+          throw new Error("Non-JSON response (" + res.status + "): " + text.slice(0, 180));
+        }
+      }
+
+      async function renderPng(fetchPromise, imgEl, dbgEl) {
+        const started = performance.now();
+        const res = await fetchPromise;
+        const ms = Math.round(performance.now() - started);
+        const bodyPreview = await res.clone().text().catch(() => "");
+        if (!res.ok) {
+          dbgEl.textContent = "HTTP " + res.status + "\\n" + bodyPreview.slice(0, 400);
+          return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        imgEl.innerHTML = "";
+        const img = new Image();
+        img.src = url;
+        img.alt = "output";
+        img.style.maxWidth = "100%";
+        img.style.borderRadius = "14px";
+        img.style.border = "1px solid rgba(255,255,255,0.12)";
+        imgEl.appendChild(img);
+        dbgEl.textContent = JSON.stringify(
+          { contentType: blob.type, sizeBytes: blob.size, elapsedMs: ms, apiElapsedMs: res.headers.get("X-Elapsed-Ms") },
+          null,
+          2
+        );
+      }
+
+      $("btn-health").addEventListener("click", async () => {
+        $("health-out").textContent = "Loading...";
+        try {
+          const data = await apiJson("api/v1/health");
+          $("health-out").textContent = JSON.stringify(data, null, 2);
+        } catch (e) {
+          $("health-out").textContent = String(e);
+        }
+      });
+
+      $("btn-turn").addEventListener("click", async () => {
+        $("turn-out").textContent = "Loading...";
+        const user = ($("turn-user").value || "").trim();
+        if (!user) {
+          $("turn-out").textContent = "請輸入內容。";
+          return;
+        }
+        const seed = ($("turn-seed").value || "").trim();
+        const temp = ($("turn-temp").value || "0.7").trim();
+        const payload = { user, temperature: Number(temp || 0.7) };
+        if (seed) payload.seed = Number(seed);
+        try {
+          const data = await apiJson("api/v1/turn", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          $("turn-out").textContent = JSON.stringify(data, null, 2);
+        } catch (e) {
+          $("turn-out").textContent = String(e);
+        }
+      });
+
+      $("btn-t2i").addEventListener("click", async () => {
+        $("t2i-dbg").textContent = "Loading...";
+        const prompt = ($("t2i-prompt").value || "").trim();
+        if (!prompt) {
+          $("t2i-dbg").textContent = "請輸入 prompt。";
+          return;
+        }
+        const form = new FormData();
+        form.append("prompt", prompt);
+        const seed = ($("t2i-seed").value || "").trim();
+        if (seed) form.append("seed", seed);
+        form.append("width", ($("t2i-w").value || "640").trim());
+        form.append("height", ($("t2i-h").value || "640").trim());
+        await renderPng(fetch("api/v1/txt2img", { method: "POST", body: form }), $("t2i-img"), $("t2i-dbg"));
+      });
+    </script>
+  </body>
+</html>

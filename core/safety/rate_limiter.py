@@ -11,13 +11,17 @@ from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict, deque
 import hashlib
-import redis
 import json
 
 from ..config import get_config
 from ..exceptions import RateLimitError
 
 logger = logging.getLogger(__name__)
+
+try:
+    import redis  # type: ignore
+except Exception:  # noqa: BLE001
+    redis = None  # type: ignore
 
 
 @dataclass
@@ -211,6 +215,11 @@ class RedisRateLimiter:
         self.config = get_config()
         self.redis = None  # Redis 連接 (optional)
         self.memory_store = {}  # 記憶體存儲作為備用方案
+
+        if redis is None:
+            logger.warning("⚠️ redis 套件未安裝，RateLimiter 將使用 in-memory 模式")
+            self.redis_client = None
+            return
 
         try:
             self.redis_client = redis.from_url(redis_url, decode_responses=True)

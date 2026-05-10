@@ -28,7 +28,7 @@ num_validation_images: 2
 
 # Dataset configuration
 dataset:
-  root: "/mnt/c/AI_LLM_projects/ai_warehouse/datasets/anime-char-sample"
+  root: "${AI_DATASETS_ROOT}/anime-char-sample"
   train_list: "splits/train.txt" # list of image filenames
   caption_dir: "captions" # .txt files with same basename
   image_dir: "images"
@@ -38,7 +38,7 @@ dataset:
 
 # Output configuration
 output:
-  dir: "/mnt/c/AI_LLM_projects/ai_warehouse/outputs/lora"
+  dir: "${AI_OUTPUT_ROOT}/training/lora_sd15"
   run_id: "${timestamp}_${character_name}" # auto-generated if not specified
   save_every: 500
   sample_every: 250

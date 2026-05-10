@@ -1,0 +1,59 @@
+# configs/runtime_presets.yaml
+#
+# Runtime presets (hardware/quality profiles)
+# - 用於 Story / World 端選擇「LLM + T2I」的預設參數
+# - 不放大檔，只放小型設定；實際模型權重請放 AI_MODELS_ROOT
+#
+
+default_preset_id: "llamacpp_server"
+
+presets:
+  llamacpp_server:
+    name: "llama.cpp Server（OpenClaw 共用）"
+    description: "使用與 OpenClaw 共用的 llama.cpp server 後端（port 8080），Qwen3.6-27B"
+    llm:
+      backend: "llamacpp"
+      server_url: "http://localhost:8080"
+      model_name: ""
+      timeout: 300
+    t2i:
+      model_id: "stabilityai/stable-diffusion-xl-base-1.0"
+      torch_dtype: "float16"
+      enable_attention_slicing: true
+      enable_vae_slicing: true
+      enable_vae_tiling: true
+      enable_cpu_offload: false
+      enable_sequential_cpu_offload: false
+      default_width: 1024
+      default_height: 1024
+      default_steps: 30
+      default_guidance_scale: 6.0
+      max_width: 1024
+      max_height: 1024
+      max_steps: 50
+
+  rtx_5080_16gb:
+    name: "RTX 5080 16GB（本地 Transformers）"
+    description: "單卡 16GB：Qwen 7B（4bit）+ SDXL 1024，含 OOM fallback 建議值"
+    llm:
+      model_name: "Qwen/Qwen2.5-7B-Instruct"
+      torch_dtype: "float16"
+      device_map: "auto"
+      use_quantization: true
+      quantization_bits: 4
+    t2i:
+      model_id: "stabilityai/stable-diffusion-xl-base-1.0"
+      torch_dtype: "float16"
+      enable_attention_slicing: true
+      enable_vae_slicing: true
+      enable_vae_tiling: true
+      enable_cpu_offload: false
+      enable_sequential_cpu_offload: false
+      default_width: 1024
+      default_height: 1024
+      default_steps: 30
+      default_guidance_scale: 6.0
+      max_width: 1024
+      max_height: 1024
+      max_steps: 50
+

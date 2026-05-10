@@ -95,6 +95,46 @@ class StoryEngine:
 
         logger.info("Story engine initialized")
 
+    def _apply_runtime_preset_llm(self, session: GameSession) -> None:
+        """
+        Best-effort: configure the global LLM adapter using session.runtime_preset_id.
+
+        Goal:
+        - RTX 5080 16GB preset should actually drive Qwen 7B 4bit, dtype, device_map, etc.
+        - Keep the global adapter object stable (in-place reconfigure) so other subsystems
+          holding a reference don't go stale.
+        """
+        try:
+            story_ctx = getattr(getattr(session, "current_state", None), "story_context", {}) or {}
+            if not isinstance(story_ctx, dict):
+                return
+            preset_id = str(story_ctx.get("runtime_preset_id") or "").strip()
+            if not preset_id:
+                return
+
+            from core.runtime.catalog import get_runtime_preset
+
+            preset = get_runtime_preset(preset_id) or {}
+            llm_cfg = preset.get("llm") if isinstance(preset.get("llm"), dict) else {}
+            model_name = str(llm_cfg.get("model_name") or "").strip()
+            if not model_name:
+                return
+
+            llm_kwargs: Dict[str, Any] = {}
+            for key in ["device_map", "torch_dtype", "use_quantization", "quantization_bits"]:
+                if key in llm_cfg and llm_cfg.get(key) is not None:
+                    llm_kwargs[key] = llm_cfg.get(key)
+
+            from core.llm.adapter import get_llm_adapter
+
+            adapter = get_llm_adapter(model_name=model_name, **llm_kwargs)
+            try:
+                setattr(self.narrative_generator, "llm", adapter)
+            except Exception:
+                pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Runtime preset LLM apply skipped: %s", exc)
+
     def _load_contextual_choices(self) -> Dict[str, List[ContextualChoice]]:
         """Load contextual choice templates"""
         return {
@@ -267,6 +307,9 @@ class StoryEngine:
         persona_id: str = "wise_sage",
         setting: str = "fantasy",
         difficulty: str = "medium",
+        world_id: str = "default",
+        player_template_id: Optional[str] = None,
+        runtime_preset_id: Optional[str] = None,
     ) -> GameSession:
         """Create new game session"""
 
@@ -275,14 +318,56 @@ class StoryEngine:
         if not persona:
             raise GameError(f"Unknown persona: {persona_id}")
 
+        # Resolve world_id best-effort (unknown world -> fallback to default)
+        try:
+            from core.worldpacks import get_worldpack_manager
+
+            wpm = get_worldpack_manager()
+            if wpm.get_worldpack(world_id) is None:
+                world_id = "default"
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Worldpack resolution skipped: %s", exc)
+
         # Create initial game state
+        effective_runtime_preset_id: Optional[str] = None
+        try:
+            cleaned = str(runtime_preset_id or "").strip()
+            effective_runtime_preset_id = cleaned or None
+        except Exception:
+            effective_runtime_preset_id = None
+
+        if effective_runtime_preset_id is None:
+            try:
+                from core.worldpacks import get_worldpack_manager
+
+                wpm = get_worldpack_manager()
+                worldpack = wpm.get_worldpack(world_id)
+                candidate = getattr(worldpack, "runtime_preset_id", None) if worldpack else None
+                candidate = str(candidate or "").strip()
+                effective_runtime_preset_id = candidate or None
+            except Exception:
+                effective_runtime_preset_id = None
+
+        if effective_runtime_preset_id is None:
+            try:
+                from core.runtime.catalog import load_runtime_preset_catalog
+
+                catalog = load_runtime_preset_catalog()
+                candidate = str(catalog.get("default_preset_id") or "").strip()
+                effective_runtime_preset_id = candidate or None
+            except Exception:
+                effective_runtime_preset_id = None
+
         initial_state = GameState(
             scene_id="opening",
             scene_description="",
             available_choices=[],
             story_context={
+                "world_id": world_id,
+                "runtime_preset_id": effective_runtime_preset_id,
                 "setting": setting,
                 "difficulty": difficulty,
+                "player_template_id": player_template_id,
                 "current_location": "起點",
                 "time_of_day": "清晨",
                 "weather": "晴朗",
@@ -295,6 +380,7 @@ class StoryEngine:
             session_id=f"game_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{player_name}",
             player_name=player_name,
             persona_id=persona_id,
+            world_id=world_id,
             created_at=datetime.now(),
             updated_at=datetime.now(),
             turn_count=0,
@@ -308,14 +394,23 @@ class StoryEngine:
 
         # Initialize enhanced context if enabled
         if self.enhanced_mode:
-            self._initialize_enhanced_context(session, persona, setting)
+            self._initialize_enhanced_context(
+                session,
+                persona,
+                setting,
+                player_template_id=player_template_id,
+            )
 
         self._save_session(session)
         logger.info(f"Created new session: {session.session_id}")
         return session
 
     def _initialize_enhanced_context(
-        self, session: GameSession, persona: GamePersona, setting: str
+        self,
+        session: GameSession,
+        persona: GamePersona,
+        setting: str,
+        player_template_id: Optional[str] = None,
     ):
         """Initialize enhanced context memory for new session"""
         context_memory = StoryContextMemory(
@@ -329,19 +424,109 @@ class StoryEngine:
         context_memory.player_relationships = {}  # type: ignore[attr-defined]
         context_memory.world_flags = {}  # type: ignore[attr-defined]
 
-        # Create player character
+        # Apply worldpack (best-effort)
+        worldpack = None
+        try:
+            from core.worldpacks import get_worldpack_manager
+
+            wpm = get_worldpack_manager()
+            worldpack = wpm.get_worldpack(getattr(session, "world_id", "default"))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Skip worldpack load: %s", exc)
+
+        if worldpack:
+            try:
+                context_memory.world_flags = dict(worldpack.world_flags or {})  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+            # Expose basic world info for prompt construction / UI
+            try:
+                session.current_state.story_context["world_name"] = worldpack.name
+                session.current_state.story_context["world_description"] = worldpack.description
+                session.current_state.story_context["world_visual"] = worldpack.visual.model_dump()
+                session.current_state.story_context["worldpack_updated_at"] = worldpack.updated_at
+                # World-level orchestrator config (agent_profile)
+                session.current_state.story_context["agent_profile"] = (
+                    worldpack.agent_profile.model_dump()
+                    if getattr(worldpack, "agent_profile", None) is not None
+                    else {}
+                )
+                if getattr(session, "world_id", "default") != "default":
+                    session.current_state.story_context["setting"] = worldpack.setting
+                    session.current_state.story_context["difficulty"] = worldpack.difficulty
+            except Exception:
+                pass
+
+        # Resolve player template from worldpack
+        player_template = None
+        try:
+            template_id = (
+                player_template_id
+                or session.current_state.story_context.get("player_template_id")
+                or None
+            )
+            if worldpack and worldpack.player_templates:
+                if template_id:
+                    player_template = next(
+                        (t for t in worldpack.player_templates if t.template_id == template_id),
+                        None,
+                    )
+                if player_template is None:
+                    player_template = worldpack.player_templates[0]
+                    session.current_state.story_context["player_template_id"] = (
+                        player_template.template_id
+                    )
+        except Exception:
+            player_template = None
+
+        # Create player character (use template if provided)
         player_character = GameCharacter(
             character_id="player",
             name=session.player_name,
             role=CharacterRole.PLAYER,
-            personality_traits=["勇敢", "好奇", "善良"],
-            speaking_style="直接而友善",
-            background_story=f"一個開始新冒險的{session.player_name}",
+            personality_traits=(
+                list(player_template.personality_traits)
+                if player_template and player_template.personality_traits
+                else ["勇敢", "好奇", "善良"]
+            ),
+            speaking_style=(
+                player_template.speaking_style
+                if player_template and player_template.speaking_style
+                else "直接而友善"
+            ),
+            background_story=(
+                player_template.background_story
+                if player_template and player_template.background_story
+                else f"一個開始新冒險的{session.player_name}"
+            ),
             relationships={},
-            motivations=["探索世界", "幫助他人", "成長"],
+            motivations=(
+                list(player_template.motivations)
+                if player_template and player_template.motivations
+                else ["探索世界", "幫助他人", "成長"]
+            ),
             current_location="起點",
+            persona_prompt=(
+                player_template.persona_prompt if player_template else ""
+            ),
         )
         context_memory.add_character(player_character)
+
+        if player_template:
+            try:
+                context_memory.player_personality_profile = {  # type: ignore[attr-defined]
+                    "template_id": player_template.template_id,
+                    "name": player_template.name,
+                    "description": player_template.description,
+                    "personality_traits": player_template.personality_traits,
+                    "speaking_style": player_template.speaking_style,
+                    "background_story": player_template.background_story,
+                    "motivations": player_template.motivations,
+                    "persona_prompt": player_template.persona_prompt,
+                }
+            except Exception:
+                pass
 
         # Create narrator character based on persona
         narrator_character = GameCharacter(
@@ -360,6 +545,38 @@ class StoryEngine:
         )
         context_memory.add_character(narrator_character)
 
+        # Add worldpack NPC/characters into context memory (best-effort)
+        opening_world_characters = []
+        if worldpack:
+            from core.story.story_system import CharacterRole as _Role
+
+            role_map = {
+                "npc": _Role.NPC,
+                "companion": _Role.COMPANION,
+                "antagonist": _Role.ANTAGONIST,
+            }
+            for c in worldpack.characters:
+                try:
+                    character = GameCharacter(
+                        character_id=c.character_id,
+                        name=c.name,
+                        role=role_map.get(c.role, _Role.NPC),
+                        personality_traits=list(c.personality_traits),
+                        speaking_style=c.speaking_style,
+                        background_story=c.background_story,
+                        motivations=list(c.motivations),
+                        relationships=dict(c.relationships),
+                        current_location="起點",
+                        persona_prompt=c.persona_prompt,
+                        content_restrictions=list(c.content_restrictions),
+                    )
+                    context_memory.add_character(character)
+                    if getattr(c, "start_in_opening", False):
+                        opening_world_characters.append(c.character_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Skip invalid world character %s: %s", getattr(c, "character_id", "?"), exc)
+                    continue
+
         # Create opening scene
         opening_scene = SceneContext(
             scene_id="opening",
@@ -370,8 +587,8 @@ class StoryEngine:
             time_of_day="清晨",
             weather="晴朗",
             atmosphere=SceneMood.MYSTERIOUS,
-            present_characters=["player", "narrator"],
-            primary_npc="narrator",
+            present_characters=["player", "narrator"] + opening_world_characters,
+            primary_npc=opening_world_characters[0] if opening_world_characters else "narrator",
             scene_objectives=["設定背景", "介紹世界", "提供初始選擇"],
             turn_number=0,
         )
@@ -436,6 +653,134 @@ class StoryEngine:
 
         except Exception as e:
             logger.error(f"Failed to save session {session.session_id}: {e}")
+
+    def save_game_slot(self, session_id: str, slot_name: str) -> Dict[str, Any]:
+        """Save a game session to a specific named slot."""
+        if session_id not in self.sessions:
+            raise SessionNotFoundError(f"Session not found: {session_id}")
+            
+        session = self.sessions[session_id]
+        save_root = self.sessions_path.parent / "saves" / session_id
+        save_root.mkdir(parents=True, exist_ok=True)
+        
+        timestamp = datetime.now().isoformat()
+        slot_id = f"slot_{int(datetime.now().timestamp())}"
+        
+        # Export full session data
+        exported_data = self.export_session_data(session_id, include_context=True)
+        
+        # Create slot metadata
+        slot_info = {
+            "slot_id": slot_id,
+            "name": slot_name or f"存檔 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "timestamp": timestamp,
+            "turn_count": session.turn_count,
+            "scene_image_url": session.current_state.story_context.get("last_scene_image", {}).get("image_url", ""),
+            "player_name": session.player_name,
+            "stats": session.stats.to_dict() if hasattr(session.stats, "to_dict") else {}
+        }
+        
+        # Save metadata and data
+        save_file = save_root / f"{slot_id}.json"
+        with open(save_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "metadata": slot_info,
+                "data": exported_data
+            }, f, ensure_ascii=False, indent=2)
+            
+        return slot_info
+
+    def list_game_slots(self, session_id: str) -> List[Dict[str, Any]]:
+        """List all save slots for a session."""
+        save_root = self.sessions_path.parent / "saves" / session_id
+        if not save_root.exists():
+            return []
+            
+        slots = []
+        for file in save_root.glob("*.json"):
+            try:
+                with open(file, "r", encoding="utf-8") as f:
+                    content = json.load(f)
+                    if "metadata" in content:
+                        slots.append(content["metadata"])
+            except Exception:
+                continue
+                
+        # Sort by timestamp descending
+        slots.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        return slots
+
+    def load_game_slot(self, session_id: str, slot_id: str) -> GameSession:
+        """Load a game session from a specific slot."""
+        save_file = self.sessions_path.parent / "saves" / session_id / f"{slot_id}.json"
+        if not save_file.exists():
+            raise GameError(f"Save slot {slot_id} not found for session {session_id}")
+            
+        with open(save_file, "r", encoding="utf-8") as f:
+            content = json.load(f)
+            
+        # Import data (this might overwrite the current session in memory)
+        success = self.import_session_data(content["data"])
+        if not success:
+            raise GameError("Failed to import session data from save slot")
+            
+        # Reload the session from path to be safe
+        session = self._load_session_by_id(session_id)
+        if not session:
+            raise SessionNotFoundError(f"Session {session_id} could not be reloaded after import")
+            
+        self.sessions[session_id] = session
+        return session
+
+    def get_narrative_flowchart(self, session_id: str) -> Dict[str, Any]:
+        """Generate flowchart data representing the decision tree of the story."""
+        if session_id not in self.sessions:
+            raise SessionNotFoundError(f"Session not found: {session_id}")
+            
+        session = self.sessions[session_id]
+        history = getattr(session, "history", [])
+        
+        nodes = []
+        edges = []
+        
+        # Start node
+        nodes.append({
+            "id": "start",
+            "type": "start",
+            "label": "故事開始",
+            "turn": 0
+        })
+        
+        prev_node_id = "start"
+        for i, entry in enumerate(history):
+            turn_num = entry.get("turn", i + 1)
+            node_id = f"turn_{turn_num}"
+            
+            # Create node for this turn
+            nodes.append({
+                "id": node_id,
+                "type": "story_turn",
+                "label": f"第 {turn_num} 回合",
+                "summary": entry.get("action", "")[:50] + "...",
+                "turn": turn_num,
+                "image_url": entry.get("scene_image", {}).get("image_url", "")
+            })
+            
+            # Create edge from previous
+            edges.append({
+                "id": f"e_{prev_node_id}_{node_id}",
+                "source": prev_node_id,
+                "target": node_id,
+                "label": entry.get("choice_made", "") # If we start tracking choice labels
+            })
+            
+            prev_node_id = node_id
+            
+        return {"nodes": nodes, "edges": edges}
+
+    def save_session(self, session: GameSession) -> None:
+        """Persist a session after mutating in-memory fields."""
+        self._save_session(session)
 
     def make_choice(self, session_id: str, choice_id: str) -> Dict[str, Any]:
         """Make a choice in the story (完整實作版本)"""
@@ -539,8 +884,7 @@ class StoryEngine:
                 context_memory.update_character_relationship("player", char_id, change)
             result["consequences"]["relationships"] = consequences["relationships"]
 
-        # Update session
-        session.turn_count += 1
+        # Update session timestamp (turn_count is incremented by add_to_history, not here)
         session.updated_at = datetime.now()
 
         # Save session
@@ -553,6 +897,7 @@ class StoryEngine:
     ) -> Dict[str, Any]:
         """Process a player turn with enhanced or classic mode"""
 
+        # Check if we should use enhanced mode
         if self.enhanced_mode and session_id in self.context_memories:
             return await self._process_enhanced_turn(
                 session_id, player_input, choice_id
@@ -565,12 +910,36 @@ class StoryEngine:
     ) -> Dict[str, Any]:
         """Process turn with enhanced context management"""
 
-        session = self.get_session(session_id)
-        context_memory = self.context_memories[session_id]
-        persona = self.persona_manager.get_persona(session.persona_id)
+        try:
+            logger.debug(f"Processing enhanced turn for session {session_id}")
+            session = self.get_session(session_id)
+            self._apply_runtime_preset_llm(session)
+            context_memory = self.context_memories[session_id]
+            persona = self.persona_manager.get_persona(session.persona_id)
 
-        if not persona:
-            raise GameError(f"Persona not found: {session.persona_id}")
+            if not persona:
+                raise GameError(f"Persona not found: {session.persona_id}")
+        except Exception as e:
+            logger.error(f"Failed to get session/persona: {e}", exc_info=True)
+            raise
+
+        # Snapshot state for per-turn diffs (Turn Inspector)
+        pre_flags: Dict[str, Any] = {}
+        pre_stats: Dict[str, Any] = {}
+        pre_inventory: List[str] = []
+        pre_relationships: Dict[str, Any] = {}
+        try:
+            import copy
+
+            pre_flags = copy.deepcopy(getattr(session.current_state, "flags", {}) or {})
+            pre_stats = copy.deepcopy(session.stats.to_dict() if hasattr(session.stats, "to_dict") else {})
+            pre_inventory = list(getattr(session, "inventory", []) or [])
+            pre_relationships = copy.deepcopy(getattr(context_memory, "player_relationships", {}) or {})
+        except Exception:
+            pre_flags = {}
+            pre_stats = {}
+            pre_inventory = []
+            pre_relationships = {}
 
         try:
             # Execute choice if provided
@@ -584,7 +953,11 @@ class StoryEngine:
             if isinstance(self.narrative_generator, EnhancedNarrativeGenerator):
                 narrative_result = (
                     await self.narrative_generator.generate_contextual_narrative(
-                        context_memory, player_input, choice_result
+                        context_memory,
+                        player_input,
+                        choice_result,
+                        inventory=session.inventory,
+                        stats=session.stats.to_dict(),
                     )
                 )
             else:
@@ -602,30 +975,129 @@ class StoryEngine:
                     "narrative_focus": "general_progression",
                 }
 
-            # Update context memory
-            await self._update_context_memory(
-                context_memory, player_input, narrative_result, choice_result
-            )
+            # Apply state delta from AI (Consistency Enforcement)
+            state_delta = narrative_result.get("state_delta", {})
+            if state_delta:
+                logger.info(f"Applying state delta from AI: {state_delta}")
+                # Add items
+                for item in state_delta.get("inventory_add", []):
+                    if item not in session.inventory:
+                        session.inventory.append(item)
+                # Remove items
+                for item in state_delta.get("inventory_remove", []):
+                    if item in session.inventory:
+                        try:
+                            session.inventory.remove(item)
+                        except Exception:
+                            pass
+                # Update stats
+                stat_changes = state_delta.get("stat_changes", {})
+                for stat, change in stat_changes.items():
+                    if hasattr(session.stats, stat):
+                        try:
+                            current = getattr(session.stats, stat)
+                            setattr(session.stats, stat, current + int(change))
+                        except Exception:
+                            pass
+                # Update flags
+                for flag in state_delta.get("flags_triggered", []):
+                    session.current_state.flags[flag] = True
 
-            # Generate new contextual choices
-            new_choices = self._generate_contextual_choices(context_memory)
+            # Update context memory
+            try:
+                logger.debug("Updating context memory...")
+                await self._update_context_memory(
+                    context_memory, player_input, narrative_result, choice_result
+                )
+                # Persist context memory changes immediately
+                self._save_session(session)
+                # Keep session scene_id aligned with enhanced context for UI/history
+                try:
+                    session.current_state.scene_id = str(getattr(context_memory, "current_scene_id", "") or session.current_state.scene_id)
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error(f"Failed to update context memory: {e}", exc_info=True)
+                raise
+
+            # Generate new choices — LLM-driven for variety
+            try:
+                logger.debug("Generating LLM contextual choices...")
+                # Run in a separate thread to avoid event loop conflicts with httpx
+                llm_choices = await asyncio.to_thread(
+                    self._generate_llm_choices_sync,
+                    narrative_result["main_narrative"],
+                    context_memory,
+                    session,
+                )
+                new_choices = llm_choices
+                logger.debug(f"Generated {len(new_choices)} LLM choices")
+            except Exception as e:
+                logger.warning(f"LLM choice generation failed ({e}), falling back to templates", exc_info=True)
+                try:
+                    new_choices = self._generate_contextual_choices(context_memory)
+                except Exception:
+                    new_choices = []
 
             # Update session state
-            session.current_state.scene_description = narrative_result["main_narrative"]
-            session.current_state.available_choices = [
-                {
-                    "choice_id": choice.choice_id,
-                    "text": choice.get_display_text(context_memory),
-                    "type": choice.choice_type,
-                    "difficulty": choice.difficulty,
-                }
-                for choice in new_choices
-            ]
+            try:
+                logger.debug("Updating session state...")
+                session.current_state.scene_description = narrative_result["main_narrative"]
 
-            # Add to history
+                # Handle both dict (LLM) and object (template) choices
+                formatted_choices = []
+                for choice in new_choices:
+                    if isinstance(choice, dict):
+                        formatted_choices.append({
+                            "choice_id": choice.get("choice_id", f"choice_{len(formatted_choices)}"),
+                            "text": choice.get("text", "繼續行動"),
+                            "type": choice.get("type", "action"),
+                            "difficulty": choice.get("difficulty", "medium"),
+                        })
+                    else:
+                        try:
+                            choice_text = choice.get_display_text(context_memory)
+                            formatted_choices.append({
+                                "choice_id": choice.choice_id,
+                                "text": choice_text,
+                                "type": choice.choice_type,
+                                "difficulty": choice.difficulty,
+                            })
+                        except Exception:
+                            formatted_choices.append({
+                                "choice_id": getattr(choice, 'choice_id', f"choice_{len(formatted_choices)}"),
+                                "text": getattr(choice, 'base_text', '繼續行動'),
+                                "type": getattr(choice, 'choice_type', 'action'),
+                                "difficulty": getattr(choice, 'difficulty', 'medium'),
+                            })
+
+                session.current_state.available_choices = formatted_choices
+                logger.debug(f"Updated session with {len(session.current_state.available_choices)} choices")
+            except Exception as e:
+                logger.error(f"Failed to update session state: {e}", exc_info=True)
+                raise
+
+            # Add to history (add_to_history increments turn_count internally)
             session.add_to_history(
                 player_input, narrative_result["main_narrative"], choice_id
             )
+
+            # Mirror turn into context_memory for narrative generator
+            # so it can see recent I/O and avoid regenerating the same content.
+            try:
+                context_memory.turn_history.append({
+                    "turn": session.turn_count - 1,
+                    "player_input": player_input,
+                    "ai_response": narrative_result["main_narrative"],
+                    "choice_id": choice_id,
+                    "scene_id": getattr(session.current_state, "scene_id", None),
+                    "timestamp": datetime.now().isoformat(),
+                })
+                # Keep bounded
+                if len(context_memory.turn_history) > 20:
+                    context_memory.turn_history = context_memory.turn_history[-20:]
+            except Exception:
+                pass
 
             # Agent decision layer (optional)
             agent_actions = None
@@ -666,6 +1138,107 @@ class StoryEngine:
                             )
                 except Exception as e:
                     logger.warning(f"Agent decision failed: {e}")
+
+            # Persist per-turn agent actions into session history for UI timeline
+            try:
+                if getattr(session, "history", None) and isinstance(session.history[-1], dict):
+                    session.history[-1]["agent_used"] = bool(agent_actions)
+                    if agent_actions:
+                        session.history[-1]["agent_actions"] = agent_actions
+                    # Normalized artifacts (best-effort; router may enrich further)
+                    try:
+                        entry = session.history[-1]
+                        artifacts = entry.get("artifacts")
+                        if not isinstance(artifacts, dict):
+                            artifacts = {}
+                        agents_bucket = artifacts.get("agents")
+                        if not isinstance(agents_bucket, dict):
+                            agents_bucket = {}
+                        agents_bucket["used"] = bool(entry.get("agent_used")) or bool(agent_actions)
+                        if agent_actions:
+                            agents_bucket["actions"] = agent_actions
+                        artifacts["agents"] = agents_bucket
+                        entry["artifacts"] = artifacts
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Persist per-turn state delta into session history for UI timeline
+            try:
+                import copy
+                from collections import Counter
+
+                post_flags = copy.deepcopy(getattr(session.current_state, "flags", {}) or {})
+                post_stats = copy.deepcopy(session.stats.to_dict() if hasattr(session.stats, "to_dict") else {})
+                post_inventory = list(getattr(session, "inventory", []) or [])
+                post_relationships = copy.deepcopy(getattr(context_memory, "player_relationships", {}) or {})
+
+                flag_changes: List[Dict[str, Any]] = []
+                for k in sorted(set(pre_flags.keys()) | set(post_flags.keys())):
+                    old = pre_flags.get(k)
+                    new = post_flags.get(k)
+                    if old != new:
+                        flag_changes.append({"key": k, "old": old, "new": new})
+
+                stat_changes: List[Dict[str, Any]] = []
+                for k in sorted(set(pre_stats.keys()) | set(post_stats.keys())):
+                    old = pre_stats.get(k)
+                    new = post_stats.get(k)
+                    if old == new:
+                        continue
+                    change = None
+                    try:
+                        if isinstance(old, (int, float)) and isinstance(new, (int, float)):
+                            change = new - old
+                    except Exception:
+                        change = None
+                    stat_changes.append({"key": k, "old": old, "new": new, "change": change})
+
+                pre_inv = Counter(pre_inventory)
+                post_inv = Counter(post_inventory)
+                inv_added: List[Dict[str, Any]] = []
+                inv_removed: List[Dict[str, Any]] = []
+                for item in sorted(set(pre_inv.keys()) | set(post_inv.keys())):
+                    delta = int(post_inv.get(item, 0)) - int(pre_inv.get(item, 0))
+                    if delta > 0:
+                        inv_added.append({"item": item, "count": delta})
+                    elif delta < 0:
+                        inv_removed.append({"item": item, "count": abs(delta)})
+
+                rel_changes: List[Dict[str, Any]] = []
+                for cid in sorted(set(pre_relationships.keys()) | set(post_relationships.keys())):
+                    try:
+                        old = int(pre_relationships.get(cid, 0) or 0)
+                        new = int(post_relationships.get(cid, 0) or 0)
+                    except Exception:
+                        continue
+                    if old != new:
+                        rel_changes.append(
+                            {"character_id": str(cid), "old": old, "new": new, "change": new - old}
+                        )
+
+                state_delta = {
+                    "flags": flag_changes[:80],
+                    "stats": stat_changes[:40],
+                    "inventory": {"added": inv_added[:30], "removed": inv_removed[:30]},
+                    "relationships": rel_changes[:40],
+                }
+
+                if getattr(session, "history", None) and isinstance(session.history[-1], dict):
+                    session.history[-1]["state_delta"] = state_delta
+                    # Normalized artifacts (best-effort)
+                    try:
+                        entry = session.history[-1]
+                        artifacts = entry.get("artifacts")
+                        if not isinstance(artifacts, dict):
+                            artifacts = {}
+                        artifacts["diff"] = state_delta
+                        entry["artifacts"] = artifacts
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
             # Record turn in memory manager
             try:
@@ -746,6 +1319,7 @@ class StoryEngine:
         """Process a player turn and generate response"""
 
         session = self.get_session(session_id)
+        self._apply_runtime_preset_llm(session)
         persona = self.persona_manager.get_persona(session.persona_id)
 
         if not persona:
@@ -968,6 +1542,34 @@ class StoryEngine:
         """Update context memory with new information"""
 
         current_scene = context_memory.get_current_scene()
+        
+        # Add to narrative memory - CRITICAL for context continuity
+        context_memory.add_narrative_memory({
+            "type": "story_turn",
+            "player_input": player_input,
+            "narrative": narrative_result["main_narrative"],
+            "choice_made": choice_result.get("choice_executed") if choice_result else None
+        })
+
+        # Update scene_sequence so the narrative generator knows we've progressed
+        scene_changes = narrative_result.get("scene_changes", {})
+        new_scene_id = scene_changes.get("next_scene_id")
+        if not new_scene_id and current_scene:
+            new_scene_id = current_scene.scene_id
+        if new_scene_id:
+            if context_memory.scene_sequence and context_memory.scene_sequence[-1] == new_scene_id:
+                # Scene hasn't changed — still append to show turn progression
+                pass
+            context_memory.scene_sequence.append(new_scene_id)
+            # Keep bounded
+            if len(context_memory.scene_sequence) > 50:
+                context_memory.scene_sequence = context_memory.scene_sequence[-50:]
+            # Update current_scene_id reference
+            try:
+                context_memory.current_scene_id = new_scene_id
+            except Exception:
+                pass
+
         if current_scene:
             current_scene.turn_number += 1
 
@@ -1046,6 +1648,128 @@ class StoryEngine:
 
         return None
 
+    def _generate_llm_choices_sync(
+        self,
+        narrative_text: str,
+        context_memory: StoryContextMemory,
+        session: GameSession,
+    ) -> List[Dict[str, str]]:
+        """
+        Use LLM to generate 4 contextually-appropriate choices.
+        SYNC method — must be called from a thread (not async context) to avoid event loop conflicts.
+        Falls back to empty list on failure.
+        """
+        import json
+        import re
+
+        try:
+            from core.llm.base import ChatMessage
+
+            # Use the narrative_generator's LLM (already configured with llama.cpp)
+            ng = self.narrative_generator
+            if not hasattr(ng, 'llm') or ng.llm is None:
+                raise RuntimeError("Narrative generator has no LLM")
+            # ng.llm is LLMAdapter; _llm is the actual LlamaCppServerLLM.
+            # DO NOT use get_llm() — that creates a Transformers QwenLLM instead.
+            inner_llm = getattr(ng.llm, '_llm', ng.llm)
+            if not inner_llm.is_available():
+                inner_llm.load_model()
+
+            # Build turn history summary for context
+            recent_turns = getattr(context_memory, "turn_history", []) or []
+            history_summary = ""
+            for t in recent_turns[-3:]:
+                ai_resp = t.get("ai_response", "")
+                if len(ai_resp) > 150:
+                    ai_resp = ai_resp[:150] + "..."
+                history_summary += f"Turn {t.get('turn', '?')}: {ai_resp}\n"
+
+            # Build previously used choice texts to avoid repetition
+            prev_choices = session.current_state.available_choices or []
+            prev_texts = ""
+            for pc in prev_choices:
+                t = pc.get("text", "") if isinstance(pc, dict) else str(pc)
+                if t:
+                    prev_texts += f"- {t}\n"
+
+            scene_info = ""
+            try:
+                scene = context_memory.get_current_scene()
+                if scene:
+                    scene_info = f"場景: {scene.location}"
+            except Exception:
+                scene_info = "場景: 當前位置"
+
+            prompt = f"""你是一個互動小說遊戲的劇情引擎。根據以下劇情，生成 4 個玩家下一步的行動選擇。
+
+## 最近劇情摘要
+{history_summary if history_summary else "（這是遊戲的開頭）"}
+
+## 當前場景
+{scene_info}
+
+## 最新敘事（請仔細閱讀，這是當前的劇情狀態）
+{narrative_text}
+
+## 玩家資訊
+- 名字: {session.player_name}
+- 等級: {session.stats.level}
+- 生命: {session.stats.health}
+- 道具: {', '.join(session.inventory[:5]) if session.inventory else '無'}
+
+## 上一回合的選擇（不要重複這些）
+{prev_texts if prev_texts else "（沒有上一回合的選擇）"}
+
+## 輸出格式
+請嚴格以 JSON 陣列輸出，不要有其他文字：
+[
+  {{"choice_id": "短英文id", "text": "繁體中文描述", "type": "action/exploration/dialogue/combat", "difficulty": "easy/medium/hard"}},
+  ...
+]
+
+## 嚴格要求
+1. 每個 choice_id 用简短的英文（如: enter_cave, talk_merchant）
+2. 每個 text 30字以內，繁體中文，描述具體行動
+3. 4 個選擇必須明顯不同：一個推進主線、一個探索、一個對話/互動、一個冒險/高風險
+4. 選擇必須與【最新敘事】的結尾緊密銜接，不要重複上一回合做過的事
+5. 不要使用「繼續前進」、「仔細觀察」、「等待觀察」等通用選項，要具體化"""
+
+            messages = [
+                ChatMessage(role="system", content="你是互動小說的選擇生成器。只輸出 JSON 陣列，不要任何其他文字。嚴格遵守格式。"),
+                ChatMessage(role="user", content=prompt),
+            ]
+
+            # Call sync chat() — this method runs in a thread (via asyncio.to_thread) so
+            # LlamaCppServerLLM.chat() can create its own event loop without conflicts.
+            resp = inner_llm.chat(messages, max_tokens=1024, temperature=0.9)
+
+            content = resp.content if hasattr(resp, 'content') else str(resp)
+
+            # Extract JSON array from response
+            json_match = re.search(r'\[[\s\S]*\]', content)
+            if json_match:
+                choices = json.loads(json_match.group())
+                if isinstance(choices, list) and len(choices) > 0:
+                    seen_ids = set()
+                    normalized = []
+                    for i, c in enumerate(choices[:4]):
+                        cid = c.get("choice_id", f"choice_{i}")
+                        if cid in seen_ids:
+                            cid = f"{cid}_{i}"
+                        seen_ids.add(cid)
+                        normalized.append({
+                            "choice_id": cid,
+                            "text": c.get("text", "繼續行動"),
+                            "type": c.get("type", "action"),
+                            "difficulty": c.get("difficulty", "medium"),
+                        })
+                    if normalized:
+                        return normalized
+        except Exception as e:
+            logger.warning(f"LLM choice generation error: {e}")
+
+        return []
+
     def _generate_contextual_choices(
         self, context_memory: StoryContextMemory
     ) -> List[ContextualChoice]:
@@ -1083,15 +1807,43 @@ class StoryEngine:
     ) -> Dict[str, Any]:
         """Execute a player choice and apply consequences"""
 
-        # Find the choice
-        available_choices = self.choice_manager.generate_choices(
-            session.current_state.story_context,
-            session.stats.to_dict(),
-            session.inventory,
-            session.current_state.flags,
-        )
+        # Find the choice — prefer the persisted available_choices from the
+        # current game state so the player picks from the same set the UI showed.
+        choice = None
+        try:
+            raw = getattr(session.current_state, "available_choices", []) or []
+            for c in raw:
+                if isinstance(c, dict) and c.get("choice_id") == choice_id:
+                    # Rebuild a GameChoice from the dict for execute() compat
+                    from .choices import GameChoice, ChoiceType, Difficulty
 
-        choice = self.choice_manager.validate_choice(choice_id, available_choices)
+                    choice = GameChoice(
+                        choice_id=c["choice_id"],
+                        text=c.get("text", ""),
+                        choice_type=(
+                            ChoiceType(c["type"]) if "type" in c else ChoiceType.ACTION
+                        ),
+                        difficulty=(
+                            Difficulty(c["difficulty"])
+                            if "difficulty" in c
+                            else Difficulty.NORMAL
+                        ),
+                        requirements={},
+                        consequences={},
+                    )
+                    break
+        except Exception:
+            choice = None
+
+        # Fallback: regenerate if not found in session state
+        if not choice:
+            available_choices = self.choice_manager.generate_choices(
+                session.current_state.story_context,
+                session.stats.to_dict(),
+                session.inventory,
+                session.current_state.flags,
+            )
+            choice = self.choice_manager.validate_choice(choice_id, available_choices)
         if not choice:
             raise InvalidChoiceError(f"Invalid choice: {choice_id}")
 
@@ -1366,6 +2118,7 @@ class StoryEngine:
                 "session_id": session.session_id,
                 "player_name": session.player_name,
                 "persona_id": session.persona_id,
+                "world_id": getattr(session, "world_id", "default"),
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
                 "turn_count": session.turn_count,
@@ -1459,6 +2212,182 @@ class StoryEngine:
 
         return True
 
+    def sync_worldpack_into_session(
+        self,
+        session_id: str,
+        *,
+        mode: str = "add_only",
+    ) -> Dict[str, Any]:
+        """
+        Sync the latest WorldPack into an existing session (enhanced mode only).
+
+        This is used by 「世界工作室」在 Story 工作台內即時套用世界變更：
+        - 更新 story_context 的 world 基本資訊 / visual
+        - 將 WorldPack.characters 合併到 context_memory.characters（可選擇 add_only/merge）
+        - 將 WorldPack.world_flags（排除常見動態前綴）合併到 session.flags 與 context_memory.world_flags
+        """
+        if not self.enhanced_mode or session_id not in getattr(self, "context_memories", {}):
+            raise GameError("Enhanced mode context not available for this session")
+
+        if mode not in {"add_only", "merge"}:
+            raise GameError("Invalid sync mode (expected: add_only | merge)")
+
+        session = self.get_session(session_id)
+        world_id = str(getattr(session, "world_id", "default") or "default").strip() or "default"
+
+        try:
+            from core.worldpacks import get_worldpack_manager
+
+            wpm = get_worldpack_manager()
+            worldpack = wpm.get_worldpack(world_id)
+        except Exception as exc:  # noqa: BLE001
+            raise GameError(f"Failed to load worldpack: {world_id}") from exc
+
+        if worldpack is None:
+            raise GameError(f"Worldpack not found: {world_id}")
+
+        context_memory = self.context_memories[session_id]
+
+        # Update UI-friendly world context snapshot
+        try:
+            session.current_state.story_context["world_name"] = worldpack.name
+            session.current_state.story_context["world_description"] = worldpack.description
+            session.current_state.story_context["world_visual"] = worldpack.visual.model_dump()
+            session.current_state.story_context["agent_profile"] = (
+                worldpack.agent_profile.model_dump()
+                if getattr(worldpack, "agent_profile", None) is not None
+                else {}
+            )
+            session.current_state.story_context["setting"] = worldpack.setting
+            session.current_state.story_context["difficulty"] = worldpack.difficulty
+            try:
+                preset_id = str(getattr(worldpack, "runtime_preset_id", "") or "").strip()
+            except Exception:
+                preset_id = ""
+            if preset_id:
+                session.current_state.story_context["runtime_preset_id"] = preset_id
+            else:
+                # Keep existing session-level preset; if missing, fall back to catalog default.
+                current = session.current_state.story_context.get("runtime_preset_id")
+                if not current:
+                    try:
+                        from core.runtime.catalog import load_runtime_preset_catalog
+
+                        catalog = load_runtime_preset_catalog()
+                        fallback = str(catalog.get("default_preset_id") or "").strip()
+                        if fallback:
+                            session.current_state.story_context["runtime_preset_id"] = fallback
+                    except Exception:
+                        pass
+            session.current_state.story_context["worldpack_updated_at"] = worldpack.updated_at
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Sync world flags (avoid clobbering common dynamic flags)
+        dynamic_prefixes = (
+            "quest_",
+            "npc_met_",
+            "location_discovered_",
+            "item_acquired_",
+            "event_",
+            "achievement_",
+        )
+        flags_added: List[str] = []
+        flags_updated: List[str] = []
+
+        for key, value in (worldpack.world_flags or {}).items():
+            flag_key = str(key or "").strip()
+            if not flag_key:
+                continue
+            if any(flag_key.startswith(p) for p in dynamic_prefixes):
+                continue
+
+            in_session = flag_key in (session.current_state.flags or {})
+            in_context = flag_key in (getattr(context_memory, "world_flags", {}) or {})
+
+            if mode == "add_only" and (in_session or in_context):
+                continue
+
+            # Apply to both session.flags and context.world_flags for consistency in UI/prompts
+            try:
+                session.current_state.flags[flag_key] = bool(value)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                context_memory.world_flags[flag_key] = bool(value)
+            except Exception:  # noqa: BLE001
+                pass
+
+            if in_session or in_context:
+                flags_updated.append(flag_key)
+            else:
+                flags_added.append(flag_key)
+
+        # Sync world characters
+        added_character_ids: List[str] = []
+        updated_character_ids: List[str] = []
+
+        role_map = {
+            "npc": CharacterRole.NPC,
+            "companion": CharacterRole.COMPANION,
+            "antagonist": CharacterRole.ANTAGONIST,
+        }
+
+        for c in worldpack.characters or []:
+            try:
+                character_id = str(getattr(c, "character_id", "") or "").strip()
+                if not character_id or character_id in {"player", "narrator"}:
+                    continue
+
+                existing = context_memory.get_character(character_id)
+                if existing is None:
+                    character = GameCharacter(
+                        character_id=character_id,
+                        name=str(getattr(c, "name", "") or character_id),
+                        role=role_map.get(getattr(c, "role", "npc"), CharacterRole.NPC),
+                        personality_traits=list(getattr(c, "personality_traits", []) or []),
+                        speaking_style=str(getattr(c, "speaking_style", "") or ""),
+                        background_story=str(getattr(c, "background_story", "") or ""),
+                        motivations=list(getattr(c, "motivations", []) or []),
+                        relationships=dict(getattr(c, "relationships", {}) or {}),
+                        current_location=getattr(existing, "current_location", "unknown") if existing else "unknown",
+                        persona_prompt=str(getattr(c, "persona_prompt", "") or ""),
+                        content_restrictions=list(getattr(c, "content_restrictions", []) or []),
+                    )
+                    context_memory.add_character(character)
+                    added_character_ids.append(character_id)
+                else:
+                    if mode != "merge":
+                        continue
+                    # Merge persona fields only; keep runtime state (health/mood/dialogue/history)
+                    existing.name = str(getattr(c, "name", existing.name) or existing.name)
+                    existing.role = role_map.get(getattr(c, "role", "npc"), existing.role)
+                    existing.personality_traits = list(getattr(c, "personality_traits", existing.personality_traits) or [])
+                    existing.speaking_style = str(getattr(c, "speaking_style", existing.speaking_style) or existing.speaking_style)
+                    existing.background_story = str(getattr(c, "background_story", existing.background_story) or existing.background_story)
+                    existing.motivations = list(getattr(c, "motivations", existing.motivations) or [])
+                    existing.relationships = dict(getattr(c, "relationships", existing.relationships) or {})
+                    existing.persona_prompt = str(getattr(c, "persona_prompt", existing.persona_prompt) or existing.persona_prompt)
+                    existing.content_restrictions = list(getattr(c, "content_restrictions", existing.content_restrictions) or [])
+                    updated_character_ids.append(character_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Skip world character sync for %s: %s", getattr(c, "character_id", "?"), exc)
+                continue
+
+        # Persist
+        self.save_session(session)
+
+        return {
+            "session_id": session_id,
+            "world_id": world_id,
+            "mode": mode,
+            "flags_added": flags_added,
+            "flags_updated": flags_updated,
+            "characters_added": added_character_ids,
+            "characters_updated": updated_character_ids,
+            "worldpack_updated_at": getattr(worldpack, "updated_at", None),
+        }
+
     def delete_session(self, session_id: str) -> bool:
         """Delete a game session"""
         if session_id not in self.sessions:
@@ -1535,6 +2464,7 @@ class StoryEngine:
             "session_id": session_id,
             "player_name": session.player_name,
             "persona_id": session.persona_id,
+            "world_id": getattr(session, "world_id", "default"),
             "created_at": session.created_at.isoformat(),
             "updated_at": session.updated_at.isoformat(),
             "turn_count": session.turn_count,

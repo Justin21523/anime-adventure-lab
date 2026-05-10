@@ -451,15 +451,18 @@ class ModelExporter:
 
 echo "Installing {manifest['package_info']['name']}..."
 
-# Check if AI_CACHE_ROOT is set
-if [ -z "$AI_CACHE_ROOT" ]; then
-    echo "Error: AI_CACHE_ROOT environment variable not set"
-    exit 1
+# Prefer AI_MODELS_ROOT (AI_WAREHOUSE 3.0), fall back to AI_CACHE_ROOT (legacy)
+if [ -z "$AI_MODELS_ROOT" ]; then
+    if [ -z "$AI_CACHE_ROOT" ]; then
+        echo "Error: AI_MODELS_ROOT (or legacy AI_CACHE_ROOT) environment variable not set"
+        exit 1
+    fi
+    export AI_MODELS_ROOT="$AI_CACHE_ROOT/models"
 fi
 
 # Create target directory
 MODEL_ID="{kwargs.get('model_id', model_path.name)}"
-TARGET_DIR="$AI_CACHE_ROOT/models/custom/$MODEL_ID"
+TARGET_DIR="$AI_MODELS_ROOT/custom/$MODEL_ID"
 mkdir -p "$TARGET_DIR"
 
 # Copy model files

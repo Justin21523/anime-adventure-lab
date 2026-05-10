@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+
+# VCS / editor
+.git/
+.github/
+.vscode/
+.idea/
+
+# Local env / secrets
+.env
+.env.*
+!frontend/react/.env
+!frontend/react/.env.*
+
+# Frontend
+frontend/react/node_modules/
+frontend/react/dist/
+
+# Outputs / caches (AI_WAREHOUSE lives outside the repo)
+outputs/
+test_outputs/
+test_temp/
+test_temp2/
+coverage/
+htmlcov/
+
+# OS files
+.DS_Store
+Thumbs.db

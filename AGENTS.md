@@ -4,15 +4,15 @@
 - API lives in `api/` (FastAPI routers, dependencies, middleware) with entrypoint `api/main.py`.
 - Core logic sits in `core/` (LLM, RAG, story, T2I, VLM, training). Shared schemas live in `schemas/`.
 - Celery tasks and workers are in `workers/`; configs (model, RAG, presets) in `configs/`.
-- Frontend demos reside in `frontend/` (Gradio app at `frontend/gradio/app.py`).
+- Frontend lives in `frontend/react/` (React + Vite, Story-first workbench UI).
 - Tests are in `tests/`; scripts in `scripts/`; docs in `docs/`; infra/docker assets under `docker/`.
-- Models and large assets are external—set `AI_CACHE_ROOT` to your mounted warehouse (see `.env.example`).
+- Models and large assets are external—follow AI_WAREHOUSE 3.0 roots (see `.env.example` and `~/Desktop/data_model_structure.md`).
 
 ## Build, Test, and Development Commands
 - Environment: `conda create -n ai_env python=3.10 -y && conda activate ai_env && pip install -r requirements.txt && pip install -r requirements-test.txt`.
 - Run API locally: `uvicorn api.main:app --reload` (health at `http://localhost:8000/healthz`).
 - Worker: `REDIS_URL=redis://localhost:6379/0 celery -A workers.celery_app:celery_app worker -l INFO`.
-- Gradio demo: `python frontend/gradio/app.py` (`http://localhost:7860`).
+- React dev server: `cd frontend/react && npm install && npm run dev` (`http://localhost:3000`).
 - Docker (dev): `docker compose up --build`.
 - Test helpers: `make test`, `make test-smoke`, or `./scripts/test_runner.sh smoke|unit|integration|e2e`.
 
@@ -20,7 +20,7 @@
 - Python 3.10+, 4-space indent, type hints expected. Prefer `async` endpoints where applicable.
 - Format and lint with `black`, `ruff`, and `isort` (`make format` / `make lint`).
 - Naming: modules/packages `snake_case`, classes `PascalCase`, functions/vars `snake_case`. Keep routers and tasks scoped by domain (e.g., `api/routers/rag.py`, `workers/tasks/t2i.py`).
-- Keep cache/bootstrap logic centralized; do not hardcode model paths—respect `AI_CACHE_ROOT`.
+- Keep cache/bootstrap logic centralized; do not hardcode model paths—respect `AI_CACHE_ROOT` / `AI_MODELS_ROOT` / `AI_OUTPUT_ROOT`.
 
 ## Testing Guidelines
 - Framework: `pytest` (config in `pytest.ini`). Markers available: `unit`, `integration`, `e2e`, `smoke`, `slow`.

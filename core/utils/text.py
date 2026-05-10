@@ -8,8 +8,15 @@ import re
 import logging
 import unicodedata
 from typing import List, Dict, Any, Optional, Tuple
-import jieba
-import opencc
+try:
+    import jieba  # type: ignore
+except Exception:  # noqa: BLE001
+    jieba = None  # type: ignore
+
+try:
+    import opencc  # type: ignore
+except Exception:  # noqa: BLE001
+    opencc = None  # type: ignore
 
 from ..config import get_config
 from ..exceptions import TextProcessingError
@@ -45,10 +52,12 @@ class TextProcessor:
         """Setup Chinese text processing tools"""
         try:
             # Traditional to Simplified Chinese converter
-            self.converter = opencc.OpenCC("t2s.json")
+            if opencc is not None:
+                self.converter = opencc.OpenCC("t2s.json")
 
             # Setup jieba for Chinese word segmentation
-            jieba.setLogLevel(logging.WARNING)  # Reduce jieba log noise
+            if jieba is not None:
+                jieba.setLogLevel(logging.WARNING)  # Reduce jieba log noise
 
             logger.info("✅ Chinese processing tools loaded")
         except Exception as e:
@@ -143,6 +152,11 @@ class TextProcessor:
             # Clean text first
             cleaned_text = self.clean_text(text)
 
+            if jieba is None:
+                # Fallback: simple tokenization (words + single CJK chars)
+                tokens = re.findall(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]", cleaned_text)
+                return [t.strip() for t in tokens if t.strip()]
+
             # Choose jieba mode
             if mode == "search":
                 # Search engine mode (more granular)
@@ -168,6 +182,8 @@ class TextProcessor:
     ) -> List[Tuple[str, float]]:
         """Extract keywords from text with scores"""
         try:
+            if jieba is None:
+                return []
             import jieba.analyse
 
             # Clean text

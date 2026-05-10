@@ -5,7 +5,7 @@ This module provides the integration layer between the Story Engine and T2I Engi
 enabling automatic scene image generation during story progression.
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import logging
 from dataclasses import dataclass
 
@@ -98,6 +98,76 @@ class StoryT2IIntegration:
 
         return False
 
+    def _apply_world_style(
+        self, world_id: str, positive_prompt: str, negative_prompt: str
+    ) -> Tuple[str, str, Optional[str], List[Dict[str, Any]]]:
+        """Apply world visual style (LoRA / prefix / negatives)"""
+        world_id = str(world_id or "default").strip() or "default"
+        lora_configs: List[Dict[str, Any]] = []
+        model_id: Optional[str] = None
+
+        try:
+            from core.worldpacks import get_worldpack_manager
+
+            wpm = get_worldpack_manager()
+            worldpack = wpm.get_worldpack(world_id)
+            if worldpack:
+                visual = worldpack.visual
+                if getattr(visual, "prompt_prefix", "") and str(visual.prompt_prefix).strip():
+                    positive_prompt = ", ".join(
+                        [str(visual.prompt_prefix).strip(), positive_prompt.strip()]
+                    )
+                if getattr(visual, "negative_prompt", "") and str(visual.negative_prompt).strip():
+                    negative_prompt = ", ".join(
+                        [negative_prompt.strip(), str(visual.negative_prompt).strip()]
+                    )
+                if getattr(visual, "base_model", None):
+                    model_id = str(visual.base_model)
+                if getattr(visual, "default_loras", None):
+                    lora_configs = [
+                        {"lora_id": l.lora_id, "weight": float(getattr(l, "weight", 0.8))}
+                        for l in visual.default_loras
+                        if getattr(l, "lora_id", None)
+                    ]
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("World visual style skipped: %s", exc)
+
+        return positive_prompt, negative_prompt, model_id, lora_configs
+
+    def _process_t2i_result(self, result: Dict[str, Any], positive_prompt: str, negative_prompt: str) -> SceneImageResult:
+        """Process T2I engine result into SceneImageResult"""
+        images_base64 = result.get("images") or []
+        metadata = result.get("metadata", {}) or {}
+        output_paths = metadata.get("output_paths") or []
+
+        image_url = ""
+        if output_paths:
+            try:
+                from urllib.parse import quote
+                from pathlib import Path
+                from core.shared_cache import get_shared_cache
+
+                cache = get_shared_cache()
+                root = Path(cache.get_path("OUTPUT_DIR")).resolve()
+                rel = Path(str(output_paths[0])).resolve().relative_to(root)
+                image_url = f"/api/v1/t2i/file?path={quote(str(rel))}"
+            except Exception:
+                image_url = ""
+        if (not image_url) and images_base64:
+            image_url = f"data:image/png;base64,{images_base64[0]}"
+        if not image_url:
+            image_url = result.get("url") or result.get("image_url") or ""
+
+        return SceneImageResult(
+            image_url=image_url,
+            prompt=positive_prompt,
+            negative_prompt=negative_prompt,
+            generation_time=float(metadata.get("generation_time", 0.0) or 0.0),
+            seed=metadata.get("seed"),
+            width=int(metadata.get("parameters", {}).get("width", self.default_width) or self.default_width),
+            height=int(metadata.get("parameters", {}).get("height", self.default_height) or self.default_height),
+        )
+
     async def generate_scene_image(
         self,
         scene_context: Dict[str, Any],
@@ -130,34 +200,129 @@ class StoryT2IIntegration:
             # Generate prompt from scene context
             prompt_data = await self.prompt_generator.generate_from_scene(scene_context)
 
-            logger.info(f"Generating scene image: {prompt_data.positive[:100]}...")
-
-            # Call T2I engine
-            result = await self.t2i_engine.generate(
-                prompt=prompt_data.positive,
-                negative_prompt=prompt_data.negative,
-                width=self.default_width,
-                height=self.default_height,
-                num_inference_steps=self.default_steps,
-                guidance_scale=self.default_cfg_scale
+            positive_prompt, negative_prompt, model_id, lora_configs = self._apply_world_style(
+                scene_context.get("world_id", "default"),
+                prompt_data.positive,
+                prompt_data.negative
             )
 
-            # Convert to SceneImageResult
-            scene_image = SceneImageResult(
-                image_url=result.get("url", result.get("image_url", "")),
-                prompt=prompt_data.positive,
-                negative_prompt=prompt_data.negative,
-                generation_time=result.get("generation_time", result.get("time", 0)),
-                seed=result.get("seed"),
-                width=result.get("width", self.default_width),
-                height=result.get("height", self.default_height)
-            )
+            # Apply runtime preset defaults (best-effort)
+            width = int(self.default_width)
+            height = int(self.default_height)
+            steps = int(self.default_steps)
+            guidance_scale = float(self.default_cfg_scale)
+            preset_opt: Dict[str, Any] = {}
+            try:
+                preset_id = str(scene_context.get("runtime_preset_id") or "").strip()
+                if preset_id:
+                    from core.runtime.catalog import get_runtime_preset
 
-            logger.info(f"Scene image generated in {scene_image.generation_time:.2f}s")
-            return scene_image
+                    preset = get_runtime_preset(preset_id) or {}
+                    t2i = preset.get("t2i") if isinstance(preset.get("t2i"), dict) else {}
+
+                    width = int(t2i.get("default_width", width) or width)
+                    height = int(t2i.get("default_height", height) or height)
+                    steps = int(t2i.get("default_steps", steps) or steps)
+                    guidance_scale = float(t2i.get("default_guidance_scale", guidance_scale) or guidance_scale)
+
+                    max_w = int(t2i.get("max_width", width) or width)
+                    max_h = int(t2i.get("max_height", height) or height)
+                    max_steps = int(t2i.get("max_steps", steps) or steps)
+                    width = max(256, min(width, max_w))
+                    height = max(256, min(height, max_h))
+                    steps = max(1, min(steps, max_steps))
+
+                    # If world didn't force base_model, allow preset hint.
+                    if not model_id and t2i.get("model_id"):
+                        model_id = str(t2i.get("model_id"))
+
+                    preset_opt = {
+                        "enable_attention_slicing": bool(t2i.get("enable_attention_slicing", True)),
+                        "enable_vae_slicing": bool(t2i.get("enable_vae_slicing", True)),
+                        "enable_vae_tiling": bool(t2i.get("enable_vae_tiling", False)),
+                        "enable_cpu_offload": bool(t2i.get("enable_cpu_offload", False)),
+                        "enable_sequential_cpu_offload": bool(t2i.get("enable_sequential_cpu_offload", False)),
+                    }
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Runtime preset skipped: %s", exc)
+
+            logger.info(f"Generating scene image: {positive_prompt[:100]}...")
+
+            request_payload: Dict[str, Any] = {
+                "prompt": positive_prompt,
+                "negative_prompt": negative_prompt,
+                "width": width,
+                "height": height,
+                "num_inference_steps": steps,
+                "guidance_scale": guidance_scale,
+            }
+            if preset_opt:
+                request_payload.update(preset_opt)
+            if model_id:
+                request_payload["model_id"] = model_id
+            if lora_configs:
+                request_payload["lora_configs"] = lora_configs
+
+            result = await self.t2i_engine.txt2img(request_payload)
+            return self._process_t2i_result(result, positive_prompt, negative_prompt)
 
         except Exception as e:
             logger.error(f"Failed to generate scene image: {e}", exc_info=True)
+            return None
+
+    async def generate_character_portrait_image(
+        self,
+        character_name: str,
+        appearance_desc: str,
+        world_id: str = "default",
+        visual_style: Optional[str] = None
+    ) -> Optional[SceneImageResult]:
+        """
+        Generate character portrait image (sprite)
+
+        Args:
+            character_name: Name of the character
+            appearance_desc: Physical appearance description
+            world_id: World ID for style consistency
+            visual_style: Optional visual style hints
+
+        Returns:
+            SceneImageResult if image was generated, None otherwise
+        """
+        try:
+            # Generate prompt for character portrait
+            prompt_data = await self.prompt_generator.generate_character_portrait(
+                character_name=character_name,
+                appearance_desc=appearance_desc,
+                visual_style=visual_style
+            )
+
+            positive_prompt, negative_prompt, model_id, lora_configs = self._apply_world_style(
+                world_id,
+                prompt_data.positive,
+                prompt_data.negative
+            )
+
+            logger.info(f"Generating character portrait for {character_name}: {positive_prompt[:100]}...")
+
+            request_payload: Dict[str, Any] = {
+                "prompt": positive_prompt,
+                "negative_prompt": negative_prompt,
+                "width": 512,
+                "height": 768,
+                "num_inference_steps": self.default_steps,
+                "guidance_scale": self.default_cfg_scale,
+            }
+            if model_id:
+                request_payload["model_id"] = model_id
+            if lora_configs:
+                request_payload["lora_configs"] = lora_configs
+
+            result = await self.t2i_engine.txt2img(request_payload)
+            return self._process_t2i_result(result, positive_prompt, negative_prompt)
+
+        except Exception as e:
+            logger.error(f"Failed to generate character portrait: {e}", exc_info=True)
             return None
 
     async def regenerate_with_modifications(
@@ -183,24 +348,49 @@ class StoryT2IIntegration:
             )
 
             # Regenerate with same seed for consistency (if available)
-            result = await self.t2i_engine.generate(
-                prompt=modified_prompt.positive,
-                negative_prompt=modified_prompt.negative,
-                width=base_scene_image.width,
-                height=base_scene_image.height,
-                num_inference_steps=self.default_steps,
-                guidance_scale=self.default_cfg_scale,
-                seed=base_scene_image.seed  # Use same seed for similar composition
-            )
+            request_payload: Dict[str, Any] = {
+                "prompt": modified_prompt.positive,
+                "negative_prompt": modified_prompt.negative,
+                "width": base_scene_image.width,
+                "height": base_scene_image.height,
+                "num_inference_steps": self.default_steps,
+                "guidance_scale": self.default_cfg_scale,
+            }
+            if base_scene_image.seed is not None:
+                request_payload["seed"] = base_scene_image.seed
+
+            result = await self.t2i_engine.txt2img(request_payload)
+
+            images_base64 = result.get("images") or []
+            metadata = result.get("metadata", {}) or {}
+            output_paths = metadata.get("output_paths") or []
+
+            image_url = ""
+            if output_paths:
+                try:
+                    from urllib.parse import quote
+                    from pathlib import Path
+                    from core.shared_cache import get_shared_cache
+
+                    cache = get_shared_cache()
+                    root = Path(cache.get_path("OUTPUT_DIR")).resolve()
+                    rel = Path(str(output_paths[0])).resolve().relative_to(root)
+                    image_url = f"/api/v1/t2i/file?path={quote(str(rel))}"
+                except Exception:
+                    image_url = ""
+            if (not image_url) and images_base64:
+                image_url = f"data:image/png;base64,{images_base64[0]}"
+            if not image_url:
+                image_url = result.get("url") or result.get("image_url") or ""
 
             return SceneImageResult(
-                image_url=result.get("url", result.get("image_url", "")),
+                image_url=image_url,
                 prompt=modified_prompt.positive,
                 negative_prompt=modified_prompt.negative,
-                generation_time=result.get("generation_time", result.get("time", 0)),
-                seed=result.get("seed"),
-                width=result.get("width", base_scene_image.width),
-                height=result.get("height", base_scene_image.height)
+                generation_time=float(metadata.get("generation_time", 0.0) or 0.0),
+                seed=metadata.get("seed", base_scene_image.seed),
+                width=int(metadata.get("parameters", {}).get("width", base_scene_image.width) or base_scene_image.width),
+                height=int(metadata.get("parameters", {}).get("height", base_scene_image.height) or base_scene_image.height),
             )
 
         except Exception as e:

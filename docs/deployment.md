@@ -23,9 +23,11 @@
 git clone https://github.com/your-org/saga-forge.git
 cd saga-forge
 
-# 2. 建立共用模型倉儲
-mkdir -p /mnt/c/AI_LLM_projects/ai_warehouse/cache
-export AI_CACHE_ROOT="/mnt/c/AI_LLM_projects/ai_warehouse"
+# 2. 建立 AI_WAREHOUSE 3.0 目錄
+mkdir -p /mnt/c/ai_cache /mnt/c/ai_models /mnt/c/ai_output/anime-adventure-lab
+export AI_CACHE_ROOT="/mnt/c/ai_cache"
+export AI_MODELS_ROOT="/mnt/c/ai_models"
+export AI_OUTPUT_ROOT="/mnt/c/ai_output/anime-adventure-lab"
 
 # 3. 複製環境配置
 cp .env.example .env
@@ -35,13 +37,15 @@ cp .env.example .env
 **關鍵環境變數 (.env)**
 ```bash
 # 必填
-AI_CACHE_ROOT=/mnt/c/AI_LLM_projects/ai_warehouse
+AI_CACHE_ROOT=/mnt/c/ai_cache
+AI_MODELS_ROOT=/mnt/c/ai_models
+AI_OUTPUT_ROOT=/mnt/c/ai_output/anime-adventure-lab
 POSTGRES_PASSWORD=your_secure_password
 MINIO_PASSWORD=your_minio_password
 
 # 可選
 CUDA_VISIBLE_DEVICES=0
-API_CORS_ORIGINS=http://localhost:7860
+API_CORS_ORIGINS=http://localhost:3000
 HUGGINGFACE_TOKEN=your_hf_token  # 用於私有模型
 ```
 
@@ -75,8 +79,10 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 # 另開終端啟動 worker
 celery -A workers.celery_app worker --loglevel=INFO
 
-# 啟動 WebUI
-python frontend/gradio/app.py
+# 啟動 WebUI（React / Vite）
+cd frontend/react
+npm install
+npm run dev
 ```
 
 ### 4. 驗證部署
@@ -86,7 +92,7 @@ python frontend/gradio/app.py
 curl http://localhost:8000/healthz
 
 # Web 介面
-open http://localhost:7860
+open http://localhost:3000
 
 # 監控面板
 open http://localhost:5555  # Celery Flower
@@ -244,7 +250,9 @@ docker-compose down && docker-compose up -d
 gunzip < backup_20241201.sql.gz | docker-compose exec -T postgres psql -U saga sagaforge
 
 # 恢復模型檔案
-rsync -av /backup/ai_warehouse/ /mnt/c/AI_LLM_projects/ai_warehouse/
+rsync -av /backup/ai_cache/ /mnt/c/ai_cache/
+rsync -av /backup/ai_models/ /mnt/c/ai_models/
+rsync -av /backup/ai_output/ /mnt/c/ai_output/anime-adventure-lab/
 ```
 
 ---
@@ -620,7 +628,9 @@ docker-compose logs api
 ```bash
 # 備份當前版本
 docker-compose down
-cp -r /mnt/c/AI_LLM_projects/ai_warehouse /mnt/c/AI_LLM_projects/ai_warehouse_backup
+cp -r /mnt/c/ai_cache /mnt/c/ai_cache_backup
+cp -r /mnt/c/ai_models /mnt/c/ai_models_backup
+cp -r /mnt/c/ai_output/anime-adventure-lab /mnt/c/ai_output/anime-adventure-lab_backup
 
 # 拉取新版本
 git pull origin main
@@ -655,7 +665,6 @@ app:
   version: "1.0.0"
   debug: false
   cors_origins:
-    - "http://localhost:7860"
     - "http://localhost:3000"
 
 models:
@@ -765,7 +774,7 @@ grep "ERROR" logs/api.log | tail -20
 watch -n 1 nvidia-smi
 
 # 檢查磁碟使用率
-df -h /mnt/c/AI_LLM_projects/ai_warehouse
+df -h /mnt/c/ai_cache
 ```
 
 ---
@@ -785,13 +794,9 @@ upstream saga_api {
     server api:8000;
 }
 
-upstream saga_webui {
-    server webui:7860;
-}
-
-server {
-    listen 80;
-    server_name your-domain.com;
+	server {
+	    listen 80;
+	    server_name your-domain.com;
 
     # API 路由
     location /api/ {
@@ -800,15 +805,11 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
     }
 
-    # WebUI 路由
-    location / {
-        proxy_pass http://saga_webui;
-        proxy_set_header Host $host;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
+	    # Frontend (React / Vite): 本專案預設只用 `npm run dev`，不在 Nginx 內代理前端。
+	    location / {
+	        return 404;
+	    }
+	}
 ```
 
 **SSL/TLS 設定**
@@ -953,7 +954,7 @@ class CustomLLMAdapter(LLMAdapter):
 # configs/presets/my_style.yaml
 style_id: "my_custom_style"
 base_model: "stabilityai/stable-diffusion-xl-base-1.0"
-lora_path: "/mnt/c/AI_LLM_projects/ai_warehouse/models/lora/my_style"
+lora_path: "/mnt/c/ai_models/lora/my_style"
 lora_scale: 0.8
 trigger_words: ["my_style", "custom_art"]
 negative_prompt: "low quality, blurry"
@@ -1007,7 +1008,9 @@ find ./backups -name "backup_*.sql.gz" -mtime +30 -delete
 **模型與快取備份**
 ```bash
 # 同步模型倉儲到備份位置
-rsync -av --progress /mnt/c/AI_LLM_projects/ai_warehouse/ /backup/ai_warehouse/
+rsync -av --progress /mnt/c/ai_cache/ /backup/ai_cache/
+rsync -av --progress /mnt/c/ai_models/ /backup/ai_models/
+rsync -av --progress /mnt/c/ai_output/anime-adventure-lab/ /backup/ai_output/anime-adventure-lab/
 
 # 或使用 MinIO 的跨區域複製
 mc mirror local/models s3/backup-bucket/models

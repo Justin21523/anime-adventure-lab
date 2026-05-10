@@ -69,9 +69,9 @@ __author__ = "Multi-Modal Lab Team"
 
 # Model defaults - can be overridden via config
 DEFAULT_MODELS = {
-    "caption": "Salesforce/blip2-opt-2.7b",
-    "vqa": "llava-hf/llava-1.5-7b-hf",
-    "vqa_chinese": "Qwen/Qwen-VL-Chat",  # Better Chinese support
+    "caption": "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it",
+    "vqa": "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it",
+    "vqa_chinese": "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it",
 }
 
 # Supported image formats

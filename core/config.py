@@ -38,7 +38,7 @@ class APIConfig(BaseSettings):
     port: int = Field(default=8000, description="API port")
     prefix: str = Field(default="/api/v1", description="API PREFIX")
     cors_origins: str = Field(
-        default="http://localhost:7860", description="CORS origins"
+        default="http://localhost:3000", description="CORS origins"
     )
     debug: bool = Field(default=False, description="Debug mode")
     max_workers: int = Field(default=2, description="Max concurrent workers")
@@ -60,8 +60,8 @@ class ModelConfig(BaseSettings):
         default_factory=get_optimal_device, description="Device mapping strategy"
     )
     device_map: str = Field(
-        default="cpu", description="Model device mapping"
-    )  # 不使用 "auto"
+        default="auto", description="Model device mapping"
+    )
     torch_dtype: str = Field(default="float16", description="Default torch dtype")
     max_batch_size: int = Field(default=4, description="Max inference batch size")
 
@@ -86,24 +86,29 @@ class ModelConfig(BaseSettings):
 
     # Default models
     default_llm: str = Field(
-        default="microsoft/DialoGPT-medium", description="Default LLM model"
+        default="Qwen/Qwen2.5-7B-Instruct", description="Default LLM model"
     )
     default_embedding: str = Field(
         default="BAAI/bge-m3", description="Default embedding model"
     )
     default_sd_model: str = Field(
-        default="runwayml/stable-diffusion-v1-5", description="Default SD model"
+        default="stabilityai/stable-diffusion-xl-base-1.0", description="Default SD model"
     )
     default_vlm_model: str = Field(
-        default="runwayml/stable-diffusion-v1-5", description="Default VLM model"
+        default="/mnt/c/ai_models/language/vlm/gemma-4-E4B-it",
+        description="Default VLM model",
     )
 
     # Model specific settings
     caption_model: str = Field(
-        default="Salesforce/blip2-opt-2.7b", description="Caption model"
+        default="/mnt/c/ai_models/language/vlm/gemma-4-E4B-it",
+        description="Caption model",
     )
-    vqa_model: str = Field(default="llava-hf/llava-1.5-7b-hf", description="VQA model")
-    chat_model: str = Field(default="Qwen/Qwen-7B-Chat", description="Chat model")
+    vqa_model: str = Field(
+        default="/mnt/c/ai_models/language/vlm/gemma-4-E4B-it",
+        description="VQA model",
+    )
+    chat_model: str = Field(default="Qwen/Qwen2.5-7B-Instruct", description="Chat model")
     embedding_model: str = Field(
         default="BAAI/bge-base-en-v1.5", description="Embedding model"
     )
@@ -191,6 +196,7 @@ class RAGConfig(BaseSettings):
 
     # Retrieval
     top_k: int = Field(default=8, description="Top-K retrieval results")
+    enable_rerank: bool = Field(default=False, description="Enable reranker stage")
     rerank_top_k: int = Field(
         default=50, description="Rerank top-K before final selection"
     )
@@ -201,8 +207,19 @@ class RAGConfig(BaseSettings):
     # Models
     embedding_model: str = Field(default="BAAI/bge-m3", description="Embedding model")
     reranker_model: str = Field(
-        default="BAAI/bge-reranker-large", description="Reranker model"
+        default="BAAI/bge-reranker-v2-m3", description="Reranker model"
     )
+
+    # Runtime
+    device: str = Field(
+        default="cpu",
+        description="Device for RAG embedding models: cpu|cuda|auto (CPU by default for VRAM safety)",
+    )
+    reranker_device: str = Field(
+        default="cpu",
+        description="Device for reranker: cpu|cuda|auto (CPU by default for VRAM safety)",
+    )
+    max_seq_length: int = Field(default=512, description="Max sequence length for reranker")
 
 
 class DatabaseConfig(BaseSettings):
@@ -220,7 +237,7 @@ class CacheConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_")
 
     root: str = Field(
-        default="/mnt/c/AI_LLM_projects/ai_warehouse", env="AI_CACHE_ROOT"
+        default="/mnt/c/ai_cache", env="AI_CACHE_ROOT"
     )  # type: ignore
     redis_enable: bool = Field(default=True, description="REDIS enable")
     redis_url: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")  # type: ignore

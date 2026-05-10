@@ -16,14 +16,30 @@ except Exception:  # pragma: no cover - fallback
 from core.shared_cache import get_shared_cache
 
 
+def _ensure_writable_parent(path: Path, fallback_name: str) -> Path:
+    """Return a writable file path, falling back to /tmp in restricted local envs."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        probe = path.parent / ".write_test"
+        probe.write_text("ok")
+        probe.unlink(missing_ok=True)
+        return path
+    except Exception:
+        fallback = Path("/tmp/ai_output/anime-adventure-lab") / fallback_name
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
 class ModelRegistry:
     """Keep track of trained models and their metadata"""
 
     def __init__(self, cache_root: Optional[str] = None):
         self.cache = get_shared_cache()
         self.cache_root = self.cache.get_path("TRAIN_REGISTRY")
-        self.registry_path = Path(self.cache.get_path("TRAIN_REGISTRY"))
-        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+        self.registry_path = _ensure_writable_parent(
+            Path(self.cache.get_path("TRAIN_REGISTRY")),
+            "training/model_registry.json",
+        )
 
         self._registry: Dict[str, Any] = {"models": {}, "version": "1.0"}
 

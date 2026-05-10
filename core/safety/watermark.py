@@ -294,7 +294,11 @@ class ComplianceLogger:
         self.audit_log_path = self.cache_root / "logs" / "compliance_audit.jsonl"
 
         # Ensure log directory exists
-        self.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            self.audit_log_path = Path("/tmp/ai_output/logs/compliance_audit.jsonl")
+            self.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def log_upload(
         self, file_id: str, metadata: Dict[str, Any], safety_result: Dict[str, Any]

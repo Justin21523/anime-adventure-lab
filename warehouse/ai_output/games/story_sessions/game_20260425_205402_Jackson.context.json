@@ -1,0 +1,151 @@
+{
+  "session_id": "game_20260425_205402_Jackson",
+  "player_name": "",
+  "characters": {
+    "player": {
+      "character_id": "player",
+      "name": "Jackson",
+      "role": "player",
+      "personality_traits": [
+        "勇敢",
+        "好奇",
+        "善良"
+      ],
+      "speaking_style": "直接而友善",
+      "background_story": "一位踏上旅途的冒險者，渴望探索未知。",
+      "motivations": [
+        "探索世界",
+        "幫助他人",
+        "成長"
+      ],
+      "relationships": {},
+      "current_state": "neutral",
+      "current_location": "起點",
+      "health": 100,
+      "mood": "neutral",
+      "dialogue_history": [],
+      "interaction_count": 0,
+      "last_seen_turn": 0
+    },
+    "narrator": {
+      "character_id": "narrator",
+      "name": "智者導師",
+      "role": "narrator",
+      "personality_traits": [
+        "博學",
+        "耐心",
+        "慈祥",
+        "富有洞察力",
+        "幽默"
+      ],
+      "speaking_style": "溫和而富有智慧，常用比喻和典故來說明道理",
+      "background_story": "曾經是知名學者，現在致力於引導年輕冒險者找到正確的道路",
+      "motivations": [
+        "傳承知識",
+        "保護年輕人",
+        "維護世界和平",
+        "促進理解"
+      ],
+      "relationships": {},
+      "current_state": "neutral",
+      "current_location": "起點",
+      "health": 100,
+      "mood": "neutral",
+      "dialogue_history": [],
+      "interaction_count": 0,
+      "last_seen_turn": 0
+    },
+    "wise_guide": {
+      "character_id": "wise_guide",
+      "name": "智者艾莉亞",
+      "role": "companion",
+      "personality_traits": [
+        "智慧",
+        "神秘",
+        "指導性"
+      ],
+      "speaking_style": "充滿智慧且神秘的語調",
+      "background_story": "一位古老的魔法師，掌握著許多秘密知識。",
+      "motivations": [
+        "指導後輩",
+        "保護古老知識",
+        "維持平衡"
+      ],
+      "relationships": {
+        "player": "mentor"
+      },
+      "current_state": "neutral",
+      "current_location": "起點",
+      "health": 100,
+      "mood": "neutral",
+      "dialogue_history": [],
+      "interaction_count": 0,
+      "last_seen_turn": 0
+    },
+    "merchant_bob": {
+      "character_id": "merchant_bob",
+      "name": "商人巴布",
+      "role": "npc",
+      "personality_traits": [
+        "精明",
+        "友善",
+        "商業頭腦"
+      ],
+      "speaking_style": "熱情且具說服力的商業語調",
+      "background_story": "一個經驗豐富的旅行商人，足跡遍布各地。",
+      "motivations": [
+        "獲利",
+        "建立人脈",
+        "分享故事"
+      ],
+      "relationships": {
+        "player": "business_partner"
+      },
+      "current_state": "neutral",
+      "current_location": "起點",
+      "health": 100,
+      "mood": "neutral",
+      "dialogue_history": [],
+      "interaction_count": 0,
+      "last_seen_turn": 0
+    }
+  },
+  "scenes": {
+    "opening": {
+      "scene_id": "opening",
+      "scene_type": "opening",
+      "title": "冒險的開始",
+      "description": "故事即將開始的地方",
+      "location": "起點",
+      "time_of_day": "清晨",
+      "weather": "晴朗",
+      "atmosphere": "mysterious",
+      "present_characters": [
+        "player",
+        "narrator",
+        "wise_guide"
+      ],
+      "primary_npc": "wise_guide",
+      "plot_points": [],
+      "active_conflicts": [],
+      "scene_objectives": [
+        "設定背景",
+        "介紹世界",
+        "提供初始選擇"
+      ],
+      "available_actions": [],
+      "turn_number": 0,
+      "created_at": "2026-04-25T21:54:55.643988"
+    }
+  },
+  "scene_sequence": [],
+  "current_scene_id": "opening",
+  "world_flags": {
+    "magic_enabled": true,
+    "combat_enabled": true
+  },
+  "location_states": {},
+  "main_plot_points": [],
+  "player_decisions": [],
+  "player_relationships": {}
+}

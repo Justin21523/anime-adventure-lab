@@ -13,12 +13,18 @@ from diffusers.pipelines.controlnet.pipeline_controlnet import (
     StableDiffusionControlNetPipeline,
 )
 from diffusers.models.controlnets.controlnet import ControlNetModel
-from controlnet_aux import (
-    OpenposeDetector,
-    MidasDetector,
-    CannyDetector,
-    LineartDetector,
-)
+try:
+    from controlnet_aux import (
+        OpenposeDetector,
+        MidasDetector,
+        CannyDetector,
+        LineartDetector,
+    )
+except ImportError:  # Optional dependency; basic T2I should still start.
+    OpenposeDetector = None  # type: ignore
+    MidasDetector = None  # type: ignore
+    CannyDetector = None  # type: ignore
+    LineartDetector = None  # type: ignore
 
 from ..shared_cache import get_shared_cache
 
@@ -123,12 +129,18 @@ class ControlNetManager:
 
         try:
             if controlnet_type == "pose":
+                if OpenposeDetector is None:
+                    raise RuntimeError("controlnet_aux is required for openpose preprocessing")
                 processor = OpenposeDetector.from_pretrained("lllyasviel/Annotators")
             elif controlnet_type == "depth":
+                if MidasDetector is None:
+                    raise RuntimeError("controlnet_aux is required for depth preprocessing")
                 processor = MidasDetector.from_pretrained("lllyasviel/Annotators")
             elif controlnet_type == "canny":
-                processor = CannyDetector()
+                processor = CannyDetector() if CannyDetector is not None else "opencv_canny"
             elif controlnet_type == "lineart":
+                if LineartDetector is None:
+                    raise RuntimeError("controlnet_aux is required for lineart preprocessing")
                 processor = LineartDetector.from_pretrained("lllyasviel/Annotators")
             else:
                 raise ValueError(f"No processor available for: {controlnet_type}")
@@ -153,6 +165,11 @@ class ControlNetManager:
             elif controlnet_type == "depth":
                 return processor(image)  # type: ignore
             elif controlnet_type == "canny":
+                if processor != "opencv_canny" and callable(processor):
+                    try:
+                        return processor(image)  # type: ignore[misc]
+                    except Exception:
+                        pass
                 # Convert PIL to OpenCV format
                 opencv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
                 low_threshold = kwargs.get("low_threshold", 100)
