@@ -45,13 +45,26 @@ class NarrativeGenerator:
         self.scene_templates = self._load_scene_templates()
 
     async def _chat(self, messages: List[ChatMessage]):
-        """Safely call LLM chat supporting sync/async adapters."""
+        """Safely call LLM chat supporting sync/async adapters.
+
+        Uses asyncio.to_thread to run the sync LLM chat in a background thread,
+        avoiding 'Event loop is closed' errors from LlamaCppServerLLM when called
+        from inside FastAPI's running event loop.
+        """
         if self.llm is None:
             return None
         try:
-            result = self.llm.chat(messages)  # type: ignore[attr-defined]
-            if asyncio.iscoroutine(result):
-                result = await result
+            # Try to get the real underlying LLM (_llm) which may be LlamaCppServerLLM.
+            # LLMAdapter.get_llm() wrongly returns a Transformers QwenLLM.
+            inner = getattr(self.llm, '_llm', None)
+            if inner is None:
+                inner = self.llm
+
+            # Run chat in a thread to avoid event loop conflicts
+            def _do_chat():
+                return inner.chat(messages)
+
+            result = await asyncio.to_thread(_do_chat)
             return result
         except Exception as exc:  # noqa: BLE001
             logger.error("LLM chat failed: %s", exc)

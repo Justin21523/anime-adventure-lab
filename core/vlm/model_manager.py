@@ -59,8 +59,8 @@ class VLMModelManager:
         self._vqa_loaded = False
 
         # Default models
-        self.default_caption_model = "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it"
-        self.default_vqa_model = "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it"
+        self.default_caption_model = "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF"
+        self.default_vqa_model = "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF"
 
     def _get_device_map(self):
         """Get optimal device mapping based on available hardware"""

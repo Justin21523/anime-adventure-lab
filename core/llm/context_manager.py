@@ -255,7 +255,7 @@ class ContextManager:
                 # Use an already-local tokenizer for rough estimation.
                 if "default" not in self._tokenizers:
                     default_model = resolve_model_path(
-                        os.getenv("MODEL_CHAT_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
+                        os.getenv("MODEL_CHAT_MODEL", "Qwen3.6-27B-Q4_K_M.gguf"),
                         kind="llm",
                     )
                     self._tokenizers["default"] = AutoTokenizer.from_pretrained(

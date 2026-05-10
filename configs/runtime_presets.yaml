@@ -36,7 +36,7 @@ presets:
     name: "RTX 5080 16GB（本地 Transformers）"
     description: "單卡 16GB：Qwen 7B（4bit）+ SDXL 1024，含 OOM fallback 建議值"
     llm:
-      model_name: "Qwen/Qwen2.5-7B-Instruct"
+      model_name: "Qwen3.6-27B-Q4_K_M.gguf"
       torch_dtype: "float16"
       device_map: "auto"
       use_quantization: true

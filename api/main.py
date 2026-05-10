@@ -12,9 +12,24 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
-import torch
 from pathlib import Path
 import sys
+import types
+
+# Inject a minimal torch stub if not available (API uses llama.cpp server, not torch)
+if "torch" not in sys.modules:
+    _fake_torch = types.ModuleType("torch")
+    _fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
+    _fake_torch.__version__ = "2.0.0+cpu"
+    # Common attributes that config.py and others expect
+    for _attr in ["float16", "float32", "bfloat16", "device", "Tensor", "nn", "optim", "load", "save"]:
+        setattr(_fake_torch, _attr, type('T', (), {}()))
+    sys.modules["torch"] = _fake_torch
+
+try:
+    import torch
+except ImportError:
+    pass  # stub is in place
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))

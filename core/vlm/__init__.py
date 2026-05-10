@@ -69,9 +69,9 @@ __author__ = "Multi-Modal Lab Team"
 
 # Model defaults - can be overridden via config
 DEFAULT_MODELS = {
-    "caption": "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it",
-    "vqa": "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it",
-    "vqa_chinese": "/mnt/c/ai_models/language/vlm/gemma-4-E4B-it",
+    "caption": "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF",
+    "vqa": "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF",
+    "vqa_chinese": "/mnt/c/ai_models/language/vlm/gemma-4-31B-it-GGUF",
 }
 
 # Supported image formats
