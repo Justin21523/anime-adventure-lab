@@ -4,11 +4,13 @@ Story Engine Router (separate from game.py)
 Provides story-specific APIs with LLM/agent/RAG integration.
 """
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Body
+from fastapi.responses import StreamingResponse
 
 from core.story.engine import get_story_engine
 from core.train.job_manager import TrainJobManager
@@ -1295,6 +1297,47 @@ async def process_story_turn(request: StoryTurnRequest):
         raise HTTPException(status_code=500, detail="Failed to process story turn")
 
 
+@router.post("/story/turn/stream")
+async def process_story_turn_stream(request: StoryTurnRequest):
+    """
+    Process a story turn with SSE streaming for narrative text.
+
+    Returns an EventSource stream where:
+      - `data: {"type": "token", "content": "..."}` — narrative text tokens
+      - `data: {"type": "done", "result": {...}}`     — final complete result
+    """
+    try:
+        story_engine = get_story_engine()
+        story_engine.get_session(request.session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unable to load session: {exc}")
+
+    async def event_generator():
+        try:
+            async for chunk in story_engine.process_turn_stream(
+                session_id=request.session_id,
+                player_input=request.player_input,
+                choice_id=request.choice_id,
+            ):
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            logger.error("Stream generation error: %s", exc, exc_info=True)
+            error_payload = {"type": "done", "result": {"error": str(exc), "narrative": "", "choices": []}}
+            yield f"data: {json.dumps(error_payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/story/session/{session_id}/save")
 async def save_game(session_id: str, slot_name: str = Body(..., embed=True)):
     """Create a save slot for the current session."""
@@ -1394,6 +1437,19 @@ async def get_story_session(session_id: str):
             if not choice_id or not text:
                 continue
             choices.append({**c, "choice_id": choice_id, "text": text})
+
+        # GUARD: Ensure choices are never empty at API level
+        if not choices:
+            logger.warning(
+                "Session %s has no available_choices — injecting emergency fallback",
+                session.session_id,
+            )
+            choices = [
+                {"choice_id": "continue_forward", "text": "繼續前進", "type": "action", "difficulty": "easy"},
+                {"choice_id": "look_around", "text": "仔細觀察周圍環境", "type": "exploration", "difficulty": "easy"},
+                {"choice_id": "check_status", "text": "檢查自身狀態和裝備", "type": "action", "difficulty": "easy"},
+                {"choice_id": "wait_observe", "text": "等待並觀察情況發展", "type": "action", "difficulty": "easy"},
+            ]
 
         # Optional: last generated scene image / agent actions stored on session context
         scene_image: Optional[SceneImage] = None
@@ -2173,3 +2229,78 @@ async def list_story_templates():
         }
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, f"Failed to list templates: {str(exc)}")
+
+
+@router.get("/story/worlds")
+async def list_world_settings():
+    """List all available world settings (5 pre-built worlds)."""
+    try:
+        from core.story.world_settings import list_worlds
+        return {"worlds": list_worlds()}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"Failed to list worlds: {str(exc)}")
+
+
+@router.get("/story/worlds/{world_id}")
+async def get_world_detail(world_id: str):
+    """Get detailed world setting info."""
+    try:
+        from core.story.world_settings import get_world
+        world = get_world(world_id)
+        if not world:
+            raise HTTPException(404, f"World not found: {world_id}")
+        return {
+            "id": world.id,
+            "name": world.name,
+            "description": world.description,
+            "tone": world.tone,
+            "rules": world.rules,
+            "npcs": world.npcs,
+            "items": world.items,
+            "special_mechanics": world.special_mechanics,
+            "magic_system": world.magic_system,
+            "currency": world.currency,
+            "danger_level": world.danger_level,
+            "theme_colors": world.theme_colors,
+            "prompt_context": world.to_prompt_context(),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"Failed to get world: {str(exc)}")
+
+
+@router.get("/story/classes")
+async def list_character_classes():
+    """List all available character classes."""
+    try:
+        from core.story.character_classes import list_classes
+        return {"classes": list_classes()}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"Failed to list classes: {str(exc)}")
+
+
+@router.get("/story/classes/{class_id}")
+async def get_class_detail(class_id: str):
+    """Get detailed class info."""
+    try:
+        from core.story.character_classes import get_class
+        cls = get_class(class_id)
+        if not cls:
+            raise HTTPException(404, f"Class not found: {class_id}")
+        return {
+            "id": cls.id,
+            "name": cls.name,
+            "description": cls.description,
+            "base_stats": cls.base_stats,
+            "skills": cls.skills,
+            "advancements": cls.advancements,
+            "passive_abilities": cls.passive_abilities,
+            "recommended_weapon_types": cls.recommended_weapon_types,
+            "lore": cls.lore,
+            "synergy_with": cls.synergy_with,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"Failed to get class: {str(exc)}")
