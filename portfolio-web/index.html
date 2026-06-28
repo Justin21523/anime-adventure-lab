@@ -18,6 +18,8 @@
       </div>
       <nav class="topnav" aria-label="Demo sections">
         <a href="#demo">Demo</a>
+        <a href="#screenshots">Screenshots</a>
+        <a href="#recording">Recording</a>
         <a href="#architecture">Architecture</a>
         <a href="#evidence">Evidence</a>
         <a href="#runbook">Runbook</a>
@@ -104,6 +106,58 @@
         </section>
       </section>
 
+      <section id="screenshots" class="band">
+        <div class="section-title">
+          <p class="eyebrow">Screenshots</p>
+          <h2>Ready-to-share interview views</h2>
+        </div>
+        <div class="screenshot-grid">
+          <figure>
+            <img src="./assets/screenshot-story.svg" alt="Story turn demo screenshot" />
+            <figcaption>
+              <strong>Story-first gameplay</strong>
+              <span>Scenario picker, visual novel stage, mock latency, and traceable turn state.</span>
+            </figcaption>
+          </figure>
+          <figure>
+            <img src="./assets/screenshot-rag.svg" alt="RAG retrieval demo screenshot" />
+            <figcaption>
+              <strong>World-scoped RAG</strong>
+              <span>Query, rerank mode, lore documents, citation scores, and retrieval evidence.</span>
+            </figcaption>
+          </figure>
+          <figure>
+            <img src="./assets/screenshot-agent.svg" alt="Agent assisted choice demo screenshot" />
+            <figcaption>
+              <strong>Agent decision support</strong>
+              <span>Tool plan, risk-aware recommendation, state delta, and review queue.</span>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="recording" class="band recording">
+        <div class="section-title">
+          <p class="eyebrow">Video Demo</p>
+          <h2>Playable recording for GitHub Pages</h2>
+        </div>
+        <div class="recording-layout">
+          <video controls preload="metadata" poster="./assets/demo-video-poster.svg">
+            <source src="./assets/demo-recording.mp4" type="video/mp4" />
+            Your browser does not support the demo video.
+          </video>
+          <div class="recording-notes">
+            <h3>What the recording shows</h3>
+            <p>Stable public demo flow: story turn, RAG trace, agent plan, and T2I hooks in a mock-safe environment that does not require a GPU or private model files.</p>
+            <ul>
+              <li>Use this video as the first artifact when a reviewer only has one minute.</li>
+              <li>Use the screenshots above for resume, portfolio, and interview slide decks.</li>
+              <li>Use the live demo area at the top when you want to show the data flow interactively.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
       <section id="architecture" class="band">
         <div class="section-title">
           <p class="eyebrow">Architecture</p>
@@ -160,6 +214,7 @@
         </div>
         <ol>
           <li>Open this page and switch through the three scenarios to show the product value.</li>
+          <li>Play the embedded recording and show the screenshot gallery for quick visual proof.</li>
           <li>Show the visual novel stage, then open the trace tabs to explain Story, RAG, Agent, and T2I data flow.</li>
           <li>Run <code>make test-smoke</code> and <code>cd frontend/react && npm run build</code> as proof that the demo gate passes.</li>
           <li>Explain that full GPU inference is optional and documented separately; public demo uses stable mock data.</li>

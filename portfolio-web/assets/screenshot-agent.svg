@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">Agent assisted choice screenshot</title>
+  <desc id="desc">An agent-assisted game decision with tool calls, state deltas, and review queue.</desc>
+  <rect width="1280" height="760" fill="#101318"/>
+  <rect x="44" y="44" width="1192" height="672" rx="16" fill="#171b22" stroke="#344052" stroke-width="2"/>
+  <text x="84" y="104" fill="#51c8b8" font-family="Arial, sans-serif" font-size="23" font-weight="700">Agent Assisted Choice</text>
+  <text x="84" y="148" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="34" font-weight="800">Skyrail Bazaar route recommendation</text>
+  <rect x="84" y="196" width="352" height="456" rx="12" fill="#121820" stroke="#344052"/>
+  <text x="116" y="244" fill="#f6c453" font-family="Arial, sans-serif" font-size="24" font-weight="700">Player options</text>
+  <rect x="116" y="286" width="260" height="74" rx="10" fill="#0b1017" stroke="#344052"/>
+  <text x="142" y="332" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="22">Cross the bridge</text>
+  <rect x="116" y="382" width="260" height="74" rx="10" fill="#16242b" stroke="#51c8b8"/>
+  <text x="142" y="428" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="22">Negotiate passage</text>
+  <rect x="116" y="478" width="260" height="74" rx="10" fill="#0b1017" stroke="#344052"/>
+  <text x="142" y="524" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="22">Spend stamina</text>
+  <rect x="480" y="196" width="334" height="456" rx="12" fill="#0b1017" stroke="#344052"/>
+  <text x="512" y="244" fill="#f6c453" font-family="Arial, sans-serif" font-size="24" font-weight="700">Tool plan</text>
+  <g font-family="Arial, sans-serif" font-size="22">
+    <circle cx="534" cy="310" r="14" fill="#51c8b8"/>
+    <text x="566" y="318" fill="#f4f7fb">relationship_state</text>
+    <circle cx="534" cy="386" r="14" fill="#51c8b8"/>
+    <text x="566" y="394" fill="#f4f7fb">world_state</text>
+    <circle cx="534" cy="462" r="14" fill="#51c8b8"/>
+    <text x="566" y="470" fill="#f4f7fb">risk_estimator</text>
+    <circle cx="534" cy="538" r="14" fill="#51c8b8"/>
+    <text x="566" y="546" fill="#f4f7fb">state_delta</text>
+  </g>
+  <rect x="858" y="196" width="310" height="456" rx="12" fill="#121820" stroke="#344052"/>
+  <text x="890" y="244" fill="#f6c453" font-family="Arial, sans-serif" font-size="24" font-weight="700">Recommendation</text>
+  <text x="890" y="302" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="25" font-weight="700">Negotiate passage</text>
+  <text x="890" y="344" fill="#a7b0bd" font-family="Arial, sans-serif" font-size="20">Low stamina and improved</text>
+  <text x="890" y="374" fill="#a7b0bd" font-family="Arial, sans-serif" font-size="20">merchant relationship reduce risk.</text>
+  <rect x="890" y="430" width="222" height="92" rx="10" fill="#16242b" stroke="#51c8b8"/>
+  <text x="916" y="468" fill="#51c8b8" font-family="Arial, sans-serif" font-size="20" font-weight="700">Review queue</text>
+  <text x="916" y="500" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="20">1 world update</text>
+  <text x="890" y="586" fill="#ec6f86" font-family="Arial, sans-serif" font-size="22" font-weight="700">state_delta pending</text>
+</svg>

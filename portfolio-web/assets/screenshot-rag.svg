@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">RAG retrieval screenshot</title>
+  <desc id="desc">A retrieval trace with world-scoped lore hits, scores, and citations.</desc>
+  <rect width="1280" height="760" fill="#101318"/>
+  <rect x="48" y="48" width="1184" height="664" rx="16" fill="#171b22" stroke="#344052" stroke-width="2"/>
+  <text x="86" y="106" fill="#51c8b8" font-family="Arial, sans-serif" font-size="23" font-weight="700">RAG Lore Retrieval</text>
+  <text x="86" y="148" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="34" font-weight="800">Moonlit Library: missing seal phrase</text>
+  <rect x="86" y="194" width="492" height="448" rx="12" fill="#0b1017" stroke="#344052"/>
+  <text x="116" y="240" fill="#f6c453" font-family="Arial, sans-serif" font-size="24" font-weight="700">Query</text>
+  <text x="116" y="282" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="24">"Find the seal phrase hidden in ritual lore."</text>
+  <rect x="116" y="332" width="402" height="70" rx="10" fill="#16242b" stroke="#51c8b8"/>
+  <text x="142" y="374" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="22">mode: on / rerank: true</text>
+  <rect x="116" y="432" width="402" height="142" rx="10" fill="#121820" stroke="#344052"/>
+  <text x="142" y="476" fill="#a7b0bd" font-family="Arial, sans-serif" font-size="20">World scope</text>
+  <text x="142" y="516" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="24">Moonlit Library WorldPack</text>
+  <rect x="628" y="194" width="516" height="448" rx="12" fill="#121820" stroke="#344052"/>
+  <text x="660" y="240" fill="#f6c453" font-family="Arial, sans-serif" font-size="24" font-weight="700">Top citations</text>
+  <g font-family="Arial, sans-serif" font-size="22">
+    <rect x="660" y="276" width="430" height="74" rx="10" fill="#16242b" stroke="#51c8b8"/>
+    <text x="686" y="322" fill="#f4f7fb">ritual_notes.md</text>
+    <text x="1010" y="322" fill="#51c8b8" font-weight="700">0.94</text>
+    <rect x="660" y="374" width="430" height="74" rx="10" fill="#0b1017" stroke="#344052"/>
+    <text x="686" y="420" fill="#f4f7fb">archive_index.json</text>
+    <text x="1010" y="420" fill="#f6c453" font-weight="700">0.89</text>
+    <rect x="660" y="472" width="430" height="74" rx="10" fill="#0b1017" stroke="#344052"/>
+    <text x="686" y="518" fill="#f4f7fb">bestiary/moon_warden.md</text>
+    <text x="1010" y="518" fill="#f6c453" font-weight="700">0.72</text>
+  </g>
+  <path d="M594 418 C612 386 636 354 660 318" fill="none" stroke="#51c8b8" stroke-width="5" stroke-linecap="round"/>
+  <path d="M594 456 C620 438 640 420 660 412" fill="none" stroke="#6d7cff" stroke-width="5" stroke-linecap="round"/>
+</svg>

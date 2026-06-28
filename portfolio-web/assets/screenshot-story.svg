@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">Anime Adventure Lab story showcase screenshot</title>
+  <desc id="desc">A visual novel story turn with scenario controls, stage art, dialogue, and pipeline metrics.</desc>
+  <rect width="1280" height="760" fill="#101318"/>
+  <rect x="36" y="36" width="1208" height="688" rx="16" fill="#171b22" stroke="#344052" stroke-width="2"/>
+  <rect x="64" y="82" width="270" height="586" rx="12" fill="#121820" stroke="#344052"/>
+  <text x="88" y="126" fill="#51c8b8" font-family="Arial, sans-serif" font-size="22" font-weight="700">Scenario</text>
+  <rect x="88" y="164" width="222" height="86" rx="10" fill="#16242b" stroke="#51c8b8"/>
+  <text x="112" y="202" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="22" font-weight="700">Neon Archive</text>
+  <text x="112" y="230" fill="#a7b0bd" font-family="Arial, sans-serif" font-size="17">Story + WorldPack + T2I</text>
+  <rect x="88" y="272" width="222" height="86" rx="10" fill="#121820" stroke="#344052"/>
+  <text x="112" y="310" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="22" font-weight="700">RAG Retrieval</text>
+  <text x="112" y="338" fill="#a7b0bd" font-family="Arial, sans-serif" font-size="17">Lore hits + citations</text>
+  <rect x="88" y="380" width="222" height="86" rx="10" fill="#121820" stroke="#344052"/>
+  <text x="112" y="418" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="22" font-weight="700">Agent Choice</text>
+  <text x="112" y="446" fill="#a7b0bd" font-family="Arial, sans-serif" font-size="17">Tools + state delta</text>
+  <rect x="368" y="82" width="526" height="586" rx="12" fill="#0b1017" stroke="#344052"/>
+  <rect x="394" y="112" width="474" height="316" rx="10" fill="#1f2630"/>
+  <path d="M394 382 C480 290 548 320 618 226 C692 132 782 164 868 112 L868 428 L394 428 Z" fill="#243143"/>
+  <circle cx="508" cy="206" r="48" fill="#f6c453" opacity=".9"/>
+  <rect x="548" y="166" width="160" height="190" rx="12" fill="#51c8b8" opacity=".35"/>
+  <rect x="604" y="128" width="110" height="270" rx="12" fill="#6d7cff" opacity=".25"/>
+  <path d="M444 428 L486 334 L552 428 Z" fill="#ec6f86" opacity=".65"/>
+  <rect x="394" y="470" width="474" height="152" rx="12" fill="#101318" stroke="#344052"/>
+  <text x="424" y="520" fill="#51c8b8" font-family="Arial, sans-serif" font-size="22" font-weight="700">Archivist Mira</text>
+  <text x="424" y="560" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="24">The archive gate wakes as your token touches</text>
+  <text x="424" y="594" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="24">the scanner and nearby records rewrite.</text>
+  <rect x="928" y="82" width="270" height="586" rx="12" fill="#121820" stroke="#344052"/>
+  <text x="956" y="126" fill="#51c8b8" font-family="Arial, sans-serif" font-size="22" font-weight="700">Pipeline Evidence</text>
+  <text x="956" y="184" fill="#f6c453" font-family="Arial, sans-serif" font-size="42" font-weight="800">0.12s</text>
+  <text x="956" y="214" fill="#a7b0bd" font-family="Arial, sans-serif" font-size="18">mock turn latency</text>
+  <text x="956" y="278" fill="#f6c453" font-family="Arial, sans-serif" font-size="42" font-weight="800">4</text>
+  <text x="956" y="308" fill="#a7b0bd" font-family="Arial, sans-serif" font-size="18">knowledge hits</text>
+  <rect x="956" y="358" width="214" height="230" rx="10" fill="#0b1017" stroke="#293446"/>
+  <text x="976" y="396" fill="#d8e2ef" font-family="Consolas, monospace" font-size="17">{</text>
+  <text x="996" y="428" fill="#d8e2ef" font-family="Consolas, monospace" font-size="17">"world": "neon",</text>
+  <text x="996" y="460" fill="#d8e2ef" font-family="Consolas, monospace" font-size="17">"rag": "auto",</text>
+  <text x="996" y="492" fill="#d8e2ef" font-family="Consolas, monospace" font-size="17">"tools": 2</text>
+  <text x="976" y="524" fill="#d8e2ef" font-family="Consolas, monospace" font-size="17">}</text>
+</svg>

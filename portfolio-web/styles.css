@@ -132,6 +132,8 @@ main {
 .stage,
 .feature-grid article,
 .evidence-item,
+.screenshot-grid figure,
+.recording-layout,
 .runbook ol {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -376,13 +378,15 @@ main {
 }
 
 .feature-grid,
-.evidence-grid {
+.evidence-grid,
+.screenshot-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
 }
 
-.evidence-grid {
+.evidence-grid,
+.screenshot-grid {
   grid-template-columns: repeat(3, 1fr);
 }
 
@@ -394,6 +398,63 @@ main {
 .feature-grid p,
 .evidence-item p {
   margin-bottom: 0;
+}
+
+.screenshot-grid figure {
+  margin: 0;
+  overflow: hidden;
+}
+
+.screenshot-grid img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9.5;
+  object-fit: cover;
+  background: #0b1017;
+  border-bottom: 1px solid var(--line);
+}
+
+.screenshot-grid figcaption {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+}
+
+.screenshot-grid figcaption strong {
+  font-size: 15px;
+}
+
+.screenshot-grid figcaption span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.recording-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
+  gap: 18px;
+  padding: 18px;
+}
+
+.recording video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  display: block;
+  border: 1px solid #293446;
+  border-radius: 8px;
+  background: #0b1017;
+}
+
+.recording-notes {
+  align-self: center;
+}
+
+.recording-notes ul {
+  margin: 16px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .badge {
@@ -439,6 +500,11 @@ main {
   .feature-grid {
     grid-template-columns: repeat(2, 1fr);
   }
+
+  .screenshot-grid,
+  .recording-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -458,7 +524,9 @@ main {
 
   .demo-shell,
   .feature-grid,
-  .evidence-grid {
+  .evidence-grid,
+  .screenshot-grid,
+  .recording-layout {
     grid-template-columns: 1fr;
   }
 

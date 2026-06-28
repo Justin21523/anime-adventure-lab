@@ -10,7 +10,8 @@ Anime Adventure Lab combines a story engine, world/lore management, RAG retrieva
 
 - **Static portfolio demo:** `portfolio-web/`
   - Works on GitHub Pages, Vercel, Netlify, or any static host.
-  - Includes scenario switching, visual novel screen, RAG/Agent/T2I trace panels, and a 90-second recording flow.
+  - Includes scenario switching, visual novel screen, RAG/Agent/T2I trace panels, screenshot gallery, and an embedded video demo.
+  - Public Pages URL: <https://justin21523.github.io/anime-adventure-lab/>
 - **React workbench:** `frontend/react/`
   - Main product UI for story sessions, Visual Novel mode, World Studio, RAG ingestion, and job progress.
 - **FastAPI backend:** `api/`
@@ -83,6 +84,14 @@ python -m http.server 4173
 # http://localhost:4173
 ```
 
+The static demo includes interview-ready visual assets:
+
+- `assets/screenshot-story.svg`
+- `assets/screenshot-rag.svg`
+- `assets/screenshot-agent.svg`
+- `assets/demo-recording.mp4`
+- `assets/demo-video-poster.svg`
+
 ## Verification
 
 Recommended portfolio gate:
@@ -126,9 +135,10 @@ docker build -f docker/demo.backend.Dockerfile -t anime-adventure-lab-demo-api .
 
 1. Open `portfolio-web/` and switch through the three showcase scenarios.
 2. Explain the trace tabs: Story, RAG, Agent, T2I.
-3. Run `make test-smoke`.
-4. Run `cd frontend/react && npm run build`.
-5. Close by explaining the split between stable public mock demo and optional real GPU/model mode.
+3. Show the screenshot gallery and play the embedded demo recording.
+4. Run `make test-smoke`.
+5. Run `cd frontend/react && npm run build`.
+6. Close by explaining the split between stable public mock demo and optional real GPU/model mode.
 
 ## Current Status
 

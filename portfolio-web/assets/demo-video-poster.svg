@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Demo video poster</title>
+  <desc id="desc">Poster for the Anime Adventure Lab demo recording.</desc>
+  <rect width="1280" height="720" fill="#101318"/>
+  <rect x="70" y="70" width="1140" height="580" rx="24" fill="#171b22" stroke="#344052" stroke-width="3"/>
+  <text x="120" y="154" fill="#51c8b8" font-family="Arial, sans-serif" font-size="30" font-weight="800">18-second demo recording</text>
+  <text x="120" y="218" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="54" font-weight="900">Anime Adventure Lab</text>
+  <text x="120" y="276" fill="#a7b0bd" font-family="Arial, sans-serif" font-size="28">Story engine, RAG retrieval, agent tools, and T2I scene hooks.</text>
+  <circle cx="640" cy="430" r="96" fill="#51c8b8"/>
+  <path d="M614 376 L614 484 L704 430 Z" fill="#101318"/>
+  <rect x="120" y="570" width="300" height="44" rx="10" fill="#16242b" stroke="#51c8b8"/>
+  <text x="146" y="600" fill="#f4f7fb" font-family="Arial, sans-serif" font-size="22">Static GitHub Pages demo</text>
+</svg>

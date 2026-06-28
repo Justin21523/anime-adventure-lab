@@ -7,8 +7,11 @@ Deploy `portfolio-web/` as a static site. This is the safest interview-facing pa
 Options:
 
 - **GitHub Pages:** use `.github/workflows/pages.yml` after enabling Pages with GitHub Actions as the source.
+- **Current public URL:** `https://justin21523.github.io/anime-adventure-lab/`
 - **Vercel / Netlify:** set the project root or publish directory to `portfolio-web/`.
 - **Any static host:** upload the contents of `portfolio-web/`.
+
+The static site includes the demo page, screenshot gallery, embedded MP4 recording, and project description. All assets live under `portfolio-web/assets/`.
 
 Local preview:
 
