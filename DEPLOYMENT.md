@@ -1,21 +1,49 @@
 # Deployment
 
-This project is deployed as a Docker service behind the portfolio gateway:
+## Recommended Public Demo
+
+Deploy `portfolio-web/` as a static site. This is the safest interview-facing path because it does not require GPU models, Redis, Celery workers, or persistent backend storage.
+
+Options:
+
+- **GitHub Pages:** use `.github/workflows/pages.yml` after enabling Pages with GitHub Actions as the source.
+- **Vercel / Netlify:** set the project root or publish directory to `portfolio-web/`.
+- **Any static host:** upload the contents of `portfolio-web/`.
+
+Local preview:
+
+```bash
+cd portfolio-web
+python -m http.server 4173
+```
+
+## Optional Full-Stack Demo
+
+Use this only when you want a live FastAPI backend behind the portfolio page.
+
+```bash
+docker build -f docker/demo.backend.Dockerfile -t anime-adventure-lab-demo-api .
+docker build -f docker/demo.Dockerfile -t anime-adventure-lab-demo .
+```
+
+The full React/FastAPI stack can also be run with Docker Compose, but GPU inference and workers should be treated as advanced/local mode unless the target host has the required model warehouse.
+
+## Existing Portfolio Gateway
+
+This project can still be deployed behind the portfolio gateway:
 
 - URL: `https://neojustin.dothost.net/p/anime-adventure-lab/`
-- Services (docker-compose):
+- Services:
   - UI: `anime-adventure-lab`
-  - Backend (FastAPI demo API): `anime-adventure-lab-backend`
+  - Backend demo API: `anime-adventure-lab-backend`
 
-## Update after code changes
-1) Sync code to the server checkout:
-- Remote path: `/home/neojustin/justin-portfolio/projects/anime-adventure-lab`
+Update flow:
 
-2) Rebuild + restart on the server:
 ```bash
 cd /home/neojustin/justin-portfolio
 docker-compose up -d --build anime-adventure-lab-backend anime-adventure-lab
 ```
 
-Reference workflow:
+Reference:
+
 - `/home/justin/web-projects/justin-portfolio/docs/deployment/update-workflow.md`

@@ -6,6 +6,7 @@ Provides story-specific APIs with LLM/agent/RAG integration.
 
 import json
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -53,6 +54,12 @@ from schemas.story import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 story_turn_job_manager = TrainJobManager()
+
+
+def _run_jobs_sync_fallback() -> bool:
+    """Default to sync jobs for local/portfolio demo; real worker deploys can opt out."""
+    raw = os.getenv("JOBS_SYNC_FALLBACK", os.getenv("API_SYNC_JOBS", "1"))
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
 
 # Helpers ---------------------------------------------------------------------
@@ -868,17 +875,9 @@ async def enqueue_story_turn_job(request: StoryTurnRequest):
     payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
     job_id = story_turn_job_manager.create_job("story_turn", payload, status="queued")
 
-    # Prefer Celery GPU worker; fallback to sync execution (dev/test only).
-    try:
-        from workers.tasks.story import story_turn_task
-
-        async_result = story_turn_task.delay({"job_id": job_id, "payload": payload})
-        try:
-            story_turn_job_manager.update_job(job_id, celery_task_id=str(async_result.id))
-        except Exception:
-            pass
-    except Exception as exc:  # noqa: BLE001
-        logger.info("Celery dispatch skipped (%s), running sync", exc)
+    # Prefer sync execution for local/portfolio demo. Real worker deployments can
+    # set JOBS_SYNC_FALLBACK=0 to enqueue to Celery instead.
+    if _run_jobs_sync_fallback():
         try:
             story_turn_job_manager.update_job(job_id, status="running", progress=1.0)
             with job_context(job_id, "story_turn"):
@@ -899,6 +898,34 @@ async def enqueue_story_turn_job(request: StoryTurnRequest):
                 job_id, status="failed", progress=0.0, error=str(sync_exc)[:2000]
             )
             raise
+    else:
+        try:
+            from workers.tasks.story import story_turn_task
+
+            async_result = story_turn_task.delay({"job_id": job_id, "payload": payload})
+            try:
+                story_turn_job_manager.update_job(job_id, celery_task_id=str(async_result.id))
+            except Exception:
+                pass
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Celery dispatch skipped (%s), running sync", exc)
+            try:
+                story_turn_job_manager.update_job(job_id, status="running", progress=1.0)
+                with job_context(job_id, "story_turn"):
+                    resp = await process_story_turn(request)
+                story_turn_job_manager.update_job(
+                    job_id,
+                    status="completed",
+                    progress=100.0,
+                    result=resp.model_dump()
+                    if hasattr(resp, "model_dump")
+                    else resp.dict(),
+                )
+            except Exception as sync_exc:  # noqa: BLE001
+                story_turn_job_manager.update_job(
+                    job_id, status="failed", progress=0.0, error=str(sync_exc)[:2000]
+                )
+                raise
 
     return StoryTurnJobResponse(success=True, job_id=job_id, status="queued")
 
@@ -2233,37 +2260,26 @@ async def list_story_templates():
 
 @router.get("/story/worlds")
 async def list_world_settings():
-    """List all available world settings (5 pre-built worlds)."""
+    """List available world settings (legacy alias for WorldPacks)."""
     try:
-        from core.story.world_settings import list_worlds
-        return {"worlds": list_worlds()}
+        from core.worldpacks import get_worldpack_manager
+
+        manager = get_worldpack_manager()
+        return {"worlds": [item.model_dump() for item in manager.list_worldpacks()]}
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, f"Failed to list worlds: {str(exc)}")
 
 
 @router.get("/story/worlds/{world_id}")
 async def get_world_detail(world_id: str):
-    """Get detailed world setting info."""
+    """Get detailed world setting info (legacy alias for WorldPacks)."""
     try:
-        from core.story.world_settings import get_world
-        world = get_world(world_id)
-        if not world:
+        from core.worldpacks import get_worldpack_manager
+
+        world = get_worldpack_manager().get_worldpack(world_id)
+        if world is None:
             raise HTTPException(404, f"World not found: {world_id}")
-        return {
-            "id": world.id,
-            "name": world.name,
-            "description": world.description,
-            "tone": world.tone,
-            "rules": world.rules,
-            "npcs": world.npcs,
-            "items": world.items,
-            "special_mechanics": world.special_mechanics,
-            "magic_system": world.magic_system,
-            "currency": world.currency,
-            "danger_level": world.danger_level,
-            "theme_colors": world.theme_colors,
-            "prompt_context": world.to_prompt_context(),
-        }
+        return world.model_dump()
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001

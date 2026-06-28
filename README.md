@@ -1,120 +1,148 @@
-# Anime-Adventure-lab
+# Anime Adventure Lab
 
-**LLM + RAG + T2I + VLM + LoRA** service stack for story-driven experiences.
-FastAPI backend, Celery workers, and a React (Vite) WebUI, with AI_WAREHOUSE 3.0 storage roots.
+Portfolio demo for an AI-driven anime adventure platform.
 
----
+Anime Adventure Lab combines a story engine, world/lore management, RAG retrieval, agent tools, and text-to-image hooks into one playable visual-novel style workbench. The public demo is designed to be stable and interview-friendly: it uses deterministic mock/sample data, so reviewers can understand the architecture without downloading models or using a GPU.
 
-## Key Principles
+> 中文摘要：這是一個 AI 故事冒險平台作品集專案，展示 Story Engine、RAG、Agent、T2I、WorldPack 與背景任務流程。公開展示版以穩定 mock demo 為主；真模型/GPU 推論保留為進階本機模式。
 
-- **AI_WAREHOUSE 3.0**: No large models/datasets in the repo. Use split roots:
-  - `AI_CACHE_ROOT` (HF/torch/XDG cache) → `/mnt/c/ai_cache`
-  - `AI_MODELS_ROOT` (managed weights / LoRAs / checkpoints) → `/mnt/c/ai_models`
-  - `AI_OUTPUT_ROOT` (runs / generated media / exports) → `/mnt/c/ai_output/anime-adventure-lab`
-- **Low-VRAM Defaults**: Prefer device_map="auto", fp16/bf16, gradient checkpointing, and LoRA over full fine-tuning.
-- **Security & Governance**: Never commit secrets; use `.env`. Optional NSFW/face-blur for public demos.
+## Demo Strategy
 
-Architecture and folder layout follow the project plan and RAG/T2I modules described in our internal docs.
-(health, LLM, RAG, T2I, VLM, LoRA, batch, and admin routers are scaffolded)
-<!-- mirrors the structure in our architecture spec -->
+- **Static portfolio demo:** `portfolio-web/`
+  - Works on GitHub Pages, Vercel, Netlify, or any static host.
+  - Includes scenario switching, visual novel screen, RAG/Agent/T2I trace panels, and a 90-second recording flow.
+- **React workbench:** `frontend/react/`
+  - Main product UI for story sessions, Visual Novel mode, World Studio, RAG ingestion, and job progress.
+- **FastAPI backend:** `api/`
+  - Mock-safe API for smoke testing and local demos; full AI model loading is optional.
 
----
+## What It Demonstrates
 
-## Quickstart
+- **Story Engine:** session state, choices, turn history, memory summaries, relationship/state deltas.
+- **WorldPack system:** world metadata, characters, visual style defaults, player templates, world-scoped RAG.
+- **RAG pipeline:** upload, chunking, metadata, world filters, retrieval/rerank flags, citation traces.
+- **Agent layer:** tool catalog, assisted decisions, world state checks, review queue/writeback suggestions.
+- **T2I integration:** scene prompt generation, LoRA/world style hooks, async image jobs, mock-safe fallbacks.
+- **Ops architecture:** FastAPI routers, Celery-compatible jobs, Docker deployment, AI_WAREHOUSE storage roots.
 
-### 1) Environment (conda)
+## Architecture
+
+```text
+portfolio-web/        Static interview demo and scenario showcase
+frontend/react/       React + Vite visual novel/workbench UI
+api/                  FastAPI app, routers, dependencies, middleware
+core/                 Story, RAG, Agent, T2I, VLM, training, monitoring logic
+schemas/              Shared Pydantic request/response models
+workers/              Celery tasks and job execution wrappers
+configs/              Runtime, model, RAG, training, and style presets
+tests/                Pytest smoke/unit/integration coverage
+docker/               Demo/frontend/backend Docker assets
+```
+
+Data and generated artifacts are intentionally outside the repo:
 
 ```bash
-conda create -n ai_env python=3.10 -y
-conda activate ai_env
-pip install -r requirements.txt -r requirements-test.txt
-cp .env.example .env  # if present
-```
-
-Set these in `.env` (see `.env.example`):
-
-```
 AI_CACHE_ROOT=/mnt/c/ai_cache
 AI_MODELS_ROOT=/mnt/c/ai_models
 AI_OUTPUT_ROOT=/mnt/c/ai_output/anime-adventure-lab
 AI_DATASETS_ROOT=/mnt/c/ai_datasets/anime-adventure-lab
 ```
 
-### 2) Run API
+## Quick Start: Stable Mock Demo
+
+Backend smoke mode:
 
 ```bash
+conda create -n ai_env python=3.10 -y
+conda activate ai_env
+pip install -r requirements.txt -r requirements-test.txt
+
+export T2I_MOCK=1 VLM_MOCK=1 LLM_MOCK=1
+export MODEL_DEVICE=cpu CUDA_VISIBLE_DEVICES=
+export JOBS_SYNC_FALLBACK=1
+
 uvicorn api.main:app --reload
-# -> http://localhost:8000/healthz
+# http://localhost:8000/healthz
+# http://localhost:8000/docs
 ```
 
-### 3) Run Worker (optional)
-
-```bash
-REDIS_URL=redis://localhost:6379/0 celery -A workers.celery_app:celery_app worker -l INFO
-```
-
-### 4) WebUI (React / Vite)
+React workbench:
 
 ```bash
 cd frontend/react
-npm install
+npm ci
 npm run dev
-# -> http://localhost:3000
+# http://localhost:3000
 ```
 
----
+Static portfolio demo:
 
-## Endpoints (MVP)
-
-* `GET /healthz` – health check
-* `POST /turn` – LLM turn (stub)
-* `POST /upload`, `POST /retrieve` – RAG ingest/retrieve (stubs)
-* `POST /gen_image` – T2I generate (stub path)
-* `POST /caption`, `POST /analyze` – VLM (stubs)
-* `POST /finetune/lora` – submit LoRA job (stub)
-* `GET /batch/status/{job_id}` – job status (stub)
-* `GET /models`, `GET /presets` – admin listings
-
-> The API is intentionally minimal to pass smoke tests and wire the whole stack; each module has clear files to extend.
-
----
-
-## Project Layout
-
-```
-api/          # FastAPI app, routers, middleware, dependencies
-core/         # Business logic (LLM, RAG, Story, T2I, VLM, Train)
-workers/      # Celery tasks and utilities
-frontend/     # React (Vite) WebUI
-configs/      # app/models/rag/train/presets
-worldpacks/   # tiny samples (no large assets)
-tests/        # unit + integration
-docs/         # developer & deployment docs, notebooks
-.github/      # CI/CD workflows and issue templates
+```bash
+cd portfolio-web
+python -m http.server 4173
+# http://localhost:4173
 ```
 
----
+## Verification
 
-## Tests & CI
+Recommended portfolio gate:
 
-* Run tests: `pytest -q`
-* GitHub Actions CI: installs dependencies and runs tests on PRs.
+```bash
+make test-smoke
+cd frontend/react && npm ci && npm run build
+```
 
----
+Direct endpoint checks in mock mode:
 
-## Roadmap (stages)
+```bash
+curl http://localhost:8000/healthz
+curl http://localhost:8000/api/v1/ready
+curl http://localhost:8000/api/v1/worlds
+curl http://localhost:8000/api/v1/runtime/presets
+curl http://localhost:8000/api/v1/t2i/status
+```
 
-1. **Bootstrap** – `/healthz`, shared cache, basic WebUI
-2. **LLM Core & Persona** – `/turn` MVP
-3. **ZH RAG** – upload → chunk (hierarchical) → embed (bge-m3) → hybrid retrieve → rerank + citations
-4. **Story Engine** – GameState + choice resolution
-5. **T2I** – SD/SDXL pipelines, ControlNet, LoRA hot-swap
-6. **VLM** – captions/tags and consistency write-back
-7. **LoRA Fine-tuning** – /finetune/lora API + worker and evaluation
-8. **Safety & License** – content filter, watermark, license records
-9. **Perf & Export** – 4/8-bit, KV-cache, batch generation, export
-10. **Release** – Docker Compose stack, optional Electron
+Notes:
 
----
+- `make test-smoke` is the current reliable demo gate.
+- The broader historical test/lint suite still contains legacy quality debt and is not used as the portfolio readiness gate yet.
+
+## Deployment
+
+Recommended public deployment:
+
+- **GitHub Pages / Vercel / Netlify:** deploy `portfolio-web/` as a static site.
+- **Optional full stack:** deploy FastAPI + React + Redis/Celery with Docker Compose or a platform such as Render/Railway/Fly.
+- **GPU inference:** keep as local/advanced mode unless the host has the required model warehouse and worker setup.
+
+Docker demo assets:
+
+```bash
+docker build -f docker/demo.Dockerfile -t anime-adventure-lab-demo .
+docker build -f docker/demo.backend.Dockerfile -t anime-adventure-lab-demo-api .
+```
+
+## Recording Flow
+
+1. Open `portfolio-web/` and switch through the three showcase scenarios.
+2. Explain the trace tabs: Story, RAG, Agent, T2I.
+3. Run `make test-smoke`.
+4. Run `cd frontend/react && npm run build`.
+5. Close by explaining the split between stable public mock demo and optional real GPU/model mode.
+
+## Current Status
+
+This repo is now organized around a portfolio-first demo path:
+
+- Mock-safe backend startup and smoke tests.
+- Static demo page for screenshots and recordings.
+- React production build path.
+- README and CI aligned with the current project structure.
+
+Remaining non-blocking work:
+
+- Reduce broader lint debt.
+- Expand real model/GPU documentation with exact hardware presets.
+- Add more polished sample stories and generated image assets.
 
 License: Apache-2.0 (TBD).

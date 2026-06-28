@@ -3,179 +3,315 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Anime Adventure Lab — Live Demo</title>
-    <meta name="description" content="Anime Adventure Lab：LLM+RAG+T2I+VLM 故事系統（此線上版本為輕量可操作 demo）。" />
+    <title>Anime Adventure Lab - Portfolio Demo</title>
+    <meta
+      name="description"
+      content="Anime Adventure Lab portfolio demo: LLM story engine, RAG knowledge, agent tools, T2I scene generation, and WorldPack authoring."
+    />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="wrap">
-      <header class="hero">
-        <p class="kicker">Portfolio Live Demo</p>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Portfolio Demo Platform</p>
         <h1>Anime Adventure Lab</h1>
-        <p class="sub">
-          這是線上可操作 demo：提供 <code>/turn</code>（故事回合）與 <code>/txt2img</code>（placeholder 生圖）API。
-          此版本不載入 LLM/RAG/SD 模型，重點展示部署、反向代理與互動流程。
-        </p>
-      </header>
+      </div>
+      <nav class="topnav" aria-label="Demo sections">
+        <a href="#demo">Demo</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#evidence">Evidence</a>
+        <a href="#runbook">Runbook</a>
+      </nav>
+    </header>
 
-      <section class="card">
-        <h2>1) 系統狀態</h2>
-        <div class="row">
-          <button id="btn-health" class="btn">刷新 Health</button>
-          <code class="muted">GET api/v1/health</code>
-        </div>
-        <pre id="health-out" class="pre">點「刷新 Health」測試 API 是否正常。</pre>
+    <main>
+      <section id="demo" class="demo-shell" aria-label="Interactive demo">
+        <aside class="scenario-panel">
+          <div class="panel-heading">
+            <p class="eyebrow">Scenario</p>
+            <h2>Choose a showcase flow</h2>
+          </div>
+          <div class="scenario-list" role="list">
+            <button class="scenario active" data-scenario="neon" type="button">
+              <span>01</span>
+              <strong>Neon Archive Opening</strong>
+              <small>Story turn + WorldPack + T2I scene</small>
+            </button>
+            <button class="scenario" data-scenario="rag" type="button">
+              <span>02</span>
+              <strong>RAG Lore Retrieval</strong>
+              <small>Knowledge hits + citations + rerank trace</small>
+            </button>
+            <button class="scenario" data-scenario="agent" type="button">
+              <span>03</span>
+              <strong>Agent Assisted Choice</strong>
+              <small>Tool plan + state delta + review queue</small>
+            </button>
+          </div>
+
+          <div class="status-strip">
+            <div>
+              <span class="dot ok"></span>
+              Static mock
+            </div>
+            <div>
+              <span class="dot ok"></span>
+              No GPU required
+            </div>
+            <button id="health-check" class="text-button" type="button">Check demo API</button>
+          </div>
+          <pre id="health-output" class="mini-output">This page works without a backend. API check is optional.</pre>
+        </aside>
+
+        <section class="stage" aria-label="Visual novel showcase">
+          <img class="scene-art" src="./assets/neon-market.svg" alt="Stylized neon archive market scene" />
+          <div class="stage-hud">
+            <span id="hud-world">World: Neon Archive</span>
+            <span id="hud-turn">Turn 7</span>
+            <span id="hud-mode">RAG auto</span>
+          </div>
+          <div class="dialogue">
+            <div class="speaker" id="speaker">Archivist Mira</div>
+            <p id="narrative">
+              The archive gate wakes as your token touches the scanner. Three market signs flicker in sequence, and Mira warns that the memory shard is already rewriting nearby records.
+            </p>
+          </div>
+        </section>
+
+        <section class="inspector" aria-label="Pipeline evidence">
+          <div class="metric-row">
+            <div>
+              <strong id="metric-latency">0.12s</strong>
+              <span>mock turn latency</span>
+            </div>
+            <div>
+              <strong id="metric-hits">4</strong>
+              <span>knowledge hits</span>
+            </div>
+            <div>
+              <strong id="metric-tools">2</strong>
+              <span>agent tools</span>
+            </div>
+          </div>
+
+          <div class="tabs" role="tablist" aria-label="Pipeline tabs">
+            <button class="tab active" data-tab="story" type="button">Story</button>
+            <button class="tab" data-tab="rag" type="button">RAG</button>
+            <button class="tab" data-tab="agent" type="button">Agent</button>
+            <button class="tab" data-tab="t2i" type="button">T2I</button>
+          </div>
+          <pre id="trace-output" class="trace"></pre>
+        </section>
       </section>
 
-      <section class="grid">
-        <section class="card">
-          <h2>2) Story Turn（Demo）</h2>
-          <p class="muted">輸入一句話 → 回傳 deterministic narrative + choices（示範故事引擎的 API 介面）。</p>
+      <section id="architecture" class="band">
+        <div class="section-title">
+          <p class="eyebrow">Architecture</p>
+          <h2>What this project demonstrates</h2>
+        </div>
+        <div class="feature-grid">
+          <article>
+            <h3>Story Engine</h3>
+            <p>Session state, choices, memory summaries, relationship changes, save/load, and visual novel playback.</p>
+          </article>
+          <article>
+            <h3>RAG + WorldPack</h3>
+            <p>World-scoped lore ingestion, document metadata, retrieval modes, rerank flags, and citations per turn.</p>
+          </article>
+          <article>
+            <h3>Agent Layer</h3>
+            <p>Tool catalog, assisted decisions, state deltas, world writeback suggestions, and review queue controls.</p>
+          </article>
+          <article>
+            <h3>T2I Pipeline</h3>
+            <p>Scene prompt construction, LoRA/world visual style hooks, background jobs, and mock-safe demo outputs.</p>
+          </article>
+        </div>
+      </section>
 
-          <label class="label">User Input</label>
-          <textarea id="turn-user" class="textarea" rows="5" placeholder="例如：我走進霓虹巷弄，看到一個神秘商人..."></textarea>
-
-          <div class="grid2">
-            <div>
-              <label class="label">Seed（可空）</label>
-              <input id="turn-seed" class="input" placeholder="例如：12345（留空 auto）" />
-            </div>
-            <div>
-              <label class="label">Temperature</label>
-              <input id="turn-temp" class="input" value="0.7" />
-            </div>
+      <section id="evidence" class="band evidence">
+        <div class="section-title">
+          <p class="eyebrow">Demo Evidence</p>
+          <h2>Interview-ready proof points</h2>
+        </div>
+        <div class="evidence-grid">
+          <div class="evidence-item">
+            <span class="badge">Backend</span>
+            <strong>FastAPI smoke gate</strong>
+            <p><code>pytest -m smoke</code> covers story turns, RAG batch upload, World Studio, and job artifacts in mock mode.</p>
           </div>
-
-          <div class="row">
-            <button id="btn-turn" class="btn">送出 Turn</button>
-            <code class="muted">POST api/v1/turn</code>
+          <div class="evidence-item">
+            <span class="badge">Frontend</span>
+            <strong>React/Vite build</strong>
+            <p>The workbench builds as a production bundle and can be shown beside this static portfolio page.</p>
           </div>
-
-          <pre id="turn-out" class="pre">尚未送出。</pre>
-        </section>
-
-        <section class="card">
-          <h2>3) txt2img（Demo）</h2>
-          <p class="muted">輸入 prompt → 產生 deterministic PNG（非 diffusion）。</p>
-
-          <label class="label">Prompt</label>
-          <textarea id="t2i-prompt" class="textarea" rows="4" placeholder="例如：anime portrait, soft lighting, detailed eyes"></textarea>
-
-          <div class="grid2">
-            <div>
-              <label class="label">Seed（可空）</label>
-              <input id="t2i-seed" class="input" placeholder="例如：42（留空 auto）" />
-            </div>
-            <div>
-              <label class="label">Size</label>
-              <div class="row">
-                <input id="t2i-w" class="input" value="640" />
-                <span class="muted">×</span>
-                <input id="t2i-h" class="input" value="640" />
-              </div>
-            </div>
+          <div class="evidence-item">
+            <span class="badge">Deploy</span>
+            <strong>Static-first portfolio</strong>
+            <p>GitHub Pages or Vercel can host this demo without model downloads, GPU scheduling, Redis, or Celery workers.</p>
           </div>
+        </div>
+      </section>
 
-          <div class="row">
-            <button id="btn-t2i" class="btn">生成 PNG</button>
-            <code class="muted">POST api/v1/txt2img</code>
-          </div>
-
-          <div id="t2i-img" class="imgWrap muted">尚未生成。</div>
-          <pre id="t2i-dbg" class="pre">尚未生成。</pre>
-        </section>
+      <section id="runbook" class="band runbook">
+        <div class="section-title">
+          <p class="eyebrow">Recording Flow</p>
+          <h2>Suggested 90-second walkthrough</h2>
+        </div>
+        <ol>
+          <li>Open this page and switch through the three scenarios to show the product value.</li>
+          <li>Show the visual novel stage, then open the trace tabs to explain Story, RAG, Agent, and T2I data flow.</li>
+          <li>Run <code>make test-smoke</code> and <code>cd frontend/react && npm run build</code> as proof that the demo gate passes.</li>
+          <li>Explain that full GPU inference is optional and documented separately; public demo uses stable mock data.</li>
+        </ol>
       </section>
     </main>
 
     <script>
-      const $ = (id) => document.getElementById(id);
-
-      async function apiJson(url, options) {
-        const res = await fetch(url, options);
-        const text = await res.text();
-        try {
-          const data = JSON.parse(text);
-          if (!res.ok) throw Object.assign(new Error("HTTP " + res.status), { data });
-          return data;
-        } catch (e) {
-          throw new Error("Non-JSON response (" + res.status + "): " + text.slice(0, 180));
+      const scenarios = {
+        neon: {
+          hud: ["World: Neon Archive", "Turn 7", "RAG auto"],
+          speaker: "Archivist Mira",
+          narrative:
+            "The archive gate wakes as your token touches the scanner. Three market signs flicker in sequence, and Mira warns that the memory shard is already rewriting nearby records.",
+          metrics: ["0.12s", "4", "2"],
+          traces: {
+            story: {
+              player_input: "Scan the memory token and ask Mira what changed.",
+              choices: ["Inspect the rewritten ledger", "Ask Mira to compare old lore", "Mark the shard as unstable"],
+              state_delta: { flags_added: ["archive_gate_awake"], relationship_mira: "+2" }
+            },
+            rag: {
+              mode: "auto",
+              query: "Neon Archive memory shard market gate",
+              hits: [
+                { doc: "worldpack/neon_archive.md", score: 0.91 },
+                { doc: "lore/memory_shards.md", score: 0.86 }
+              ]
+            },
+            agent: {
+              plan: ["compare_world_flags", "recommend_safe_choice"],
+              tools: ["relationship_state", "world_state"],
+              review_queue: "state_delta pending"
+            },
+            t2i: {
+              prompt: "anime style, neon archive market, glowing gate, two adventurers, cinematic lighting",
+              job: "scene_image completed (mock-safe)"
+            }
+          }
+        },
+        rag: {
+          hud: ["World: Moonlit Library", "Turn 11", "Rerank on"],
+          speaker: "System Narrator",
+          narrative:
+            "Your question pulls four fragments from the restricted stacks. The reranker moves a ritual footnote above a generic bestiary entry, changing the next available clue.",
+          metrics: ["0.18s", "6", "1"],
+          traces: {
+            story: {
+              player_input: "Search the library for the seal's missing phrase.",
+              choices: ["Read the ritual footnote", "Cross-check the bestiary", "Ask the librarian for context"],
+              state_delta: { flags_added: ["seal_phrase_candidate"], intelligence: "+1" }
+            },
+            rag: {
+              mode: "on",
+              rerank: true,
+              hits: [
+                { doc: "ritual_notes.md", score: 0.94 },
+                { doc: "archive_index.json", score: 0.89 },
+                { doc: "bestiary/moon_warden.md", score: 0.72 }
+              ]
+            },
+            agent: {
+              plan: ["summarize_citations"],
+              tools: ["rag_search"],
+              review_queue: "none"
+            },
+            t2i: {
+              prompt: "moonlit library, floating note cards, ritual diagram, quiet suspense",
+              job: "not requested this turn"
+            }
+          }
+        },
+        agent: {
+          hud: ["World: Skyrail Bazaar", "Turn 14", "Agent assist"],
+          speaker: "Tactical Agent",
+          narrative:
+            "The agent flags the bridge route as risky because your stamina is low and the merchant relationship recently improved. It suggests a negotiation path and queues a world update for review.",
+          metrics: ["0.21s", "3", "4"],
+          traces: {
+            story: {
+              player_input: "Find a safe way past the skyrail guards.",
+              choices: ["Negotiate with the merchant", "Sneak across the bridge", "Spend a favor to get a pass"],
+              state_delta: { energy: "-5", flags_added: ["merchant_pass_possible"] }
+            },
+            rag: {
+              mode: "auto",
+              query: "Skyrail guard pass merchant favor",
+              hits: [{ doc: "factions/skyrail_guard.md", score: 0.88 }]
+            },
+            agent: {
+              plan: ["check_relationships", "estimate_risk", "draft_world_writeback"],
+              tools: ["relationship_state", "calculator", "world_state", "rag_search"],
+              review_queue: "world_writeback pending"
+            },
+            t2i: {
+              prompt: "skyrail bazaar, suspended bridge, merchant stall, tense negotiation",
+              job: "queued for async worker"
+            }
+          }
         }
+      };
+
+      let currentScenario = "neon";
+      let currentTab = "story";
+
+      const $ = (selector) => document.querySelector(selector);
+      const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+
+      function render() {
+        const data = scenarios[currentScenario];
+        $("#hud-world").textContent = data.hud[0];
+        $("#hud-turn").textContent = data.hud[1];
+        $("#hud-mode").textContent = data.hud[2];
+        $("#speaker").textContent = data.speaker;
+        $("#narrative").textContent = data.narrative;
+        $("#metric-latency").textContent = data.metrics[0];
+        $("#metric-hits").textContent = data.metrics[1];
+        $("#metric-tools").textContent = data.metrics[2];
+        $("#trace-output").textContent = JSON.stringify(data.traces[currentTab], null, 2);
       }
 
-      async function renderPng(fetchPromise, imgEl, dbgEl) {
-        const started = performance.now();
-        const res = await fetchPromise;
-        const ms = Math.round(performance.now() - started);
-        const bodyPreview = await res.clone().text().catch(() => "");
-        if (!res.ok) {
-          dbgEl.textContent = "HTTP " + res.status + "\\n" + bodyPreview.slice(0, 400);
-          return;
-        }
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        imgEl.innerHTML = "";
-        const img = new Image();
-        img.src = url;
-        img.alt = "output";
-        img.style.maxWidth = "100%";
-        img.style.borderRadius = "14px";
-        img.style.border = "1px solid rgba(255,255,255,0.12)";
-        imgEl.appendChild(img);
-        dbgEl.textContent = JSON.stringify(
-          { contentType: blob.type, sizeBytes: blob.size, elapsedMs: ms, apiElapsedMs: res.headers.get("X-Elapsed-Ms") },
-          null,
-          2
-        );
-      }
+      $$(".scenario").forEach((button) => {
+        button.addEventListener("click", () => {
+          currentScenario = button.dataset.scenario;
+          $$(".scenario").forEach((item) => item.classList.toggle("active", item === button));
+          render();
+        });
+      });
 
-      $("btn-health").addEventListener("click", async () => {
-        $("health-out").textContent = "Loading...";
+      $$(".tab").forEach((button) => {
+        button.addEventListener("click", () => {
+          currentTab = button.dataset.tab;
+          $$(".tab").forEach((item) => item.classList.toggle("active", item === button));
+          render();
+        });
+      });
+
+      $("#health-check").addEventListener("click", async () => {
+        const output = $("#health-output");
+        output.textContent = "Checking api/v1/health...";
         try {
-          const data = await apiJson("api/v1/health");
-          $("health-out").textContent = JSON.stringify(data, null, 2);
-        } catch (e) {
-          $("health-out").textContent = String(e);
+          const response = await fetch("api/v1/health");
+          const text = await response.text();
+          output.textContent = response.ok
+            ? text.slice(0, 280)
+            : `API unavailable (${response.status}). Static demo remains fully usable.`;
+        } catch (error) {
+          output.textContent = "API unavailable. Static demo remains fully usable.";
         }
       });
 
-      $("btn-turn").addEventListener("click", async () => {
-        $("turn-out").textContent = "Loading...";
-        const user = ($("turn-user").value || "").trim();
-        if (!user) {
-          $("turn-out").textContent = "請輸入內容。";
-          return;
-        }
-        const seed = ($("turn-seed").value || "").trim();
-        const temp = ($("turn-temp").value || "0.7").trim();
-        const payload = { user, temperature: Number(temp || 0.7) };
-        if (seed) payload.seed = Number(seed);
-        try {
-          const data = await apiJson("api/v1/turn", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-          $("turn-out").textContent = JSON.stringify(data, null, 2);
-        } catch (e) {
-          $("turn-out").textContent = String(e);
-        }
-      });
-
-      $("btn-t2i").addEventListener("click", async () => {
-        $("t2i-dbg").textContent = "Loading...";
-        const prompt = ($("t2i-prompt").value || "").trim();
-        if (!prompt) {
-          $("t2i-dbg").textContent = "請輸入 prompt。";
-          return;
-        }
-        const form = new FormData();
-        form.append("prompt", prompt);
-        const seed = ($("t2i-seed").value || "").trim();
-        if (seed) form.append("seed", seed);
-        form.append("width", ($("t2i-w").value || "640").trim());
-        form.append("height", ($("t2i-h").value || "640").trim());
-        await renderPng(fetch("api/v1/txt2img", { method: "POST", body: form }), $("t2i-img"), $("t2i-dbg"));
-      });
+      render();
     </script>
   </body>
 </html>

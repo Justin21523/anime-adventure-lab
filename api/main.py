@@ -6,22 +6,32 @@ Main entry point for the API server
 
 import logging
 import uvicorn
-import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from pathlib import Path
 import sys
 import types
+import importlib.machinery
 
-# Inject a minimal torch stub if not available (API uses llama.cpp server, not torch)
-if "torch" not in sys.modules:
+# Inject a minimal torch stub only when PyTorch is genuinely unavailable.
+# API-only/demo containers do not install torch, but transformers expects a
+# module spec when probing optional dependencies.
+try:
+    import torch  # noqa: F401
+except ImportError:
     _fake_torch = types.ModuleType("torch")
+    _fake_torch.__spec__ = importlib.machinery.ModuleSpec("torch", loader=None)
     _fake_cuda = types.SimpleNamespace()
     _fake_cuda.is_available = lambda: False
+    _fake_cuda.device_count = lambda: 0
+    _fake_cuda.get_device_name = lambda *_args, **_kwargs: None
     _fake_torch.cuda = _fake_cuda
+    _fake_torch.backends = types.SimpleNamespace(
+        mps=types.SimpleNamespace(is_available=lambda: False)
+    )
     _fake_torch.__version__ = "2.0.0+cpu"
     _fake_torch.device = types.SimpleNamespace()
     _fake_torch.Tensor = object
@@ -34,11 +44,6 @@ if "torch" not in sys.modules:
     _fake_torch.save = lambda *a, **k: None
     _fake_torch.manual_seed = lambda *a: None
     sys.modules["torch"] = _fake_torch
-
-try:
-    import torch
-except ImportError:
-    pass  # stub is in place
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))

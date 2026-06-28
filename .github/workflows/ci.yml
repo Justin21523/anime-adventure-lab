@@ -1,11 +1,59 @@
-name: CI
-on: [push, pull_request]
+name: Demo CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  AI_CACHE_ROOT: /tmp/anime-adventure-lab/cache
+  AI_MODELS_ROOT: /tmp/anime-adventure-lab/models
+  AI_OUTPUT_ROOT: /tmp/anime-adventure-lab/output
+  AI_DATASETS_ROOT: /tmp/anime-adventure-lab/datasets
+  T2I_MOCK: "1"
+  VLM_MOCK: "1"
+  LLM_MOCK: "1"
+  MODEL_DEVICE: cpu
+  CUDA_VISIBLE_DEVICES: ""
+  JOBS_SYNC_FALLBACK: "1"
+
 jobs:
-  ci:
+  backend-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
-        with: { python-version: "3.10" }
-      - run: pip install -r requirements.txt
-      - run: pytest -q
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install backend smoke dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Prepare AI warehouse roots
+        run: |
+          mkdir -p "$AI_CACHE_ROOT" "$AI_MODELS_ROOT" "$AI_OUTPUT_ROOT" "$AI_DATASETS_ROOT"
+
+      - name: Run smoke tests
+        run: python -m pytest -m smoke -q
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/react/package-lock.json
+
+      - name: Build React app
+        working-directory: frontend/react
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build

@@ -53,6 +53,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _run_jobs_sync_fallback() -> bool:
+    """Default to sync jobs for local/portfolio demo; real worker deploys can opt out."""
+    raw = os.getenv("JOBS_SYNC_FALLBACK", os.getenv("API_SYNC_JOBS", "1"))
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
 # ---------------------------------------------------------------------------
 # Ingestion endpoints
 # ---------------------------------------------------------------------------
@@ -311,23 +317,32 @@ async def upload_document_job(
     job_manager = TrainJobManager()
     job_id = job_manager.create_job("rag_upload", payload, status="queued")
 
-    # Prefer Celery; fallback to sync (dev/test) if dispatch fails.
-    try:
-        from workers.tasks.rag import rag_upload_task
-
-        async_result = rag_upload_task.delay({"job_id": job_id, "payload": payload})
-        try:
-            job_manager.update_job(job_id, celery_task_id=str(async_result.id))
-        except Exception:
-            pass
-    except Exception as exc:  # noqa: BLE001
-        logger.info("Celery dispatch skipped (%s), running sync", exc)
+    # Prefer sync execution for local/portfolio demo. Real worker deployments can
+    # set JOBS_SYNC_FALLBACK=0 to enqueue to Celery instead.
+    if _run_jobs_sync_fallback():
         try:
             from core.rag.job_runner import run_rag_upload_job
 
             run_rag_upload_job(job_id, payload, job_manager=job_manager)
         except Exception:
             pass
+    else:
+        try:
+            from workers.tasks.rag import rag_upload_task
+
+            async_result = rag_upload_task.delay({"job_id": job_id, "payload": payload})
+            try:
+                job_manager.update_job(job_id, celery_task_id=str(async_result.id))
+            except Exception:
+                pass
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Celery dispatch skipped (%s), running sync", exc)
+            try:
+                from core.rag.job_runner import run_rag_upload_job
+
+                run_rag_upload_job(job_id, payload, job_manager=job_manager)
+            except Exception:
+                pass
 
     return {"success": True, "job_id": job_id, "status": "queued"}
 
@@ -390,22 +405,30 @@ async def upload_documents_batch_job(
     job_manager = TrainJobManager()
     job_id = job_manager.create_job("rag_upload", payload, status="queued")
 
-    try:
-        from workers.tasks.rag import rag_upload_task
-
-        async_result = rag_upload_task.delay({"job_id": job_id, "payload": payload})
-        try:
-            job_manager.update_job(job_id, celery_task_id=str(async_result.id))
-        except Exception:
-            pass
-    except Exception as exc:  # noqa: BLE001
-        logger.info("Celery dispatch skipped (%s), running sync", exc)
+    if _run_jobs_sync_fallback():
         try:
             from core.rag.job_runner import run_rag_upload_job
 
             run_rag_upload_job(job_id, payload, job_manager=job_manager)
         except Exception:
             pass
+    else:
+        try:
+            from workers.tasks.rag import rag_upload_task
+
+            async_result = rag_upload_task.delay({"job_id": job_id, "payload": payload})
+            try:
+                job_manager.update_job(job_id, celery_task_id=str(async_result.id))
+            except Exception:
+                pass
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Celery dispatch skipped (%s), running sync", exc)
+            try:
+                from core.rag.job_runner import run_rag_upload_job
+
+                run_rag_upload_job(job_id, payload, job_manager=job_manager)
+            except Exception:
+                pass
 
     return {"success": True, "job_id": job_id, "status": "queued"}
 

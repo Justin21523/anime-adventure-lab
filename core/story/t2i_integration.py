@@ -5,7 +5,7 @@ This module provides the integration layer between the Story Engine and T2I Engi
 enabling automatic scene image generation during story progression.
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 import logging
 from dataclasses import dataclass
 

@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Neon archive market scene</title>
+  <desc id="desc">A stylized anime adventure scene with a neon market, archive gate, and character silhouettes.</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#172033"/>
+      <stop offset="0.48" stop-color="#202846"/>
+      <stop offset="1" stop-color="#101318"/>
+    </linearGradient>
+    <linearGradient id="street" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1f2933"/>
+      <stop offset="0.55" stop-color="#171b22"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+    <linearGradient id="gate" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#51c8b8"/>
+      <stop offset="1" stop-color="#6d7cff"/>
+    </linearGradient>
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="1200" height="720" fill="url(#sky)"/>
+  <path d="M0 560 C230 500 390 532 610 488 C810 448 980 486 1200 420 L1200 720 L0 720 Z" fill="url(#street)"/>
+  <g opacity=".24">
+    <path d="M115 102h144v456H115zM288 158h128v354H288zM905 126h168v408H905zM742 182h116v318H742z" fill="#0b0f18"/>
+    <path d="M130 130h18v34h-18zm58 70h18v34h-18zm134 12h18v34h-18zm630-34h20v36h-20zm72 92h20v36h-20zm-248-22h18v32h-18z" fill="#67e8f9"/>
+    <path d="M228 166h18v34h-18zm122 110h18v34h-18zm588-46h20v36h-20zm92-144h20v36h-20z" fill="#f6c453"/>
+  </g>
+  <g filter="url(#softGlow)">
+    <path d="M470 214 h260 a38 38 0 0 1 38 38 v270 h-76 v-212 a34 34 0 0 0-34-34 H542 a34 34 0 0 0-34 34 v212 h-76 V252 a38 38 0 0 1 38-38z" fill="none" stroke="url(#gate)" stroke-width="14"/>
+    <path d="M520 326h160v18H520zm0 54h160v18H520zm0 54h116v18H520z" fill="#b8fff5" opacity=".8"/>
+  </g>
+  <g>
+    <path d="M164 530h230l-32 74H130z" fill="#131a24" stroke="#2b3849" stroke-width="4"/>
+    <path d="M184 484h188l22 48H164z" fill="#243246"/>
+    <rect x="196" y="500" width="118" height="18" rx="4" fill="#f6c453"/>
+    <rect x="332" y="500" width="34" height="18" rx="4" fill="#51c8b8"/>
+  </g>
+  <g>
+    <path d="M850 516h210l35 82H812z" fill="#121820" stroke="#334155" stroke-width="4"/>
+    <path d="M874 470h176l36 48H838z" fill="#29384b"/>
+    <rect x="900" y="488" width="92" height="16" rx="4" fill="#ec6f86"/>
+    <rect x="1006" y="488" width="28" height="16" rx="4" fill="#6d7cff"/>
+  </g>
+  <g>
+    <ellipse cx="598" cy="626" rx="250" ry="26" fill="#000" opacity=".38"/>
+    <g transform="translate(514 366)">
+      <path d="M52 84c22 0 42 22 42 52v120H10V136c0-30 20-52 42-52z" fill="#20293a"/>
+      <circle cx="52" cy="54" r="42" fill="#f0c6a8"/>
+      <path d="M16 54c8-42 58-64 92-22 4 28-12 48-12 48-10-38-42-34-80-26z" fill="#263142"/>
+      <path d="M22 138h60v120H22z" fill="#43546e"/>
+      <path d="M2 260h100l-14 92H16z" fill="#1f2937"/>
+    </g>
+    <g transform="translate(638 388)">
+      <path d="M42 78c24 0 42 24 42 54v104H0V132c0-30 18-54 42-54z" fill="#33273f"/>
+      <circle cx="42" cy="42" r="38" fill="#e8b18e"/>
+      <path d="M6 38c7-34 46-54 76-28 16 30 0 62 0 62-18-30-48-28-76-34z" fill="#2a1633"/>
+      <path d="M12 126h60v106H12z" fill="#6d7cff"/>
+      <path d="M-8 234h104l-10 96H4z" fill="#151a22"/>
+    </g>
+  </g>
+  <g opacity=".75">
+    <path d="M0 650h1200" stroke="#475569" stroke-width="2"/>
+    <path d="M220 646l-80 74M430 638l-44 82M768 636l56 84M1000 644l86 76" stroke="#2f3d4e" stroke-width="3"/>
+  </g>
+</svg>

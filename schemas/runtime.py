@@ -12,7 +12,10 @@ from pydantic import BaseModel, Field
 
 
 class RuntimePresetLLM(BaseModel):
-    model_name: str = Field(..., min_length=1, description="LLM model id/name")
+    backend: str = Field("transformers", description="LLM backend (transformers|llamacpp)")
+    server_url: Optional[str] = Field(None, description="External llama.cpp/OpenAI-compatible server URL")
+    model_name: str = Field("external-server", min_length=1, description="LLM model id/name")
+    timeout: Optional[int] = Field(None, ge=1, description="Server timeout seconds")
     torch_dtype: str = Field("float16", description="torch dtype (float16|bfloat16|float32)")
     device_map: str = Field("auto", description="Transformers device_map")
     use_quantization: bool = Field(True, description="Whether to use quantization (bitsandbytes)")

@@ -5,7 +5,7 @@ This module converts story scene context into optimized T2I prompts
 for generating anime-style scene illustrations.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import logging
 

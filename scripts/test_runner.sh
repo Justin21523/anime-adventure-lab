@@ -1,5 +1,5 @@
-# scripts/test_runner.sh
 #!/bin/bash
+# scripts/test_runner.sh
 # 測試執行腳本
 
 set -e
@@ -13,7 +13,6 @@ NC='\033[0m' # No Color
 
 # Configuration
 TEST_DIR="tests"
-BACKEND_DIR="backend"
 CACHE_ROOT="${AI_CACHE_ROOT:-/tmp/test_warehouse}"
 CACHE_DIR="${CACHE_ROOT}/cache"
 
@@ -35,6 +34,12 @@ fi
 
 # Export test environment
 export AI_CACHE_ROOT="$CACHE_ROOT"
+export T2I_MOCK="${T2I_MOCK:-1}"
+export VLM_MOCK="${VLM_MOCK:-1}"
+export LLM_MOCK="${LLM_MOCK:-1}"
+export MODEL_DEVICE="${MODEL_DEVICE:-cpu}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"
+export JOBS_SYNC_FALLBACK="${JOBS_SYNC_FALLBACK:-1}"
 export PYTEST_CURRENT_TEST=""
 
 # Function to run tests with timeout
@@ -62,7 +67,7 @@ main() {
     case "$test_mode" in
         "smoke")
             echo -e "${YELLOW}💨 Running smoke tests only${NC}"
-            run_tests "Smoke Tests" "-k 'test_health_check or test_caption_endpoint or test_rag_add_document'" 5
+            run_tests "Smoke Tests" "-m smoke" 5
             total_failures=$?
             ;;
         "unit")
@@ -77,7 +82,7 @@ main() {
             ;;
         "e2e")
             echo -e "${YELLOW}🎯 Running E2E tests only${NC}"
-            run_tests "E2E Tests" "$TEST_DIR/test_e2e_workflows.py" 20
+            run_tests "E2E Tests" "$TEST_DIR/test_e2e_workflow.py $TEST_DIR/test_e2e_complete.py $TEST_DIR/test_integration_end_to_end.py" 20
             total_failures=$?
             ;;
         "all"|*)
@@ -90,7 +95,7 @@ main() {
             run_tests "Integration Tests" "$TEST_DIR/test_api_endpoints.py" 15
             integration_result=$?
 
-            run_tests "E2E Tests" "$TEST_DIR/test_e2e_workflows.py" 20
+            run_tests "E2E Tests" "$TEST_DIR/test_e2e_workflow.py $TEST_DIR/test_e2e_complete.py $TEST_DIR/test_integration_end_to_end.py" 20
             e2e_result=$?
 
             total_failures=$((unit_result + integration_result + e2e_result))

@@ -54,21 +54,21 @@ test-smoke:
 test-cov:
 	@echo "📊 Running tests with coverage..."
 	@mkdir -p coverage
-	@python -m pytest tests/ --cov=backend --cov-report=html:coverage/html --cov-report=term --cov-report=xml:coverage/coverage.xml
+	@python -m pytest tests/ --cov=api --cov=core --cov=workers --cov-report=html:coverage/html --cov-report=term --cov-report=xml:coverage/coverage.xml
 	@echo "📈 Coverage report generated in coverage/ directory"
 
 # Code quality
 lint:
 	@echo "🔍 Running code linting..."
-	@ruff check backend/ tests/ --fix
-	@black --check backend/ tests/
-	@isort --check-only backend/ tests/
+	@ruff check api/ core/ schemas/ workers/ tests/
+	@black --check api/ core/ schemas/ workers/ tests/
+	@isort --check-only api/ core/ schemas/ workers/ tests/
 
 format:
 	@echo "✨ Formatting code..."
-	@black backend/ tests/
-	@isort backend/ tests/
-	@ruff check backend/ tests/ --fix
+	@black api/ core/ schemas/ workers/ tests/
+	@isort api/ core/ schemas/ workers/ tests/
+	@ruff check api/ core/ schemas/ workers/ tests/ --fix
 
 # Cleanup
 clean:

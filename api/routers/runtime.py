@@ -38,12 +38,20 @@ async def list_runtime_presets():
             preset_id = str(item.get("preset_id") or "").strip()
             if not preset_id:
                 continue
+            llm_payload = dict(item.get("llm") or {})
+            if not str(llm_payload.get("model_name") or "").strip():
+                backend = str(llm_payload.get("backend") or "").strip()
+                llm_payload["model_name"] = (
+                    "external-llamacpp-server"
+                    if backend == "llamacpp"
+                    else "Qwen3.6-27B-Q4_K_M.gguf"
+                )
             presets_out.append(
                 RuntimePreset(
                     preset_id=preset_id,
                     name=str(item.get("name") or preset_id),
                     description=str(item.get("description") or ""),
-                    llm=RuntimePresetLLM(**(item.get("llm") or {})),
+                    llm=RuntimePresetLLM(**llm_payload),
                     t2i=RuntimePresetT2I(**(item.get("t2i") or {})),
                 )
             )
@@ -59,4 +67,3 @@ async def list_runtime_presets():
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to list runtime presets: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list runtime presets: {str(exc)}") from exc
-

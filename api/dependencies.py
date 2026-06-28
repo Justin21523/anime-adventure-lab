@@ -8,10 +8,11 @@ Centralized dependency providers for FastAPI routers.
 from __future__ import annotations
 from functools import lru_cache
 from types import SimpleNamespace
-import os, pathlib, torch, logging
+import logging
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from fastapi import Depends, HTTPException
+from fastapi import HTTPException
 
 from core.config import get_config
 from core.shared_cache import get_shared_cache, bootstrap_cache
@@ -52,13 +53,40 @@ class _MinimalT2I:
     def __init__(self):
         self.lora = SimpleNamespace(list=lambda: [])
         self.control = SimpleNamespace(list=lambda: [])
+        self.current_model_id = "mock-sd"
+        self.mock_generation = True
+        self.model_config_manager = SimpleNamespace(list_available_models=lambda: [])
+        self.lora_manager = SimpleNamespace(list_available_loras=lambda: [])
+        self.controlnet_manager = SimpleNamespace(list_available_controlnets=lambda: [])
 
-    async def txt2img(self, prompt: str, **kwargs) -> Dict[str, Any]:
+    async def txt2img(self, prompt: Any, **kwargs) -> Dict[str, Any]:
+        if isinstance(prompt, dict):
+            payload = dict(prompt)
+            prompt_text = str(payload.get("prompt") or "")
+            kwargs = {**payload, **kwargs}
+        else:
+            prompt_text = str(prompt or "")
         return {
             "image_path": "/tmp/mock_txt2img.png",
-            "prompt": prompt,
+            "prompt": prompt_text,
             "model_used": "mock-sd",
+            "images": [],
+            "metadata": {
+                "model_used": "mock-sd",
+                "mock": True,
+                "output_paths": [],
+                "generation_time": 0.0,
+            },
             "parameters": kwargs,
+        }
+
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "loaded": False,
+            "mock_mode": True,
+            "current_model": self.current_model_id,
+            "device": "cpu",
+            "available_models": [],
         }
 
 
