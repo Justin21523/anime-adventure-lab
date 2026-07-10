@@ -33,7 +33,7 @@ checkpoints/
 
 # Cache directories
 ai_warehouse/
-storage/
+/storage/
 cache/
 .cache/
 
