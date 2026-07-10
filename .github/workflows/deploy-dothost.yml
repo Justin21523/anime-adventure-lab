@@ -1,0 +1,88 @@
+name: Deploy SagaForge to dothost
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sagaforge-dothost
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: dothost
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SSH password client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+
+      - name: Build release archive and private environment
+        env:
+          ADMIN_PASSWORD_HASH: ${{ secrets.SAGAFORGE_ADMIN_PASSWORD_HASH }}
+          POSTGRES_PASSWORD: ${{ secrets.SAGAFORGE_POSTGRES_PASSWORD }}
+          API_SECRET_KEY: ${{ secrets.SAGAFORGE_API_SECRET_KEY }}
+          SESSION_SECRET: ${{ secrets.SAGAFORGE_SESSION_SECRET }}
+          MINIO_PASSWORD: ${{ secrets.SAGAFORGE_MINIO_PASSWORD }}
+        run: |
+          tar --exclude=.git --exclude=.venv --exclude=node_modules --exclude=dist -czf /tmp/sagaforge-release.tar.gz .
+          cat > /tmp/sagaforge.env <<EOF
+          COMPOSE_PROJECT_NAME=sagaforge-deploy
+          POSTGRES_DB=sagaforge
+          POSTGRES_USER=saga
+          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+          DATABASE_URL=postgresql://saga:${POSTGRES_PASSWORD}@postgres:5432/sagaforge
+          API_SECRET_KEY=${API_SECRET_KEY}
+          API_SESSION_SECRET=${SESSION_SECRET}
+          API_ADMIN_USERNAME=admin
+          API_ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH}
+          MINIO_USER=sagaforge
+          MINIO_PASSWORD=${MINIO_PASSWORD}
+          API_PORT=18011
+          FRONTEND_PORT=18012
+          PORTFOLIO_PORT=18013
+          AI_CACHE_ROOT=/home/neojustin/sagaforge-warehouse/cache
+          AI_MODELS_ROOT=/home/neojustin/sagaforge-warehouse/models
+          AI_OUTPUT_ROOT=/home/neojustin/sagaforge-warehouse/output
+          STORY_RUNTIME_MODE=deterministic
+          RAG_RUNTIME_MODE=deterministic
+          WORKER_PROFILE=core
+          PORTFOLIO_GATEWAY_NETWORK=justin-portfolio_default
+          EOF
+
+      - name: Upload release
+        env:
+          SSHPASS: ${{ secrets.DOTHOST_PASSWORD }}
+        run: |
+          scp_opts=(-P 2965 -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=10)
+          sshpass -e scp "${scp_opts[@]}" /tmp/sagaforge-release.tar.gz neojustin@neojustin.dothost.net:/home/neojustin/
+          sshpass -e scp "${scp_opts[@]}" /tmp/sagaforge.env neojustin@neojustin.dothost.net:/home/neojustin/sagaforge.env
+
+      - name: Activate release and gateway routes
+        env:
+          SSHPASS: ${{ secrets.DOTHOST_PASSWORD }}
+        run: |
+          sshpass -e ssh -p 2965 -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=10 neojustin@neojustin.dothost.net 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          release="$HOME/anime-adventure-lab"
+          mkdir -p "$release" "$HOME/sagaforge-warehouse/cache" "$HOME/sagaforge-warehouse/models" "$HOME/sagaforge-warehouse/output"
+          find "$release" -mindepth 1 -maxdepth 1 ! -name .env.remote -exec rm -rf {} +
+          tar -xzf "$HOME/sagaforge-release.tar.gz" -C "$release"
+          mv "$HOME/sagaforge.env" "$release/.env.remote"
+          docker network inspect justin-portfolio_default >/dev/null
+          cd "$release"
+          docker compose --env-file .env.remote -f docker-compose.prod.yml -f docker-compose.remote.yml up -d --build
+          python scripts/configure_dothost_gateway.py "$HOME/justin-portfolio/docker/nginx.conf"
+          cd "$HOME/justin-portfolio"
+          docker compose up -d --build --no-deps web
+          docker compose ps
+          REMOTE
+
+      - name: Verify public deployment
+        run: |
+          timeout 240 bash -c 'until curl -fsS https://neojustin.dothost.net/p/anime-adventure-lab/api/v2/system/status; do sleep 5; done'
+          curl -fsS https://neojustin.dothost.net/p/anime-adventure-lab/ | grep -q 'Verified AI Backend Case Study'
+          curl -fsS https://neojustin.dothost.net/p/anime-adventure-lab/app/ | grep -q 'id="root"'
