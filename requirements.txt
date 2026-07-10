@@ -67,3 +67,4 @@ pre-commit>=3.5.0
 # codeformer>=0.1.0
 # facelib
 # Pillow>=10.0.0   # already included
+requests>=2.31,<3

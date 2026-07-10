@@ -705,7 +705,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -2468,6 +2468,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rank-bm25" },
     { name = "redis" },
+    { name = "requests" },
     { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -2521,6 +2522,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "rank-bm25", specifier = ">=0.2.2,<1" },
     { name = "redis", specifier = ">=5,<7" },
+    { name = "requests", specifier = ">=2.31,<3" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.6,<1" },
     { name = "sentence-transformers", marker = "extra == 'ai'", specifier = ">=3,<6" },
     { name = "sqlalchemy", specifier = ">=2,<3" },
