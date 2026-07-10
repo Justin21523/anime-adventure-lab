@@ -12,6 +12,7 @@ Provides endpoints for:
 
 import asyncio
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -49,6 +50,15 @@ _agent_instance: Optional[SimpleReasoningAgent] = None
 _advanced_agent_instance: Optional[AdvancedReasoningAgent] = None
 _multi_step_processor: Optional[MultiStepProcessor] = None
 _story_manager: Optional[StoryAgentManager] = None
+
+
+def _require_generic_tool_api() -> None:
+    enabled = os.getenv("AGENT_ENABLE_GENERIC_TOOL_API", "0").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Generic agent tool execution is disabled; use domain-specific agent endpoints",
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -306,6 +316,7 @@ async def list_available_tools():
 @router.post("/agent/tools/call", response_model=AgentToolCallResponse)
 async def call_tool(request: AgentToolCallRequest):
     """Execute a single tool call."""
+    _require_generic_tool_api()
     try:
         registry = get_tool_registry()
         executor = get_agent_executor()
@@ -335,6 +346,7 @@ async def call_tool(request: AgentToolCallRequest):
 @router.post("/agent/tools/batch")
 async def call_multiple_tools(tool_calls: List[Dict[str, Any]]):
     """Execute multiple tools in parallel."""
+    _require_generic_tool_api()
     try:
         executor = get_agent_executor()
         registry = get_tool_registry()

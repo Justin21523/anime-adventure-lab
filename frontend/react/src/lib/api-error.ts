@@ -4,23 +4,29 @@
  */
 
 export interface ApiErrorResponse {
-  error_code: string
-  message: string
-  details?: any
+  error_code?: string
+  code?: string
+  message?: string
+  detail?: string
+  details?: unknown
+  errors?: unknown
+  request_id?: string
   status_code?: number
 }
 
 export class AppError extends Error {
   public readonly errorCode: string
-  public readonly details?: any
+  public readonly details?: unknown
   public readonly statusCode: number
+  public readonly requestId?: string
 
   constructor(response: ApiErrorResponse) {
-    super(response.message)
+    super(response.message || response.detail || 'Request failed')
     this.name = 'AppError'
-    this.errorCode = response.error_code
-    this.details = response.details
+    this.errorCode = response.error_code || response.code || 'UNKNOWN_ERROR'
+    this.details = response.details || response.errors
     this.statusCode = response.status_code || 500
+    this.requestId = response.request_id
   }
 
   /**
@@ -56,27 +62,34 @@ export class AppError extends Error {
 /**
  * Type guard for API error response
  */
-export function isApiError(error: any): error is ApiErrorResponse {
+export function isApiError(error: unknown): error is ApiErrorResponse {
   return (
-    error &&
+    !!error &&
     typeof error === 'object' &&
-    'error_code' in error &&
-    'message' in error
+    ('error_code' in error || 'code' in error) &&
+    ('message' in error || 'detail' in error)
   )
 }
 
 /**
  * Handle axios error and convert to AppError
  */
-export function handleApiError(error: any): AppError {
-  if (error.response?.data && isApiError(error.response.data)) {
-    return new AppError(error.response.data)
+export function handleApiError(error: unknown): AppError {
+  const candidate = error as {
+    response?: { data?: unknown; status?: number }
+    message?: string
+  }
+  if (candidate.response?.data && isApiError(candidate.response.data)) {
+    return new AppError({
+      ...candidate.response.data,
+      status_code: candidate.response.status,
+    })
   }
 
   // Fallback for non-API errors
   return new AppError({
     error_code: 'UNKNOWN_ERROR',
-    message: error.message || 'An unknown error occurred',
-    status_code: error.response?.status || 500,
+    message: candidate.message || 'An unknown error occurred',
+    status_code: candidate.response?.status || 500,
   })
 }

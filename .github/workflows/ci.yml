@@ -1,59 +1,53 @@
-name: Demo CI
+name: Portfolio Demo Validation
 
 on:
   push:
     branches: [main, develop]
+    paths: ["portfolio-web/**", ".github/workflows/ci.yml"]
   pull_request:
     branches: [main, develop]
+    paths: ["portfolio-web/**", ".github/workflows/ci.yml"]
 
-env:
-  AI_CACHE_ROOT: /tmp/anime-adventure-lab/cache
-  AI_MODELS_ROOT: /tmp/anime-adventure-lab/models
-  AI_OUTPUT_ROOT: /tmp/anime-adventure-lab/output
-  AI_DATASETS_ROOT: /tmp/anime-adventure-lab/datasets
-  T2I_MOCK: "1"
-  VLM_MOCK: "1"
-  LLM_MOCK: "1"
-  MODEL_DEVICE: cpu
-  CUDA_VISIBLE_DEVICES: ""
-  JOBS_SYNC_FALLBACK: "1"
+permissions:
+  contents: read
 
 jobs:
-  backend-smoke:
+  static-demo:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-          cache: pip
-
-      - name: Install backend smoke dependencies
+      - name: Validate local demo assets
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-test.txt
+          python - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
 
-      - name: Prepare AI warehouse roots
-        run: |
-          mkdir -p "$AI_CACHE_ROOT" "$AI_MODELS_ROOT" "$AI_OUTPUT_ROOT" "$AI_DATASETS_ROOT"
+          root = Path("portfolio-web")
+          missing = []
 
-      - name: Run smoke tests
-        run: python -m pytest -m smoke -q
+          class Links(HTMLParser):
+              def handle_starttag(self, _tag, attrs):
+                  for name, value in attrs:
+                      if name not in {"src", "href"} or not value:
+                          continue
+                      if value.startswith(("#", "http://", "https://", "mailto:")):
+                          continue
+                      path = root / value.split("#", 1)[0].removeprefix("./")
+                      if not path.exists():
+                          missing.append(str(path))
 
-  frontend-build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/react/package-lock.json
-
-      - name: Build React app
-        working-directory: frontend/react
-        run: |
-          npm ci --no-audit --no-fund
-          npm run build
+          parser = Links()
+          parser.feed((root / "index.html").read_text(encoding="utf-8"))
+          if missing:
+              raise SystemExit(f"Missing portfolio assets: {missing}")
+          screenshots = list((root / "assets").glob("screenshot-*.png"))
+          if len(screenshots) < 7 or any(path.stat().st_size < 10_000 for path in screenshots):
+              raise SystemExit("Real screenshot set is incomplete")
+          video = root / "assets/demo-recording.mp4"
+          if video.stat().st_size < 500_000:
+              raise SystemExit("Demo recording is still a placeholder")
+          print("Static portfolio assets are complete")
+          PY

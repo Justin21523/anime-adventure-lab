@@ -7,6 +7,7 @@ Centralized router registration and imports
 from __future__ import annotations
 
 import logging
+import os
 from importlib import import_module
 
 from fastapi import APIRouter
@@ -33,32 +34,40 @@ def _load_router(module_name: str) -> APIRouter:
         return APIRouter()
 
 
-caption_router = _load_router("caption")
-vqa_router = _load_router("vqa")
+def _load_experimental_router(module_name: str) -> APIRouter:
+    enabled = os.getenv("ENABLE_EXPERIMENTAL_ROUTERS", "0").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        logger.info("Experimental router %s is disabled", module_name)
+        return APIRouter()
+    return _load_router(module_name)
+
+
+caption_router = _load_experimental_router("caption")
+vqa_router = _load_experimental_router("vqa")
 chat_router = _load_router("chat")
 rag_router = _load_router("rag")
 agent_router = _load_router("agent")
 game_router = _load_router("game")
 health_router = _load_router("health")
 admin_router = _load_router("admin")
-batch_router = _load_router("batch")
-controlnet_router = _load_router("controlnet")
-export_router = _load_router("export")
-finetune_router = _load_router("finetune")
+batch_router = _load_experimental_router("batch")
+controlnet_router = _load_experimental_router("controlnet")
+export_router = _load_experimental_router("export")
+finetune_router = _load_experimental_router("finetune")
 jobs_router = _load_router("jobs")
-llm_router = _load_router("llm")
-lora_router = _load_router("lora")
+llm_router = _load_experimental_router("llm")
+lora_router = _load_experimental_router("lora")
 queue_router = _load_router("queue")
-runtime_router = _load_router("runtime")
-monitoring_router = _load_router("monitoring")
-performance_router = _load_router("performance")
-safety_router = _load_router("safety")
+runtime_router = _load_experimental_router("runtime")
+monitoring_router = _load_experimental_router("monitoring")
+performance_router = _load_experimental_router("performance")
+safety_router = _load_experimental_router("safety")
 story_router = _load_router("story")
-t2i_router = _load_router("t2i")
-vlm_router = _load_router("vlm")
+t2i_router = _load_experimental_router("t2i")
+vlm_router = _load_experimental_router("vlm")
 worlds_router = _load_router("worlds")
-datasets_router = _load_router("datasets")
-models_router = _load_router("models")
+datasets_router = _load_experimental_router("datasets")
+models_router = _load_experimental_router("models")
 ws_router = _load_router("ws")
 
 __all__ = [

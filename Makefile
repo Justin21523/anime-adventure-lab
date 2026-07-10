@@ -1,7 +1,13 @@
 # Makefile
 # 測試和開發工具快捷指令
 
-.PHONY: help test test-unit test-integration test-e2e test-smoke test-cov lint format clean install
+.PHONY: help test test-unit test-integration test-e2e test-smoke test-cov lint format clean install demo-up demo-seed demo-e2e demo-benchmark portfolio-evidence demo-capture demo-down deploy-up deploy-status deploy-logs deploy-down
+
+DEMO_PROJECT ?= sagaforge-evidence
+DEMO_REPORT_DIR ?= reports
+DEMO_COMPOSE = docker compose -p $(DEMO_PROJECT) -f docker-compose.prod.yml -f docker-compose.demo.yml
+DEPLOY_ENV ?= .env.deploy
+DEPLOY_COMPOSE = docker compose --env-file $(DEPLOY_ENV) -f docker-compose.prod.yml -f docker-compose.demo.yml
 
 # Default target
 help:
@@ -80,3 +86,38 @@ clean:
 	@find . -type d -name __pycache__ -delete
 	@find . -type f -name "*.pyc" -delete
 	@echo "✅ Cleanup completed"
+
+demo-up:
+	$(DEMO_COMPOSE) up -d --build --wait
+
+demo-seed:
+	$(DEMO_COMPOSE) exec -T api python scripts/seed_demo.py --apply --reset
+
+demo-e2e:
+	@mkdir -p $(DEMO_REPORT_DIR)
+	DEMO_API_KEY=$${API_SECRET_KEY:?API_SECRET_KEY is required} python scripts/e2e_portfolio.py --compose-project $(DEMO_PROJECT) --output $(DEMO_REPORT_DIR)/e2e.json
+
+demo-benchmark:
+	@mkdir -p $(DEMO_REPORT_DIR)
+	DEMO_API_KEY=$${API_SECRET_KEY:?API_SECRET_KEY is required} python scripts/benchmark_demo.py > $(DEMO_REPORT_DIR)/benchmark.json
+
+portfolio-evidence:
+	python scripts/generate_portfolio_evidence.py --coverage $(DEMO_REPORT_DIR)/coverage.json --junit $(DEMO_REPORT_DIR)/junit.xml --benchmark $(DEMO_REPORT_DIR)/benchmark.json --e2e $(DEMO_REPORT_DIR)/e2e.json
+
+demo-capture:
+	cd frontend/react && npm run capture:demo
+
+demo-down:
+	$(DEMO_COMPOSE) down -v --remove-orphans
+
+deploy-up:
+	$(DEPLOY_COMPOSE) up -d --build --wait
+
+deploy-status:
+	$(DEPLOY_COMPOSE) ps
+
+deploy-logs:
+	$(DEPLOY_COMPOSE) logs --tail=200
+
+deploy-down:
+	$(DEPLOY_COMPOSE) down --remove-orphans

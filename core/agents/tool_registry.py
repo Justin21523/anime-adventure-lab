@@ -12,9 +12,19 @@ from pydantic import BaseModel, Field
 from dataclasses import dataclass, field
 from pathlib import Path
 import inspect
+import os
 from functools import wraps
 
 logger = logging.getLogger(__name__)
+
+
+def _file_tools_enabled() -> bool:
+    return os.getenv("AGENT_ENABLE_FILE_TOOLS", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 class ToolParameter(BaseModel):
@@ -91,6 +101,11 @@ class ToolRegistry:
 
             for tool_config in agent_config["tools"]:
                 try:
+                    if (
+                        tool_config.get("category") == "file_system"
+                        and not _file_tools_enabled()
+                    ):
+                        continue
                     metadata = ToolMetadata(
                         name=tool_config["name"],
                         description=tool_config["description"],
@@ -362,6 +377,15 @@ class ToolRegistry:
             ),
         ]:
             try:
+                if name in {
+                    "file_list",
+                    "file_read",
+                    "file_write",
+                    "file_exists",
+                    "create_directory",
+                    "file_ops",
+                } and not _file_tools_enabled():
+                    continue
                 _register_if_needed(name, func, desc, params)
             except Exception as e:
                 logger.error(f"Failed to register tool {name}: {e}")

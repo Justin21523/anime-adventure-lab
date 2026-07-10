@@ -4,26 +4,46 @@ Configuration Management
 Loads YAML configs with environment variable overrides
 """
 
-import os
 import yaml
 import logging
-import torch
+import json
+import os
+from datetime import datetime, timezone
+
+try:
+    import torch
+except ImportError:  # lightweight API profile
+    torch = None  # type: ignore[assignment]
 from pathlib import Path
-from typing import List, Dict, Any, Optional, NamedTuple
-from dataclasses import dataclass
-from pydantic import Field
+from typing import List, Dict, Any, Optional
+from pydantic import AliasChoices, Field
 from pydantic_settings import SettingsConfigDict, BaseSettings
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class JsonLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        for name in ["request_id", "method", "path", "status_code", "duration_ms", "job_id"]:
+            value = getattr(record, name, None)
+            if value is not None:
+                payload[name] = value
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
 
 
 def get_optimal_device():
     """獲取最佳可用設備"""
-    if torch.cuda.is_available():
+    if torch is not None and torch.cuda.is_available():
         return "cuda"
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    elif torch is not None and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return "mps"
     else:
         return "cpu"
@@ -37,9 +57,7 @@ class APIConfig(BaseSettings):
     host: str = Field(default="0.0.0.0", description="API host")
     port: int = Field(default=8000, description="API port")
     prefix: str = Field(default="/api/v1", description="API PREFIX")
-    cors_origins: str = Field(
-        default="http://localhost:3000", description="CORS origins"
-    )
+    cors_origins: str = Field(default="http://localhost:3000", description="CORS origins")
     debug: bool = Field(default=False, description="Debug mode")
     max_workers: int = Field(default=2, description="Max concurrent workers")
     request_timeout: int = Field(default=300, description="Request timeout seconds")
@@ -55,13 +73,12 @@ class ModelConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MODEL_")
 
     # GPU/Device settings
-    cuda_visible_devices: str = Field(default="0", env="CUDA_VISIBLE_DEVICES")  # type: ignore
-    device: str = Field(
-        default_factory=get_optimal_device, description="Device mapping strategy"
+    cuda_visible_devices: str = Field(
+        default="0",
+        validation_alias=AliasChoices("CUDA_VISIBLE_DEVICES", "MODEL_CUDA_VISIBLE_DEVICES"),
     )
-    device_map: str = Field(
-        default="auto", description="Model device mapping"
-    )
+    device: str = Field(default_factory=get_optimal_device, description="Device mapping strategy")
+    device_map: str = Field(default="auto", description="Model device mapping")
     torch_dtype: str = Field(default="float16", description="Default torch dtype")
     max_batch_size: int = Field(default=4, description="Max inference batch size")
 
@@ -71,16 +88,12 @@ class ModelConfig(BaseSettings):
     # Memory optimization
     use_4bit_loading: bool = Field(default=True, description="Use 4-bit quantization")
     use_fp16: bool = True
-    use_gradient_checkpointing: bool = Field(
-        default=True, description="Use gradient checkpointing"
-    )
+    use_gradient_checkpointing: bool = Field(default=True, description="Use gradient checkpointing")
     use_xformers: bool = Field(default=False, description="Use xformers attention")
     max_memory_gb: float = Field(default=8.0, description="Max VRAM usage in GB")
 
     # Performance settings
-    enable_attention_slicing: bool = Field(
-        default=True, description="Enable attention slicing"
-    )
+    enable_attention_slicing: bool = Field(default=True, description="Enable attention slicing")
     enable_vae_slicing: bool = Field(default=True, description="Enable VAE slicing")
     enable_cpu_offload: bool = Field(default=True, description="Enable CPU offload")
 
@@ -110,9 +123,7 @@ class ModelConfig(BaseSettings):
         default="Qwen3.6-27B-Q4_K_M.gguf",
         description="VQA model",
     )
-    chat_model: str = Field(
-        default="Qwen3.6-27B-Q4_K_M.gguf", description="Chat model (llama.cpp)"
-    )
+    chat_model: str = Field(default="Qwen3.6-27B-Q4_K_M.gguf", description="Chat model (llama.cpp)")
     embedding_model: str = Field(
         default="/mnt/c/ai_models/language/sentence_transformers/bge-m3",
         description="Embedding model",
@@ -148,15 +159,11 @@ class SafetyConfig(BaseSettings):
     nsfw_threshold: float = Field(default=0.7, description="NSFW detection threshold")
 
     # Face detection 設定
-    enable_face_detection: bool = Field(
-        default=False, description="Enable face detection"
-    )
+    enable_face_detection: bool = Field(default=False, description="Enable face detection")
     enable_face_blur: bool = Field(default=False, description="Enable face blurring")
 
     # Text filtering 設定
-    enable_text_filter: bool = Field(
-        default=True, description="Enable text safety filtering"
-    )
+    enable_text_filter: bool = Field(default=True, description="Enable text safety filtering")
     auto_filter_text: bool = Field(default=False, description="Auto filter unsafe text")
     allow_negative_filtering: bool = Field(
         default=True, description="Allow negative prompt filtering"
@@ -167,17 +174,13 @@ class SafetyConfig(BaseSettings):
     max_guidance_scale: float = Field(default=20.0, description="Max guidance scale")
     max_resolution: int = Field(default=1024, description="Max image resolution")
     max_prompt_length: int = Field(default=500, description="Max prompt length")
-    max_negative_prompt_length: int = Field(
-        default=300, description="Max negative prompt length"
-    )
+    max_negative_prompt_length: int = Field(default=300, description="Max negative prompt length")
 
     # 安全檢查設定
     blocked_terms_file: Optional[str] = Field(
         default=None, description="Path to blocked terms file"
     )
-    toxicity_threshold: float = Field(
-        default=0.8, description="Toxicity detection threshold"
-    )
+    toxicity_threshold: float = Field(default=0.8, description="Toxicity detection threshold")
     enable_watermark: bool = Field(default=False, description="Enable watermarking")
     blocked_terms: str = Field(default="", description="Comma-separated blocked terms")
 
@@ -194,26 +197,18 @@ class RAGConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="RAG_")
 
     # Chunking
-    chunk_size: int = Field(
-        default=700, description="Chunk size in characters (Chinese)"
-    )
+    chunk_size: int = Field(default=700, description="Chunk size in characters (Chinese)")
     chunk_overlap: int = Field(default=120, description="Chunk overlap in characters")
 
     # Retrieval
     top_k: int = Field(default=8, description="Top-K retrieval results")
     enable_rerank: bool = Field(default=False, description="Enable reranker stage")
-    rerank_top_k: int = Field(
-        default=50, description="Rerank top-K before final selection"
-    )
-    hybrid_alpha: float = Field(
-        default=0.7, description="Semantic vs BM25 weight (0.0-1.0)"
-    )
+    rerank_top_k: int = Field(default=50, description="Rerank top-K before final selection")
+    hybrid_alpha: float = Field(default=0.7, description="Semantic vs BM25 weight (0.0-1.0)")
 
     # Models
     embedding_model: str = Field(default="BAAI/bge-m3", description="Embedding model")
-    reranker_model: str = Field(
-        default="BAAI/bge-reranker-v2-m3", description="Reranker model"
-    )
+    reranker_model: str = Field(default="BAAI/bge-reranker-v2-m3", description="Reranker model")
 
     # Runtime
     device: str = Field(
@@ -232,7 +227,10 @@ class DatabaseConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="DB_")
 
-    url: str = Field(default="sqlite:///./saga_forge.db", env="DATABASE_URL")  # type: ignore
+    url: str = Field(
+        default="sqlite:///./saga_forge.db",
+        validation_alias=AliasChoices("DATABASE_URL", "DB_URL"),
+    )
     echo: bool = Field(default=False, description="Echo SQL queries")
 
 
@@ -242,15 +240,23 @@ class CacheConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_")
 
     root: str = Field(
-        default="/mnt/c/ai_cache", env="AI_CACHE_ROOT"
-    )  # type: ignore
+        default="/mnt/c/ai_cache",
+        validation_alias=AliasChoices("AI_CACHE_ROOT", "CACHE_ROOT"),
+    )
     redis_enable: bool = Field(default=True, description="REDIS enable")
-    redis_url: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")  # type: ignore
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        validation_alias=AliasChoices("REDIS_URL", "CACHE_REDIS_URL"),
+    )
     celery_broker_url: str = Field(
-        default="redis://localhost:6379/0", description="CELERY_BROKER_URL"
+        default="redis://localhost:6379/0",
+        validation_alias=AliasChoices("CELERY_BROKER_URL", "CACHE_CELERY_BROKER_URL"),
+        description="CELERY_BROKER_URL",
     )
     celery_result_backend: str = Field(
-        default="redis://localhost:6379/0", description="CELERY_RESULT_BACKEND"
+        default="redis://localhost:6379/0",
+        validation_alias=AliasChoices("CELERY_RESULT_BACKEND", "CACHE_CELERY_RESULT_BACKEND"),
+        description="CELERY_RESULT_BACKEND",
     )
     memory_ttl_minutes: int = Field(default=60, description="Memory cache TTL")
     model_cache_size_gb: int = Field(default=10, description="Model cache size limit")
@@ -272,9 +278,7 @@ class AppConfig:
         self.models = self.model
         # Ensure precision attribute exists for legacy callers (ModelConfig is frozen)
         if not hasattr(self.model, "precision"):
-            object.__setattr__(
-                self.model, "precision", getattr(self.model, "torch_dtype", "fp16")
-            )
+            object.__setattr__(self.model, "precision", getattr(self.model, "torch_dtype", "fp16"))
         # Provide a minimal performance namespace expected by some modules
         from types import SimpleNamespace
 
@@ -452,21 +456,29 @@ def setup_logging(config: Optional[AppConfig] = None) -> None:
 
     log_config = config.get("logging", {})
 
+    level_name = os.getenv("LOG_LEVEL", log_config.get("level", "INFO"))
+    configured_format = str(log_config.get("format", "text"))
+    format_mode = os.getenv("LOG_FORMAT", configured_format).strip().lower()
+    stream = logging.StreamHandler()
+    if format_mode == "json":
+        stream.setFormatter(JsonLogFormatter())
+    else:
+        text_format = configured_format
+        if "%" not in text_format:
+            text_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        stream.setFormatter(logging.Formatter(text_format))
+    handlers: list[logging.Handler] = [stream]
+    log_file = os.getenv("LOG_FILE", "").strip()
+    if log_file:
+        handlers.append(logging.FileHandler(log_file))
     logging.basicConfig(
-        level=getattr(logging, log_config.get("level", "INFO")),
-        format=log_config.get(
-            "format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        ),
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(log_config.get("file", "/tmp/multi-modal-lab.log")),
-        ],
+        level=getattr(logging, str(level_name).upper(), logging.INFO),
+        handlers=handlers,
+        force=True,
     )
 
 
 if __name__ == "__main__":
     # Test configuration
     config = get_config()
-    import json
-
     print(json.dumps(config.get_summary(), indent=2))

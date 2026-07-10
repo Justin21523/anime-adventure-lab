@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-10T17:09:58.484482+00:00",
+  "source_fingerprint": "6abe6f1ee37b79bf9b14a4351bb8e33cdd52c7d0d243cf1d70971521a2cb5bef",
+  "verified": true,
+  "tests": {
+    "tests": 27,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "coverage": {
+    "percent": 85.12,
+    "scope": "refactored v2 core"
+  },
+  "migration_head": "20260710_03",
+  "e2e": {
+    "schema_version": 1,
+    "generated_at": "2026-07-10T13:54:52.531505+00:00",
+    "profile": "deterministic-compose",
+    "passed": true,
+    "duration_ms": 11349.7,
+    "checks": {
+      "world_created": true,
+      "document_indexed": true,
+      "durable_while_worker_stopped": true,
+      "story_completed_after_worker_restart": true,
+      "rag_citation_persisted": true,
+      "human_review_versioned": true,
+      "event_chain_persisted": true
+    },
+    "evidence": {
+      "job_id": "4b0f2874-7913-434a-8921-126ce9f3ef6e",
+      "attempt_count": 1,
+      "event_types": [
+        "queued",
+        "dispatch_succeeded",
+        "claimed",
+        "progress_updated",
+        "progress_updated",
+        "completed"
+      ],
+      "citation": {
+        "filename": "verified-lore.md",
+        "chunk_id": "ebd69aaf-3f4d-4b74-b8ae-201ecd8476c9",
+        "score": 0.4714
+      },
+      "world_version_after_review": 2
+    }
+  },
+  "benchmark": {
+    "iterations": 3,
+    "story_turn_median_ms": 2457.4,
+    "document_index_median_ms": 2460.8,
+    "profile": "deterministic"
+  },
+  "artifacts": {
+    "screenshots": 9,
+    "demo_video": true
+  }
+}

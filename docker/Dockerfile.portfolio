@@ -1,0 +1,6 @@
+FROM nginx:1.25-alpine
+
+COPY portfolio-web/ /usr/share/nginx/html/
+
+HEALTHCHECK --interval=15s --timeout=3s --retries=5 \
+  CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1

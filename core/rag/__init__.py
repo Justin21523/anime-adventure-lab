@@ -1,80 +1,64 @@
-# core/rag/__init__.py
+"""RAG package with dependency-safe lazy exports.
+
+Importing a lightweight helper such as ``core.rag.context_retrieval`` must not
+eagerly import sentence-transformers, FAISS, or model runtimes.  Runtime-heavy
+objects are resolved only when their public export is actually requested.
 """
-RAG (Retrieval Augmented Generation) Module
 
-提供中英文混合內容的檢索增強生成功能
-"""
+from __future__ import annotations
 
-from .engine import (
-    ChineseRAGEngine,
-    get_rag_engine,
-    DocumentMemory,
-    Document,
-    DocumentMetadata,
-    SearchResult,
-    ChunkResult,
-)
+from importlib import import_module
+from typing import Any
 
-from .document_processor import DocumentProcessor, ProcessedDocument
 
-from .vector_store import VectorStore, VectorMetadata, HybridVectorStore
-
-from .retriever import (
-    BaseRetriever,
-    SemanticRetriever,
-    BM25Retriever,
-    HybridRetriever,
-    AdvancedRetriever,
-    RetrievalResult,
-    RetrievalQuery,
-)
-
-from .embeddings import (
-    BaseEmbeddingModel,
-    SentenceTransformerEmbedding,
-    TransformerEmbedding,
-    EmbeddingModelFactory,
-    EmbeddingManager,
-    get_embedding_manager,
-    encode_text,
-    get_embedding_dimension,
-)
-
-__all__ = [
-    # Engine components
-    "ChineseRAGEngine",
-    "get_rag_engine",
-    "DocumentMemory",
-    "Document",
-    "DocumentMetadata",
-    "SearchResult",
-    "ChunkResult",
+_EXPORTS = {
+    # Engine
+    "ChineseRAGEngine": (".engine", "ChineseRAGEngine"),
+    "get_rag_engine": (".engine", "get_rag_engine"),
+    "DocumentMemory": (".engine", "DocumentMemory"),
+    "Document": (".engine", "Document"),
+    "DocumentMetadata": (".engine", "DocumentMetadata"),
+    "SearchResult": (".engine", "SearchResult"),
+    "ChunkResult": (".engine", "ChunkResult"),
     # Document processing
-    "DocumentProcessor",
-    "ProcessedDocument",
+    "DocumentProcessor": (".document_processor", "DocumentProcessor"),
+    "ProcessedDocument": (".document_processor", "ProcessedDocument"),
     # Vector storage
-    "VectorStore",
-    "VectorMetadata",
-    "HybridVectorStore",
+    "VectorStore": (".vector_store", "VectorStore"),
+    "VectorMetadata": (".vector_store", "VectorMetadata"),
+    "HybridVectorStore": (".vector_store", "HybridVectorStore"),
     # Retrieval
-    "BaseRetriever",
-    "SemanticRetriever",
-    "BM25Retriever",
-    "HybridRetriever",
-    "AdvancedRetriever",
-    "RetrievalResult",
-    "RetrievalQuery",
+    "BaseRetriever": (".retriever", "BaseRetriever"),
+    "SemanticRetriever": (".retriever", "SemanticRetriever"),
+    "BM25Retriever": (".retriever", "BM25Retriever"),
+    "HybridRetriever": (".retriever", "HybridRetriever"),
+    "AdvancedRetriever": (".retriever", "AdvancedRetriever"),
+    "RetrievalResult": (".retriever", "RetrievalResult"),
+    "RetrievalQuery": (".retriever", "RetrievalQuery"),
     # Embeddings
-    "BaseEmbeddingModel",
-    "SentenceTransformerEmbedding",
-    "TransformerEmbedding",
-    "EmbeddingModelFactory",
-    "EmbeddingManager",
-    "get_embedding_manager",
-    "encode_text",
-    "get_embedding_dimension",
-]
+    "BaseEmbeddingModel": (".embeddings", "BaseEmbeddingModel"),
+    "SentenceTransformerEmbedding": (".embeddings", "SentenceTransformerEmbedding"),
+    "TransformerEmbedding": (".embeddings", "TransformerEmbedding"),
+    "EmbeddingModelFactory": (".embeddings", "EmbeddingModelFactory"),
+    "EmbeddingManager": (".embeddings", "EmbeddingManager"),
+    "get_embedding_manager": (".embeddings", "get_embedding_manager"),
+    "encode_text": (".embeddings", "encode_text"),
+    "get_embedding_dimension": (".embeddings", "get_embedding_dimension"),
+}
 
-# Version info
+__all__ = sorted(_EXPORTS)
 __version__ = "1.0.0"
-__author__ = "Multi-Modal Lab"
+
+
+def __getattr__(name: str) -> Any:
+    target = _EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(name)
+    module_name, attribute = target
+    value = getattr(import_module(module_name, __name__), attribute)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted([*globals(), *__all__])

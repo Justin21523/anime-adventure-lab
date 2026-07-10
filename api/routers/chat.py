@@ -6,14 +6,15 @@ LLM-based conversation interface
 
 import logging
 from fastapi import APIRouter, HTTPException
-from typing import List, Optional
+from typing import Optional
 
-from core.llm.adapter import get_llm_adapter
+from core.llm.runtime import get_runtime_llm
 from core.exceptions import ModelError, ValidationError
-from schemas.chat import ChatRequest, ChatResponse, ChatMessage, ChatParameters
+from schemas.chat import ChatParameters, ChatRequest, ChatResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+get_llm_adapter = get_runtime_llm
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -105,14 +106,11 @@ async def chat_stream(request: ChatRequest):
             llm_adapter = get_llm_adapter()
             response = llm_adapter.chat(
                 messages=[  # type: ignore
-                    msg.dict() if hasattr(msg, "dict") else msg
-                    for msg in request.messages
+                    msg.dict() if hasattr(msg, "dict") else msg for msg in request.messages
                 ],
                 model_name=request.parameters.model if request.parameters else None,
                 max_length=request.parameters.max_length if request.parameters else 512,
-                temperature=(
-                    request.parameters.temperature if request.parameters else 0.7
-                ),
+                temperature=(request.parameters.temperature if request.parameters else 0.7),
             )
 
             # Simulate token-by-token streaming
@@ -207,7 +205,10 @@ async def test_system_prompt(
 
         llm_adapter = get_llm_adapter()
         response = llm_adapter.chat(
-            messages=messages, model_name=model, max_length=300, temperature=temperature  # type: ignore
+            messages=messages,
+            model_name=model,
+            max_length=300,
+            temperature=temperature,  # type: ignore
         )
 
         return {

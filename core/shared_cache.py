@@ -18,16 +18,33 @@ to the legacy "ai_warehouse" layout.
 import json
 import os
 import pathlib
-import sys
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 
-import torch
+class _CudaStub:
+    @staticmethod
+    def is_available() -> bool:
+        return False
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
+    @staticmethod
+    def device_count() -> int:
+        return 0
+
+
+class _TorchStub:
+    cuda = _CudaStub()
+
+
+def _torch_runtime():
+    """Import torch only when GPU diagnostics are explicitly requested."""
+    try:
+        import torch
+
+        return torch
+    except ImportError:
+        return _TorchStub()
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +79,7 @@ class SharedCache:
             cache_root_path = cache_root_path.parent
 
         force_new_layout = bool(models_root_env or output_root_env)
-        self.legacy_mode = (not force_new_layout) and _looks_like_legacy_warehouse(
-            cache_root_path
-        )
+        self.legacy_mode = (not force_new_layout) and _looks_like_legacy_warehouse(cache_root_path)
 
         if self.legacy_mode:
             # Legacy single-root warehouse mode
@@ -90,9 +105,7 @@ class SharedCache:
             self.root = self.cache_root  # legacy alias
             self.cache_dir = self.cache_root  # legacy alias (no nested cache/)
 
-            self.models_root = Path(
-                os.getenv("AI_MODELS_ROOT", "/mnt/c/ai_models")
-            ).expanduser()
+            self.models_root = Path(os.getenv("AI_MODELS_ROOT", "/mnt/c/ai_models")).expanduser()
             self.outputs_root = Path(
                 os.getenv(
                     "AI_OUTPUT_ROOT",
@@ -100,7 +113,6 @@ class SharedCache:
                 )
             ).expanduser()
 
-            data_root = Path(os.getenv("AI_DATA_ROOT", "/mnt/c/ai_data")).expanduser()
             project_slug = os.getenv("AI_PROJECT_SLUG", "anime-adventure-lab")
             self.datasets_root = Path(
                 os.getenv(
@@ -177,9 +189,7 @@ class SharedCache:
             except (PermissionError, FileExistsError):
                 if p.exists() and p.is_dir():
                     continue
-                logger.warning(
-                    "Could not ensure directory exists for %s: %s", env_key, cache_path
-                )
+                logger.warning("Could not ensure directory exists for %s: %s", env_key, cache_path)
 
     def _create_directories(self) -> None:
         """Create application-specific directories"""
@@ -275,12 +285,7 @@ class SharedCache:
             "cache_key": model_key,
         }
 
-        info_file = (
-            Path(self.outputs_root)
-            / "metadata"
-            / "models"
-            / f"{model_key}_info.json"
-        )
+        info_file = Path(self.outputs_root) / "metadata" / "models" / f"{model_key}_info.json"
         info_file.parent.mkdir(parents=True, exist_ok=True)
 
         with open(info_file, "w", encoding="utf-8") as f:
@@ -288,12 +293,7 @@ class SharedCache:
 
     def get_model_info(self, model_key: str) -> Optional[Dict[str, Any]]:
         """Retrieve cached model information"""
-        info_file = (
-            Path(self.outputs_root)
-            / "metadata"
-            / "models"
-            / f"{model_key}_info.json"
-        )
+        info_file = Path(self.outputs_root) / "metadata" / "models" / f"{model_key}_info.json"
 
         if not info_file.exists():
             return None
@@ -328,9 +328,7 @@ class SharedCache:
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """Get cache statistics"""
-        import psutil
-        import torch
-
+        torch = _torch_runtime()
         stats = {
             "cache_root": str(self.cache_root),
             "models_root": str(self.models_root),
@@ -351,9 +349,7 @@ class SharedCache:
         ]:
             try:
                 if path.exists():
-                    total_size = sum(
-                        f.stat().st_size for f in path.rglob("*") if f.is_file()
-                    )
+                    total_size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
                     stats["disk_usage"][name] = {
                         "size_gb": round(total_size / (1024**3), 2),
                         "files_count": len(list(path.rglob("*"))),
@@ -365,9 +361,7 @@ class SharedCache:
         # GPU memory if available
         if torch.cuda.is_available():
             stats["gpu_memory"] = {
-                "total_gb": round(
-                    torch.cuda.get_device_properties(0).total_memory / (1024**3), 2
-                ),
+                "total_gb": round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 2),
                 "allocated_gb": round(torch.cuda.memory_allocated() / (1024**3), 2),
                 "cached_gb": round(torch.cuda.memory_reserved() / (1024**3), 2),
             }
@@ -376,6 +370,7 @@ class SharedCache:
 
     def get_gpu_info(self) -> Dict:
         """Get GPU availability and memory info"""
+        torch = _torch_runtime()
         gpu_info = {
             "cuda_available": torch.cuda.is_available(),
             "device_count": 0,
@@ -390,9 +385,7 @@ class SharedCache:
             try:
                 memory_allocated = torch.cuda.memory_allocated() / 1024**3  # GB
                 memory_reserved = torch.cuda.memory_reserved() / 1024**3  # GB
-                memory_total = (
-                    torch.cuda.get_device_properties(0).total_memory / 1024**3
-                )  # GB
+                memory_total = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
 
                 gpu_info["memory_info"] = {
                     "allocated_gb": round(memory_allocated, 2),
@@ -407,12 +400,11 @@ class SharedCache:
 
     def get_device_config(self, device) -> Dict[str, Any]:
         """Get device configuration for model loading"""
+        torch = _torch_runtime()
         try:
             config = {
                 "device": (
-                    device
-                    if device != "auto"
-                    else ("cuda" if torch.cuda.is_available() else "cpu")
+                    device if device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
                 ),
                 "torch_dtype": "float16" if torch.cuda.is_available() else "float32",
             }
@@ -420,9 +412,7 @@ class SharedCache:
             # VRAM optimization for low-end GPUs
             if torch.cuda.is_available():
                 try:
-                    gpu_memory = torch.cuda.get_device_properties(0).total_memory / (
-                        1024**3
-                    )  # GB
+                    gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
                     if gpu_memory < 8:
                         config.update(
                             {
@@ -432,7 +422,7 @@ class SharedCache:
                             }
                         )
                         logger.info("Enabled VRAM optimization for low-memory GPU")
-                except:
+                except Exception:
                     pass
 
             return config
@@ -450,9 +440,7 @@ class SharedCache:
                 "AI_CACHE_ROOT": os.environ.get("AI_CACHE_ROOT"),
                 "HF_HOME": os.environ.get("HF_HOME"),
                 "TORCH_HOME": os.environ.get("TORCH_HOME"),
-                "CUDA_VISIBLE_DEVICES": os.environ.get(
-                    "CUDA_VISIBLE_DEVICES", "not_set"
-                ),
+                "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "not_set"),
             },
         }
 
@@ -475,15 +463,11 @@ def bootstrap_cache(cache_root: Optional[str] = None) -> SharedCache:
     gpu_info = cache.get_gpu_info()
 
     print(f"[🏪 SharedCache] Root: {cache.cache_root}")
-    print(
-        f"[🖥️  GPU] Available: {gpu_info['cuda_available']} | Devices: {gpu_info['device_count']}"
-    )
+    print(f"[🖥️  GPU] Available: {gpu_info['cuda_available']} | Devices: {gpu_info['device_count']}")
 
     if gpu_info["memory_info"]:
         mem = gpu_info["memory_info"]
-        print(
-            f"[💾 VRAM] {mem['allocated_gb']:.1f}GB used / {mem['total_gb']:.1f}GB total"
-        )
+        print(f"[💾 VRAM] {mem['allocated_gb']:.1f}GB used / {mem['total_gb']:.1f}GB total")
 
     return cache
 

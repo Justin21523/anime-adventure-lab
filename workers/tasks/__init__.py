@@ -1,9 +1,10 @@
-"""Celery task exports.
+"""Celery task package.
 
-This package bridges to the legacy `workers/tasks.py` module (file-based) to keep
-imports like `from workers.tasks import batch_caption_task` working.
+The durable v2 worker must remain importable in the slim CPU image.  Legacy
+exports are therefore loaded only for an explicitly experimental worker.
 """
 
+import os
 from importlib.util import spec_from_file_location, module_from_spec
 from pathlib import Path
 from types import ModuleType
@@ -20,19 +21,24 @@ def _load_legacy_tasks() -> ModuleType:
     return module
 
 
-_legacy = _load_legacy_tasks()
-
-# Re-export required Celery tasks/helpers
-batch_caption_task = _legacy.batch_caption_task
-batch_vqa_task = _legacy.batch_vqa_task
-batch_chat_task = _legacy.batch_chat_task
-get_task_status = _legacy.get_task_status
-cancel_task = _legacy.cancel_task
-
-__all__ = [
-    "batch_caption_task",
-    "batch_vqa_task",
-    "batch_chat_task",
-    "get_task_status",
-    "cancel_task",
-]
+if os.getenv("ENABLE_EXPERIMENTAL_WORKER_TASKS", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}:
+    _legacy = _load_legacy_tasks()
+    batch_caption_task = _legacy.batch_caption_task
+    batch_vqa_task = _legacy.batch_vqa_task
+    batch_chat_task = _legacy.batch_chat_task
+    get_task_status = _legacy.get_task_status
+    cancel_task = _legacy.cancel_task
+    __all__ = [
+        "batch_caption_task",
+        "batch_vqa_task",
+        "batch_chat_task",
+        "get_task_status",
+        "cancel_task",
+    ]
+else:
+    __all__: list[str] = []

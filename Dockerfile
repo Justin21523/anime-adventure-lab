@@ -14,15 +14,7 @@ ARG REQUIREMENTS_FILE=requirements-docker.txt
 
 # System deps (no GPU drivers needed — API is CPU-only)
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    git \
     curl \
-    ffmpeg \
-    libgl1 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -31,8 +23,6 @@ COPY ${REQUIREMENTS_FILE} ./requirements.txt
 ENV PIP_NO_CACHE_DIR=1 PIP_MAX_WORKERS=1
 # Install without torch/xformers — those live on the host for workers
 RUN pip install -r requirements.txt && pip cache purge 2>/dev/null; true
-
-COPY . .
 
 COPY . .
 
@@ -54,7 +44,7 @@ ENV LLM_BACKEND=llamacpp \
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD curl -f http://localhost:8000/healthz || exit 1
 
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

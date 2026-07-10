@@ -1,530 +1,267 @@
-# Anime Adventure Lab
+# SagaForge — Anime Adventure Lab
 
-Portfolio demo for an AI-driven anime adventure platform.
+> A Story-first AI authoring workbench that keeps narrative state, world-scoped knowledge, asynchronous jobs, and AI-proposed changes observable and reviewable.
 
-Anime Adventure Lab combines a story engine, world/lore management, RAG retrieval, agent tools, and text-to-image hooks into one playable visual-novel style workbench. The public demo is designed to be stable and interview-friendly: it uses deterministic mock/sample data, so reviewers can understand the architecture without downloading models or using a GPU.
+[Public portfolio demo](https://justin21523.github.io/anime-adventure-lab/) · [Architecture](docs/architecture-v2.md) · [Demo runbook](docs/demo-runbook.md) · [Project status](docs/project_status.md)
 
-> 中文摘要：這是一個 AI 故事冒險平台作品集專案，展示 Story Engine、RAG、Agent、T2I、WorldPack、背景任務與展示型部署流程。公開展示版以穩定 mock demo 為主；真模型/GPU 推論保留為進階本機模式。
+![SagaForge Story workbench](portfolio-web/assets/screenshot-story.png)
 
-## Live Demo
+## Why this project exists
 
-| Asset | Link | Purpose |
-| --- | --- | --- |
-| Portfolio demo site | <https://justin21523.github.io/anime-adventure-lab/> | Interview-first product demo with scenario switching, screenshots, and recording |
-| Portfolio detail page | <https://justin21523.github.io/zh-TW/projects/anime-adventure-lab/> | Main portfolio case-study page with embedded media |
-| GitHub repository | <https://github.com/Justin21523/anime-adventure-lab> | Source code, README, CI, and deployment setup |
-| Demo recording | `portfolio-web/assets/demo-recording.mp4` | Short video artifact for reviewers |
-| Screenshot gallery | `portfolio-web/assets/screenshot-*.svg` | Ready-to-share visual proof points |
+Story generation is easy to prototype as a chat box, but difficult to operate as a dependable product. A useful authoring system must preserve continuity, retrieve only the current world's lore, survive worker failures, and prevent an AI response from silently overwriting authoritative data.
 
-## At A Glance
+SagaForge demonstrates those boundaries through a private creator workbench:
 
-```mermaid
-mindmap
-  root((Anime Adventure Lab))
-    Story Engine
-      Sessions
-      Choices
-      Memory
-      State deltas
-    WorldPack
-      Characters
-      Lore
-      Visual style
-      Player templates
-    RAG
-      Upload
-      Chunking
-      Hybrid retrieval
-      Citations
-    Agent Layer
-      Tool catalog
-      Decision support
-      Review queue
-    T2I
-      Scene prompts
-      LoRA hooks
-      Mock-safe jobs
-    Operations
-      FastAPI
-      Celery-compatible jobs
-      Docker
-      GitHub Pages
-```
+- Story turns are transactional, serialized per session, and idempotent.
+- Uploaded lore moves through MinIO, Celery, deterministic/model embeddings, and pgvector.
+- Every retrieved chunk is persisted as a citation with its source and score.
+- Jobs expose dispatch, attempt, lease, progress, request ID, result, and failure state.
+- AI world changes enter a Review Queue and require optimistic-lock approval.
+- The CPU-safe core runs without PyTorch; model-heavy capabilities are explicit experimental profiles.
 
-## Demo Screens
+## Core demo flow
 
-| Story-first gameplay | RAG retrieval evidence | Agent-assisted decision |
-| --- | --- | --- |
-| ![Story turn screenshot](portfolio-web/assets/screenshot-story.svg) | ![RAG retrieval screenshot](portfolio-web/assets/screenshot-rag.svg) | ![Agent decision screenshot](portfolio-web/assets/screenshot-agent.svg) |
+1. Sign in with the private admin session.
+2. Select the `moon-archive` world and continue Rin's story.
+3. Inspect the indexed lore document and pgvector chunk count.
+4. Ask how the silver archive box opens.
+5. Follow the durable job from queued to completed.
+6. Expand the RAG evidence and verify the answer against the uploaded lore.
+7. Review the AI-proposed WorldPack patch, then approve or reject it.
+8. Open Runtime & Services to show Postgres, pgvector, Redis, MinIO, Celery, migrations, and runtime profiles.
 
-## What It Demonstrates
+The public GitHub Pages site is static and anonymous. The complete mutable application is a separate authenticated Docker Compose deployment; no private API credentials are embedded in the public demo.
 
-| Capability | What the reviewer sees | Implementation area |
-| --- | --- | --- |
-| Story Engine | A visual-novel style turn with speaker, narrative, choices, and state deltas | `core/story/`, `api/routers/story.py` |
-| WorldPack | Reusable worlds with characters, lore, visual style, and player templates | `core/worldpacks/`, `docs/worldpack_format.md` |
-| RAG Pipeline | World-scoped lore retrieval, rerank traces, citations, and stats | `core/rag/`, `api/routers/rag.py` |
-| Agent Layer | Tool planning, state checks, recommendations, and reviewable changes | `core/agents/`, `api/routers/agent.py` |
-| T2I Hooks | Scene prompt generation, mock image jobs, LoRA/ControlNet integration points | `core/t2i/`, `api/routers/t2i.py` |
-| Demo Ops | Mock-safe backend, static portfolio demo, GitHub Pages deployment, smoke CI | `scripts/`, `.github/workflows/`, `portfolio-web/` |
-
-## System Architecture
+## Architecture
 
 ```mermaid
 flowchart LR
-  reviewer[Interviewer / Reviewer]
-  portfolio[GitHub Pages<br/>portfolio-web]
-  react[React Workbench<br/>frontend/react]
-  api[FastAPI API<br/>api/main.py]
-  story[Story Engine<br/>core/story]
-  rag[RAG Engine<br/>core/rag]
-  agent[Agent Tools<br/>core/agents]
-  t2i[T2I Engine<br/>core/t2i]
-  vlm[VLM / Multimodal<br/>core/vlm]
-  worker[Celery-compatible Jobs<br/>workers]
-  redis[(Redis optional)]
-  warehouse[(AI_WAREHOUSE roots<br/>cache / models / outputs)]
-
-  reviewer --> portfolio
-  reviewer --> react
-  react --> api
-  portfolio -. optional health check .-> api
-  api --> story
-  api --> rag
-  api --> agent
-  api --> t2i
-  api --> vlm
-  story --> rag
-  story --> agent
-  story --> t2i
-  api --> worker
-  worker --> redis
-  story --> warehouse
-  rag --> warehouse
-  t2i --> warehouse
-  vlm --> warehouse
+    Browser[React 19 + TypeScript] -->|HttpOnly session + CSRF| API[FastAPI v2]
+    API --> DB[(Postgres + pgvector)]
+    API --> Store[(MinIO)]
+    API --> Queue[Redis]
+    Queue --> Worker[Celery core worker]
+    Beat[Celery beat reconciler] --> Queue
+    Worker --> DB
+    Worker --> Store
+    Worker -. optional .-> LLM[llama.cpp / model runtime]
 ```
 
-## Request And Data Flow
+### Story turn lifecycle
 
 ```mermaid
 sequenceDiagram
-  participant User as Reviewer / Player
-  participant UI as React or Static Demo
-  participant API as FastAPI
-  participant Story as Story Engine
-  participant RAG as RAG Retrieval
-  participant Agent as Agent Tools
-  participant T2I as T2I Job
-  participant Store as AI_WAREHOUSE
-
-  User->>UI: Choose scenario / submit story action
-  UI->>API: POST story turn or demo request
-  API->>Story: Build turn context
-  Story->>RAG: Retrieve world-scoped lore
-  RAG->>Store: Read indexes and documents
-  RAG-->>Story: Citations and ranked evidence
-  Story->>Agent: Ask for state-aware suggestion
-  Agent-->>Story: Tool plan and reviewable state delta
-  Story->>T2I: Build scene prompt or enqueue mock-safe job
-  T2I->>Store: Persist output metadata
-  Story-->>API: Narrative, choices, traces, artifacts
-  API-->>UI: Structured response
-  UI-->>User: Visual novel turn + trace inspector
+    participant UI as React
+    participant API as FastAPI
+    participant DB as Postgres
+    participant Q as Redis/Celery
+    participant W as Worker
+    UI->>API: POST turn + Idempotency-Key
+    API->>DB: create turn + durable job transaction
+    API->>Q: dispatch after commit
+    W->>DB: claim job + execution lease
+    W->>DB: world-scoped pgvector retrieval
+    W->>W: deterministic or LLM generation
+    W->>DB: atomic turn, citation, state, proposal, job completion
+    UI->>API: poll observable job
+    API-->>UI: completed + evidence
 ```
 
-## Demo Scenario Map
+## Technology and decisions
 
-```mermaid
-journey
-  title 90-second reviewer walkthrough
-  section Open demo
-    Load GitHub Pages demo: 5: Reviewer
-    Notice no GPU or model download required: 5: Reviewer
-  section Show product value
-    Switch to Neon Archive story flow: 5: Reviewer
-    Open RAG lore retrieval scenario: 5: Reviewer
-    Open Agent assisted choice scenario: 5: Reviewer
-  section Explain engineering
-    Inspect Story / RAG / Agent / T2I tabs: 4: Reviewer
-    Point to FastAPI and core modules: 4: Reviewer
-    Show smoke test and build commands: 4: Reviewer
-  section Close
-    Explain mock public mode vs real GPU mode: 5: Reviewer
-```
-
-## Runtime Modes
-
-```mermaid
-flowchart TB
-  start[Start project]
-  mode{Runtime goal}
-  static[Static portfolio demo<br/>No backend required]
-  mock[Mock-safe full stack<br/>FastAPI + React + deterministic outputs]
-  gpu[Advanced local AI mode<br/>real models + GPU + warehouse]
-  deploy[Public deployment<br/>GitHub Pages / Vercel / Netlify]
-
-  start --> mode
-  mode --> static
-  mode --> mock
-  mode --> gpu
-  static --> deploy
-  mock --> deploy
-  gpu --> localOnly[Local or dedicated GPU host]
-```
-
-| Mode | Best for | Requirements | Command |
-| --- | --- | --- | --- |
-| Static portfolio | Public interviews, quick review, screenshots | Browser only | `cd portfolio-web && python -m http.server 4173` |
-| Mock-safe backend | API demo, smoke tests, local no-GPU testing | Python env, no model downloads | `T2I_MOCK=1 VLM_MOCK=1 LLM_MOCK=1 uvicorn api.main:app --reload` |
-| React workbench | Full UI walkthrough | Node + API | `cd frontend/react && npm run dev` |
-| Real GPU mode | Advanced local inference | AI warehouse, model files, GPU/CPU tuning | Configure `.env` and model roots |
-
-## Repository Organization
-
-```mermaid
-flowchart TB
-  repo[anime-adventure-lab]
-  api[api<br/>FastAPI routers, dependencies, middleware]
-  core[core<br/>domain logic and AI pipelines]
-  schemas[schemas<br/>Pydantic contracts]
-  frontend[frontend/react<br/>React + Vite workbench]
-  workers[workers<br/>Celery-compatible jobs]
-  configs[configs<br/>runtime, RAG, model presets]
-  portfolio[portfolio-web<br/>static demo site]
-  tests[tests<br/>pytest smoke/unit/integration]
-  docs[docs<br/>architecture and operations docs]
-  docker[docker + compose<br/>deployment assets]
-
-  repo --> api
-  repo --> core
-  repo --> schemas
-  repo --> frontend
-  repo --> workers
-  repo --> configs
-  repo --> portfolio
-  repo --> tests
-  repo --> docs
-  repo --> docker
-
-  core --> story[story]
-  core --> rag[rag]
-  core --> agents[agents]
-  core --> t2i[t2i]
-  core --> vlm[vlm]
-  core --> training[training]
-```
-
-```text
-portfolio-web/        Static interview demo and scenario showcase
-frontend/react/       React + Vite visual novel/workbench UI
-api/                  FastAPI app, routers, dependencies, middleware
-core/                 Story, RAG, Agent, T2I, VLM, training, monitoring logic
-schemas/              Shared Pydantic request/response models
-workers/              Celery tasks and job execution wrappers
-configs/              Runtime, model, RAG, training, and style presets
-tests/                Pytest smoke/unit/integration coverage
-docker/               Demo/frontend/backend Docker assets
-docs/                 Technical notes, WorldPack format, RAG and deployment docs
-```
-
-## Technical Stack
-
-```mermaid
-flowchart LR
-  subgraph Frontend
-    vite[React 19 + Vite]
-    tanstack[TanStack Query / Router]
-    ui[Tailwind + Radix UI]
-    state[Zustand]
-  end
-
-  subgraph Backend
-    fastapi[FastAPI]
-    pydantic[Pydantic schemas]
-    celery[Celery-compatible job layer]
-    redis[Redis optional]
-  end
-
-  subgraph AI_Core
-    llm[LLM adapters<br/>llama.cpp / transformers]
-    rag[FAISS + BM25 + bge-m3]
-    t2i[Diffusers / LoRA / ControlNet hooks]
-    vlm[VLM module]
-    agents[Tool registry and agents]
-  end
-
-  subgraph Ops
-    docker[Docker Compose]
-    gha[GitHub Actions]
-    pages[GitHub Pages]
-    warehouse[AI_WAREHOUSE roots]
-  end
-
-  Frontend --> Backend
-  Backend --> AI_Core
-  AI_Core --> Ops
-```
-
-| Layer | Technologies |
-| --- | --- |
-| API | FastAPI, Pydantic, middleware, modular routers |
-| Story | custom story/session engine, memory summaries, choices, state deltas |
-| RAG | document processing, chunking, FAISS, BM25, rerank hooks, citations |
-| Agents | tool registry, file/math/search/RAG tools, reviewable suggestions |
-| T2I | Diffusers-style interfaces, LoRA manager, ControlNet hooks, prompt generation |
-| Frontend | React 19, Vite, TypeScript, TanStack Query/Router, Tailwind, Radix UI, Zustand |
-| Jobs | Celery-compatible worker tasks, Redis optional, sync fallback for demo |
-| Deployment | GitHub Pages, Docker Compose, GitHub Actions |
-
-## API Surface
-
-```mermaid
-flowchart LR
-  client[Client]
-  health[/healthz<br/>/ready]
-  story[/api/v1/story<br/>sessions, turns, worlds]
-  worlds[/api/v1/worlds<br/>WorldPack]
-  rag[/api/v1/rag<br/>upload, stats, retrieval]
-  t2i[/api/v1/t2i<br/>status, jobs, generation]
-  agent[/api/v1/agent<br/>tools and actions]
-  runtime[/api/v1/runtime<br/>presets and config]
-  training[/api/v1/training<br/>simulated lifecycle]
-
-  client --> health
-  client --> story
-  client --> worlds
-  client --> rag
-  client --> t2i
-  client --> agent
-  client --> runtime
-  client --> training
-```
-
-| Endpoint area | Demo readiness | Notes |
+| Area | Technology | Why it is used |
 | --- | --- | --- |
-| Health/ready | Stable | Used by smoke tests and optional static demo health check |
-| Story/worlds | Stable in mock mode | WorldPack and legacy story worlds are demo-safe |
-| RAG upload/stats | Stable in smoke mode | Sync fallback avoids requiring a live worker |
-| T2I status | Stable in mock mode | Reports mock engine status without loading large models |
-| Agent tools | Stable enough for demo | Shows registered tool surface |
-| Runtime presets | Stable | Handles external server presets and empty model names |
-| Training jobs | Simulated smoke flow | Good for lifecycle demonstration, not real training evidence |
+| UI | React 19, TypeScript, Vite, TanStack Query | Typed server-state UI with explicit loading, error, and recovery states |
+| API | FastAPI, Pydantic, OpenAPI | Contract-first v2 endpoints and generated frontend types |
+| Persistence | PostgreSQL, SQLAlchemy, Alembic | Transactional source of truth and additive schema migrations |
+| Retrieval | pgvector, deterministic/model embeddings | World-isolated semantic retrieval with reproducible demo mode |
+| Objects | MinIO | Uploaded lore and recoverable artifacts stay outside relational rows |
+| Jobs | Redis, Celery, Celery beat | Durable asynchronous execution, leases, attempts, and reconciliation |
+| Security | Argon2, signed HttpOnly cookies, CSRF, API keys | Appropriate single-admin private-workbench boundary |
+| Delivery | Docker Compose, Nginx, GitHub Actions, GitHub Pages | Reproducible private stack and isolated public portfolio |
 
-## Deployment Topology
+Important decisions are recorded in [docs/adr](docs/adr). The supported core intentionally does not claim that every retained VLM, T2I, LoRA, or training prototype is production-ready.
 
-```mermaid
-flowchart TB
-  subgraph Public_Static
-    ghpages[GitHub Pages<br/>portfolio-web]
-    assets[Screenshots + MP4 recording]
-  end
+## Quick start
 
-  subgraph Optional_Full_Stack
-    nginx[Nginx or platform router]
-    react[React workbench]
-    api[FastAPI backend]
-    worker[Worker process]
-    redis[(Redis)]
-    warehouse[(AI warehouse volume)]
-  end
-
-  reviewer[Reviewer browser] --> ghpages
-  ghpages --> assets
-  reviewer -. advanced demo .-> nginx
-  nginx --> react
-  nginx --> api
-  api --> worker
-  worker --> redis
-  api --> warehouse
-  worker --> warehouse
-```
-
-Recommended public path:
-
-- GitHub Pages hosts `portfolio-web/`.
-- The portfolio detail page embeds screenshots and the MP4 recording.
-- Backend-heavy or GPU-heavy flows stay local unless a suitable host is available.
-
-## AI Warehouse Layout
-
-Data and generated artifacts are intentionally outside the repo:
-
-```bash
-AI_CACHE_ROOT=/mnt/c/ai_cache
-AI_MODELS_ROOT=/mnt/c/ai_models
-AI_OUTPUT_ROOT=/mnt/c/ai_output/anime-adventure-lab
-AI_DATASETS_ROOT=/mnt/c/ai_datasets/anime-adventure-lab
-```
-
-```mermaid
-flowchart LR
-  repo[Git repo<br/>source + lightweight assets]
-  cache[AI_CACHE_ROOT<br/>HF / torch / XDG cache]
-  models[AI_MODELS_ROOT<br/>weights / LoRA / checkpoints]
-  outputs[AI_OUTPUT_ROOT<br/>runs / generated media / exports]
-  datasets[AI_DATASETS_ROOT<br/>local datasets]
-
-  repo -. references .-> cache
-  repo -. references .-> models
-  repo -. writes .-> outputs
-  repo -. reads .-> datasets
-```
-
-## Quick Start: Stable Mock Demo
-
-Backend smoke mode:
+### Local development
 
 ```bash
 conda create -n ai_env python=3.10 -y
 conda activate ai_env
 pip install -r requirements.txt -r requirements-test.txt
 
-export T2I_MOCK=1 VLM_MOCK=1 LLM_MOCK=1
-export MODEL_DEVICE=cpu CUDA_VISIBLE_DEVICES=
-export JOBS_SYNC_FALLBACK=1
-
 uvicorn api.main:app --reload
-# http://localhost:8000/healthz
-# http://localhost:8000/docs
+cd frontend/react && npm install && npm run dev
 ```
 
-React workbench:
+The React dev server runs at `http://localhost:3000`; FastAPI health is available at `http://localhost:8000/healthz`.
+
+### Private Docker demo
+
+Create `.env` from `.env.example` and set unique values for:
+
+```dotenv
+POSTGRES_PASSWORD=...
+DATABASE_URL=postgresql://saga:...@postgres:5432/sagaforge
+MINIO_USER=...
+MINIO_PASSWORD=...
+API_SECRET_KEY=...
+API_SESSION_SECRET=...
+API_ADMIN_PASSWORD_HASH=...
+```
+
+Generate the password hash without writing plaintext to the repository:
+
+```bash
+python -c "from argon2 import PasswordHasher; print(PasswordHasher().hash(input('Password: ')))"
+```
+
+Start the reproducible deterministic profile:
+
+```bash
+docker compose -f docker-compose.prod.yml -f docker-compose.demo.yml up --build -d
+docker compose -f docker-compose.prod.yml -f docker-compose.demo.yml exec api \
+  python scripts/seed_demo.py --apply --reset
+```
+
+Production Compose runs migrations and bucket initialization before API startup. Postgres, Redis, and MinIO are internal-only; TLS must terminate at a trusted reverse proxy.
+
+## Runtime profiles
+
+```dotenv
+# Reliable interview/demo profile
+STORY_RUNTIME_MODE=deterministic
+RAG_RUNTIME_MODE=deterministic
+WORKER_PROFILE=core
+
+# Optional real local AI profile
+STORY_RUNTIME_MODE=llm
+RAG_RUNTIME_MODE=model
+LLAMA_SERVER_URL=http://host.docker.internal:8080
+```
+
+The same application contract is used in both profiles. Deterministic mode exists so an interview does not depend on GPU availability or a remote model service.
+
+## Validation
+
+```bash
+pytest -q
+pytest -q -m smoke
+ruff check api core schemas workers tests
+black --check api core schemas workers tests
+alembic upgrade head --sql
+
+cd frontend/react
+npm run type-check
+npm test
+npm run lint
+npm run build
+npm audit --audit-level=high
+```
+
+The maintained gate covers authentication, CSRF, Problem Details, transactional worlds and sessions, idempotent turns, pgvector evidence, review proposals, job leases/reconciliation, object storage, API contracts, and React states. Retired v1 contracts remain inspectable with `pytest -m legacy` and `npm run lint:legacy`.
+
+The private workbench also includes an **Engineering Evidence** view. It reads
+the persistent Job API and chronological Job Event API, so API, worker,
+scheduler, retry, and recovery transitions can be inspected without relying on
+transient broker logs.
+
+## Demo media
+
+The committed screenshots and video are generated from the real deterministic workbench, not hand-drawn mockups:
 
 ```bash
 cd frontend/react
-npm ci
-npm run dev
-# http://localhost:3000
+DEMO_ADMIN_PASSWORD='temporary-demo-password' npm run capture:demo
 ```
 
-Static portfolio demo:
+The capture requires local Chromium and ffmpeg. It produces desktop/mobile screenshots and a silent H.264 walkthrough under `portfolio-web/assets/`.
+
+Measure the currently running deterministic stack without publishing invented
+numbers:
 
 ```bash
-cd portfolio-web
-python -m http.server 4173
-# http://localhost:4173
+DEMO_API_KEY='temporary-api-key' python scripts/benchmark_demo.py --iterations 3
 ```
 
-## Verification
-
-```mermaid
-flowchart LR
-  edit[Code or docs change]
-  smoke[make test-smoke]
-  build[npm run build<br/>frontend/react]
-  apiCheck[API endpoint checks]
-  pages[GitHub Pages deploy]
-  publicCheck[curl public assets]
-
-  edit --> smoke
-  edit --> build
-  smoke --> apiCheck
-  build --> pages
-  pages --> publicCheck
-```
-
-Recommended portfolio gate:
+Run the complete reproducible evidence flow and rebuild the public case study:
 
 ```bash
-make test-smoke
-cd frontend/react && npm ci && npm run build
+make demo-up
+make demo-e2e
+make demo-benchmark
+make portfolio-evidence
+python scripts/generate_portfolio_evidence.py --check
+make demo-down
 ```
 
-Direct endpoint checks in mock mode:
+The generated [verification report](docs/verification-report.md) combines
+JUnit, scoped coverage, migration head, deterministic benchmark, Compose
+recovery E2E, and a source fingerprint. Missing inputs remain explicitly
+unavailable; the portfolio page does not use fallback metrics.
 
-```bash
-curl http://localhost:8000/healthz
-curl http://localhost:8000/api/v1/ready
-curl http://localhost:8000/api/v1/worlds
-curl http://localhost:8000/api/v1/runtime/presets
-curl http://localhost:8000/api/v1/t2i/status
+## Security boundary
+
+- Browser sessions are HMAC signed, HttpOnly, SameSite cookies with CSRF protection.
+- Passwords are verified with Argon2; login has a separate lower rate limit.
+- API keys are accepted only in headers and hashed before rate-limit identification.
+- OpenAPI is private unless `PUBLIC_API_DOCS=1` is explicitly set.
+- Generic Agent execution and filesystem tools are disabled by default.
+- Forwarded client IP headers are ignored unless a trusted proxy is explicitly configured.
+
+See [docs/security.md](docs/security.md) for limitations and rotation guidance.
+
+## Supported and experimental
+
+### Supported v2 core
+
+- World and Story Session persistence
+- Durable Story turns and observable jobs
+- Transactional, sanitized Job lifecycle event timeline
+- MinIO lore upload and pgvector indexing/retrieval
+- RAG citations and runtime trace
+- Human-reviewed WorldPack proposals
+- Admin session/API-key security
+- Legacy JSON dry-run/idempotent import
+- CPU-safe Docker Compose deployment
+
+### Experimental compatibility surface
+
+- VLM caption/VQA
+- Direct T2I and ControlNet
+- LoRA/fine-tuning
+- Model export and management
+- Legacy file-backed Story and RAG endpoints
+
+Experimental routers require `ENABLE_EXPERIMENTAL_ROUTERS=1` and model-capable workers require `WORKER_PROFILE=experimental` with a separately provisioned AI image.
+
+## Known limitations
+
+- The private workbench is deliberately single-admin, not multi-tenant identity software.
+- Signed sessions have no server-side revocation list; secret rotation forces logout.
+- The public site is a deterministic portfolio, not a shared writable playground.
+- Generated image artifacts remain outside the supported v2 Demo flow.
+- Real screenshots and benchmark numbers must be regenerated when the UI or deployment profile materially changes.
+
+## Repository map
+
+```text
+api/                 FastAPI composition, middleware, v2 endpoints
+core/application/    Story, RAG, job, review, and status use cases
+core/persistence/    SQLAlchemy models and Unit of Work
+workers/tasks/       Durable Story, indexing, and reconciliation tasks
+frontend/react/      Story-first React workbench
+migrations/          Alembic PostgreSQL/pgvector migrations
+docs/                Architecture, ADRs, security, deployment, demo
+portfolio-web/       Public static case study and generated media
 ```
 
-Notes:
+## Roadmap
 
-- `make test-smoke` is the current reliable demo gate.
-- The broader historical test/lint suite still contains legacy quality debt and is not used as the portfolio readiness gate yet.
-- Real model, GPU, diffusers export, and large training flows are intentionally outside the default public demo path.
+- Add generated-image artifacts as a separately reviewed v2 capability.
+- Add server-side session revocation if the product becomes multi-user.
+- Extend service-container integration tests to hosted CI.
+- Add measured model-mode quality and latency comparisons without weakening deterministic gates.
 
-## Recording Flow
-
-```mermaid
-flowchart TB
-  step1[Open public demo]
-  step2[Switch scenarios<br/>Neon / RAG / Agent]
-  step3[Show visual novel stage]
-  step4[Open trace tabs<br/>Story / RAG / Agent / T2I]
-  step5[Play screenshot gallery + recording]
-  step6[Show tests and build proof]
-  step7[Explain mock vs real model mode]
-
-  step1 --> step2 --> step3 --> step4 --> step5 --> step6 --> step7
-```
-
-1. Open `portfolio-web/` or the public GitHub Pages demo.
-2. Switch through the three showcase scenarios.
-3. Show the visual novel stage and metrics.
-4. Open the trace tabs to explain Story, RAG, Agent, and T2I data flow.
-5. Show the screenshot gallery and play the embedded demo recording.
-6. Run `make test-smoke`.
-7. Run `cd frontend/react && npm run build`.
-8. Close by explaining the split between stable public mock demo and optional real GPU/model mode.
-
-## Current Status
-
-```mermaid
-quadrantChart
-  title Portfolio readiness map
-  x-axis Low demo value --> High demo value
-  y-axis Needs work --> Stable
-  quadrant-1 Showcase ready
-  quadrant-2 Stable but less visible
-  quadrant-3 Needs hardening
-  quadrant-4 Valuable but risky
-  Static demo: [0.92, 0.9]
-  Smoke tests: [0.8, 0.86]
-  React build: [0.78, 0.82]
-  Mock API: [0.75, 0.78]
-  Full GPU inference: [0.72, 0.35]
-  Broad lint cleanup: [0.35, 0.32]
-  Real training/export: [0.58, 0.28]
-```
-
-This repo is now organized around a portfolio-first demo path:
-
-- Mock-safe backend startup and smoke tests.
-- Static demo page for screenshots and recordings.
-- React production build path.
-- GitHub Pages deployment for public review.
-- Portfolio detail page integration with screenshots and MP4 recording.
-- README and CI aligned with the current project structure.
-
-Remaining non-blocking work:
-
-- Reduce broader lint debt.
-- Expand real model/GPU documentation with exact hardware presets.
-- Add more polished sample stories and generated image assets.
-- Add Playwright-based screenshot capture for the React workbench.
-- Convert additional API flows into recorded walkthroughs.
-
-## Interviewer Highlights
-
-```mermaid
-flowchart LR
-  h1[Product thinking<br/>story-first AI workbench]
-  h2[Backend architecture<br/>FastAPI + modular core]
-  h3[AI systems<br/>RAG + Agent + T2I hooks]
-  h4[Demo engineering<br/>mock-safe public mode]
-  h5[Ops maturity<br/>CI + Pages + Docker path]
-
-  h1 --> h2 --> h3 --> h4 --> h5
-```
-
-- The project is not just a chat UI; it is structured around story turns, world state, citations, tools, and scene artifacts.
-- Public demo mode is deterministic and reviewable without GPU dependencies.
-- The backend is split by domain boundaries rather than one-off endpoint handlers.
-- The RAG and agent flows are presented as inspectable evidence, not hidden behind a black box.
-- The repository now includes a full path from code to demo page to portfolio case study.
-
-License: Apache-2.0 (TBD).
+License: Apache-2.0 (project metadata pending final confirmation).

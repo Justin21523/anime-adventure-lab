@@ -7,53 +7,16 @@ Main entry point for the API server
 import logging
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
-from pathlib import Path
-import sys
-import types
-import importlib.machinery
-
-# Inject a minimal torch stub only when PyTorch is genuinely unavailable.
-# API-only/demo containers do not install torch, but transformers expects a
-# module spec when probing optional dependencies.
-try:
-    import torch  # noqa: F401
-except ImportError:
-    _fake_torch = types.ModuleType("torch")
-    _fake_torch.__spec__ = importlib.machinery.ModuleSpec("torch", loader=None)
-    _fake_cuda = types.SimpleNamespace()
-    _fake_cuda.is_available = lambda: False
-    _fake_cuda.device_count = lambda: 0
-    _fake_cuda.get_device_name = lambda *_args, **_kwargs: None
-    _fake_torch.cuda = _fake_cuda
-    _fake_torch.backends = types.SimpleNamespace(
-        mps=types.SimpleNamespace(is_available=lambda: False)
-    )
-    _fake_torch.__version__ = "2.0.0+cpu"
-    _fake_torch.device = types.SimpleNamespace()
-    _fake_torch.Tensor = object
-    _fake_torch.nn = types.SimpleNamespace()
-    _fake_torch.optim = types.SimpleNamespace()
-    _fake_torch.float16 = None
-    _fake_torch.float32 = float
-    _fake_torch.bfloat16 = None
-    _fake_torch.load = lambda *a, **k: None
-    _fake_torch.save = lambda *a, **k: None
-    _fake_torch.manual_seed = lambda *a: None
-    sys.modules["torch"] = _fake_torch
-
-ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
+import os
 
 # Import core modules
 from core.config import get_config, setup_logging
 from core.shared_cache import bootstrap_cache
 from core.exceptions import MultiModalLabError
-from core.llm.adapter import get_llm_adapter
-from core.vlm.engine import get_vlm_engine
 
 # Import all routers
 from api.routers import (
@@ -104,12 +67,6 @@ async def lifespan(app: FastAPI):
     config = get_config()
     setup_logging(config)
 
-    # Temporary: Enable DEBUG logging for turn processing debugging
-    import logging
-    logging.getLogger().setLevel(logging.DEBUG)
-    logging.getLogger('core.story').setLevel(logging.DEBUG)
-    logging.getLogger('api.routers').setLevel(logging.DEBUG)
-
     app.state.config = config
 
     # Bootstrap shared cache
@@ -129,6 +86,8 @@ async def lifespan(app: FastAPI):
     # models should not block API startup; routers load them lazily on demand.
     if bool(config.get("features.preload_models", False)):
         try:
+            from core.vlm.engine import get_vlm_engine
+
             vlm_engine = get_vlm_engine()
             vlm_engine.load_caption_model()
             logger.info("Caption model pre-loaded")
@@ -140,15 +99,19 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Multi-Modal Lab API shutting down...")
     try:
-        llm_adapter = get_llm_adapter()
+        from core.llm.runtime import get_runtime_llm
+
+        llm_adapter = get_runtime_llm()
         llm_adapter.unload_all()
+    except Exception as e:
+        logger.warning("LLM shutdown cleanup skipped: %s", e)
+    try:
+        from core.vlm.engine import get_vlm_engine
 
         vlm_engine = get_vlm_engine()
         vlm_engine.unload_models()
-
-        logger.info("Models unloaded successfully")
     except Exception as e:
-        logger.error(f"Error during shutdown: {e}")
+        logger.debug("VLM shutdown cleanup skipped: %s", e)
 
 
 # Create FastAPI app
@@ -157,9 +120,9 @@ def create_app() -> FastAPI:
     config = get_config()
 
     app = FastAPI(
-        title="CharaForge Multi-Modal Lab API",
-        description="LLM + RAG + T2I + VLM Adventure Game Engine",
-        version="0.1.0",
+        title="SagaForge Story Workbench API",
+        description="Transactional Story, World, RAG, job, and artifact services.",
+        version="0.2.0",
         docs_url="/docs",
         redoc_url="/redoc",
         lifespan=lifespan,
@@ -174,35 +137,73 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.add_middleware(
-        TrustedHostMiddleware,
-        allowed_hosts=["localhost", "127.0.0.1", "*"],  # Configure for production
-    )
+    trusted_hosts = [
+        host.strip()
+        for host in os.getenv(
+            "API_TRUSTED_HOSTS", "localhost,127.0.0.1,testserver,api"
+        ).split(",")
+        if host.strip()
+    ]
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
+
+    from api.middleware import setup_security_middleware
+
+    setup_security_middleware(app)
+
+    from api.problem import problem_response
 
     # Global exception handler
     @app.exception_handler(MultiModalLabError)
-    async def handle_lab_error(request, exc: MultiModalLabError):
-        """Handle custom lab exceptions"""
-        return JSONResponse(
+    async def handle_lab_error(request: Request, exc: MultiModalLabError):
+        return problem_response(
+            request,
             status_code=400,
-            content={
-                "error": exc.error_code,
-                "message": exc.message,
-                "details": exc.details,
-            },
+            title="Application error",
+            detail=exc.message,
+            code=exc.error_code,
+            errors=exc.details,
+        )
+
+    @app.exception_handler(HTTPException)
+    async def handle_http_error(request: Request, exc: HTTPException):
+        detail = exc.detail
+        code = "HTTP_ERROR"
+        errors = None
+        if isinstance(detail, dict):
+            code = str(detail.get("code") or code)
+            errors = detail
+            detail = str(detail.get("message") or detail.get("detail") or code)
+        return problem_response(
+            request,
+            status_code=exc.status_code,
+            title="Request failed",
+            detail=str(detail),
+            code=code,
+            errors=errors,
+            headers=exc.headers,
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(request: Request, exc: RequestValidationError):
+        return problem_response(
+            request,
+            status_code=422,
+            title="Validation failed",
+            detail="The request did not pass validation",
+            code="VALIDATION_ERROR",
+            errors=exc.errors(),
         )
 
     @app.exception_handler(Exception)
-    async def handle_general_error(request, exc: Exception):
-        """Handle general exceptions"""
+    async def handle_general_error(request: Request, exc: Exception):
         logger = logging.getLogger(__name__)
         logger.error(f"Unhandled exception: {exc}", exc_info=True)
-        return JSONResponse(
+        return problem_response(
+            request,
             status_code=500,
-            content={
-                "error": "INTERNAL_ERROR",
-                "message": "Internal server error occurred",
-            },
+            title="Internal Server Error",
+            detail="Internal server error occurred",
+            code="INTERNAL_ERROR",
         )
 
     # Include all routers with proper prefix
@@ -244,6 +245,14 @@ def create_app() -> FastAPI:
     app.include_router(datasets_router, prefix=API_PREFIX, tags=["Datasets"])
     app.include_router(models_router, prefix=API_PREFIX, tags=["Models"])
     app.include_router(ws_router, prefix=API_PREFIX, tags=["WebSocket"])
+
+    # Story-first transactional API. This surface is intentionally small and
+    # does not import model runtimes in the API process.
+    from api.routers.v2 import router as v2_router
+    from api.routers.auth import router as auth_router
+
+    app.include_router(v2_router, prefix="/api/v2", tags=["V2"])
+    app.include_router(auth_router, prefix="/api/v2", tags=["Authentication"])
 
     # Root redirect
     @app.get("/")

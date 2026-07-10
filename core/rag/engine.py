@@ -10,14 +10,15 @@ from typing import Any, Dict, List, Optional
 
 import faiss
 import numpy as np
-import torch
+
+try:
+    import torch
+except ImportError:  # API profile can use lexical retrieval without torch
+    torch = None  # type: ignore[assignment]
 try:
     from rank_bm25 import BM25Okapi  # type: ignore
 except Exception:  # noqa: BLE001
     BM25Okapi = None  # type: ignore
-from sentence_transformers import SentenceTransformer
-from transformers import AutoModel, AutoTokenizer
-
 from .reranker import CrossEncoderReranker
 from ..exceptions import (
     DocumentIndexError,
@@ -28,6 +29,10 @@ from ..exceptions import (
 from ..config import get_config
 from ..shared_cache import get_shared_cache
 from ..model_registry import resolve_model_path
+
+SentenceTransformer = None
+AutoModel = None
+AutoTokenizer = None
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +45,7 @@ except Exception:  # noqa: BLE001
 def _resolve_device(device: str) -> str:
     raw = str(device or "").strip().lower()
     if raw == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
+        return "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
     if raw.startswith("cuda"):
         return "cuda"
     return "cpu"
@@ -191,9 +196,11 @@ class ChineseRAGEngine:
 
         # Model configuration
         rag_cfg = getattr(self.config, "rag", None)
-        self.embedding_model_name = embedding_model or getattr(
-            rag_cfg, "embedding_model", None
-        ) or self.config.model.embedding_model  # type: ignore[attr-defined]
+        self.embedding_model_name = (
+            embedding_model
+            or getattr(rag_cfg, "embedding_model", None)
+            or self.config.model.embedding_model
+        )  # type: ignore[attr-defined]
         self.reranker_model_name = str(getattr(rag_cfg, "reranker_model", "") or "").strip()
         self.enable_rerank = bool(getattr(rag_cfg, "enable_rerank", False))
         self.rerank_top_k = int(getattr(rag_cfg, "rerank_top_k", 0) or 0)
@@ -206,7 +213,7 @@ class ChineseRAGEngine:
             max_seq_length=int(getattr(rag_cfg, "max_seq_length", 512) or 512),
         )
         self._embedding_model: Optional[Any] = None
-        self._tokenizer: Optional[AutoTokenizer] = None
+        self._tokenizer: Optional[Any] = None
         self._loaded: bool = False
 
         # Document storage
@@ -217,7 +224,9 @@ class ChineseRAGEngine:
 
         # Index parameters
         self.embedding_dim: int = 768  # default, will be overwritten on model load
-        self.max_chunk_size: int = int(getattr(rag_cfg, "chunk_size", 500) or 500)  # characters per chunk
+        self.max_chunk_size: int = int(
+            getattr(rag_cfg, "chunk_size", 500) or 500
+        )  # characters per chunk
 
         # BM25 for optional lexical / hybrid search
         self.bm25: Optional[BM25Okapi] = None
@@ -231,6 +240,7 @@ class ChineseRAGEngine:
     @handle_model_error
     def _load_model(self) -> bool:
         """Load embedding model if not already loaded."""
+        global AutoModel, AutoTokenizer, SentenceTransformer
         if self._loaded:
             return True
 
@@ -248,24 +258,34 @@ class ChineseRAGEngine:
 
             # Prefer SentenceTransformer for retrieval
             try:
+                if SentenceTransformer is None:
+                    from sentence_transformers import (
+                        SentenceTransformer as _SentenceTransformer,
+                    )
+
+                    SentenceTransformer = _SentenceTransformer
                 self._embedding_model = SentenceTransformer(
                     local_embedding_model,
                     cache_folder=str(cache_dir),
                     device=self._embedding_device,
                 )
-                self.embedding_dim = (
-                    self._embedding_model.get_sentence_embedding_dimension()
-                )
+                self.embedding_dim = self._embedding_model.get_sentence_embedding_dimension()
                 self._tokenizer = None
-                logger.info(
-                    "Loaded SentenceTransformer model, dim=%d", self.embedding_dim
-                )
+                logger.info("Loaded SentenceTransformer model, dim=%d", self.embedding_dim)
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     "SentenceTransformer load failed (%s), falling back to AutoModel",
                     e,
                 )
 
+                if AutoTokenizer is None or AutoModel is None:
+                    from transformers import AutoModel as _AutoModel
+                    from transformers import AutoTokenizer as _AutoTokenizer
+
+                    AutoModel = _AutoModel
+                    AutoTokenizer = _AutoTokenizer
+                if torch is None:
+                    raise RuntimeError("torch embedding runtime is unavailable")
                 self._tokenizer = AutoTokenizer.from_pretrained(
                     local_embedding_model,
                     cache_dir=str(cache_dir),
@@ -275,9 +295,7 @@ class ChineseRAGEngine:
                     local_embedding_model,
                     cache_dir=str(cache_dir),
                     local_files_only=True,
-                    torch_dtype=(
-                        torch.float16 if self.config.model.use_fp16 else torch.float32
-                    ),
+                    torch_dtype=(torch.float16 if self.config.model.use_fp16 else torch.float32),
                     device_map="auto"
                     if torch.cuda.is_available() and self._embedding_device != "cpu"
                     else None,
@@ -300,7 +318,9 @@ class ChineseRAGEngine:
 
         def _do_encode() -> np.ndarray:
             try:
-                if isinstance(self._embedding_model, SentenceTransformer):
+                if SentenceTransformer is not None and isinstance(
+                    self._embedding_model, SentenceTransformer
+                ):
                     embedding = self._embedding_model.encode(
                         text,
                         convert_to_numpy=True,
@@ -388,9 +408,7 @@ class ChineseRAGEngine:
                 last_exclamation = chunk_text.rfind("！")
                 last_newline = chunk_text.rfind("\n")
 
-                break_point = max(
-                    last_period, last_question, last_exclamation, last_newline
-                )
+                break_point = max(last_period, last_question, last_exclamation, last_newline)
                 if break_point > 100:  # minimum chunk size
                     chunk_text = chunk_text[: break_point + 1]
                     end = start + len(chunk_text)
@@ -430,7 +448,11 @@ class ChineseRAGEngine:
             if base_metadata and base_metadata.get("title") is None:
                 # Prefer original filename as a display title when available.
                 try:
-                    base_metadata["title"] = base_metadata.get("original_filename") or base_metadata.get("file_name") or doc_id
+                    base_metadata["title"] = (
+                        base_metadata.get("original_filename")
+                        or base_metadata.get("file_name")
+                        or doc_id
+                    )
                 except Exception:
                     base_metadata["title"] = doc_id
 
@@ -439,7 +461,10 @@ class ChineseRAGEngine:
             try:
                 replaced = bool(self.remove_document(doc_id))
                 if replaced:
-                    logger.info("Replacing existing document %s (removed old chunks, will rebuild index)", doc_id)
+                    logger.info(
+                        "Replacing existing document %s (removed old chunks, will rebuild index)",
+                        doc_id,
+                    )
             except Exception:
                 replaced = False
 
@@ -493,8 +518,7 @@ class ChineseRAGEngine:
         """Update BM25 index with current documents."""
         try:
             self.bm25_corpus = [
-                self.text_processor.normalize_text(doc.content)
-                for doc in self.documents.values()
+                self.text_processor.normalize_text(doc.content) for doc in self.documents.values()
             ]
 
             if self.bm25_corpus:
@@ -528,9 +552,13 @@ class ChineseRAGEngine:
 
         try:
             requested_k = max(1, int(top_k or 0))
-            enable_rerank_flag = bool(self.enable_rerank) if enable_rerank is None else bool(enable_rerank)
+            enable_rerank_flag = (
+                bool(self.enable_rerank) if enable_rerank is None else bool(enable_rerank)
+            )
             enable_rerank_stage = bool(enable_rerank_flag) and bool(self.reranker_model_name)
-            rerank_top = int(self.rerank_top_k or 0) if rerank_top_k is None else int(rerank_top_k or 0)
+            rerank_top = (
+                int(self.rerank_top_k or 0) if rerank_top_k is None else int(rerank_top_k or 0)
+            )
             rerank_top = max(0, rerank_top)
             rerank_k = max(requested_k, rerank_top) if enable_rerank_stage else requested_k
             max_candidates = len(self.doc_id_map)
@@ -556,9 +584,7 @@ class ChineseRAGEngine:
                 if not target_world:
                     return True
                 metadata = doc.metadata or {}
-                return (
-                    str(metadata.get("world_id", "default")).strip() == target_world
-                )
+                return str(metadata.get("world_id", "default")).strip() == target_world
 
             for res in semantic_results:
                 doc = res.document
@@ -812,8 +838,7 @@ class ChineseRAGEngine:
     def get_stats(self) -> Dict[str, Any]:
         """Get RAG engine statistics."""
         unique_docs = {
-            doc.metadata.get("parent_doc_id", doc.doc_id)
-            for doc in self.documents.values()
+            doc.metadata.get("parent_doc_id", doc.doc_id) for doc in self.documents.values()
         }
 
         return {
@@ -857,9 +882,7 @@ class ChineseRAGEngine:
                     "doc_id": doc.doc_id,
                     "content": doc.content,
                     "metadata": doc.metadata,
-                    "created_at": doc.created_at.isoformat()
-                    if doc.created_at
-                    else None,
+                    "created_at": doc.created_at.isoformat() if doc.created_at else None,
                 }
 
             with open(filepath / "documents.json", "w", encoding="utf-8") as f:
@@ -985,7 +1008,6 @@ def get_rag_engine(embedding_model: Optional[str] = None) -> ChineseRAGEngine:
         _rag_engine = ChineseRAGEngine(embedding_model)
 
         # Try to load existing index from shared cache
-        config = get_config()
         cache = get_shared_cache()
         index_path = cache.get_output_path("rag") / "index"  # type: ignore[attr-defined]
 

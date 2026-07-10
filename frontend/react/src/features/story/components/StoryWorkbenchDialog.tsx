@@ -143,9 +143,9 @@ export function StoryWorkbenchDialog({
 }: StoryWorkbenchDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[90vw] w-[1200px] h-[90vh] p-0 overflow-hidden bg-slate-950 border-slate-800 shadow-2xl flex flex-col">
+      <DialogContent className="h-[100dvh] w-screen max-w-none p-0 overflow-hidden bg-slate-950 border-slate-800 shadow-2xl flex flex-col sm:h-[92dvh] sm:w-[96vw] sm:max-w-[1200px] sm:rounded-xl">
         {/* Header - Fixed */}
-        <div className="px-8 py-6 border-b border-white/5 bg-indigo-950/10 flex-shrink-0">
+        <div className="px-4 py-4 border-b border-white/5 bg-indigo-950/10 flex-shrink-0 sm:px-8 sm:py-6">
           <DialogHeader>
             <div className="flex items-center gap-3">
                <Terminal className="w-7 h-7 text-indigo-400" />
@@ -160,8 +160,8 @@ export function StoryWorkbenchDialog({
         {/* Content Area - Scrollable */}
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden text-slate-100">
           <Tabs defaultValue="world" value={tab} onValueChange={onTabChange} className="h-full flex flex-col">
-            <div className="px-8 py-2 border-b border-white/5 bg-slate-900/20">
-              <TabsList className="bg-transparent border-none gap-2 h-12">
+            <div className="overflow-x-auto border-b border-white/5 bg-slate-900/20 px-2 py-2 sm:px-8">
+              <TabsList className="h-12 min-w-max gap-2 border-none bg-transparent">
                 <WorkbenchTabTrigger value="world" icon={<Globe className="w-4 h-4" />} label="世界工作室" />
                 <WorkbenchTabTrigger value="t2i" icon={<ImageIcon className="w-4 h-4" />} label="場景視覺" />
                 <WorkbenchTabTrigger value="batch" icon={<LayoutGrid className="w-4 h-4" />} label="批次任務" />
@@ -170,7 +170,7 @@ export function StoryWorkbenchDialog({
             </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar">
-              <div className="p-8">
+              <div className="p-4 sm:p-8">
                 <TabsContent value="world" className="mt-0 outline-none">
                    <WorldStudioPanel worldId={worldId} sessionId={sessionId} />
                 </TabsContent>

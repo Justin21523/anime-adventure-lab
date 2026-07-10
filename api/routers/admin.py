@@ -4,9 +4,10 @@ Admin Operations Router
 """
 
 import logging
+import os
+import psutil
 from fastapi import APIRouter, HTTPException, Depends
-from core.llm.adapter import get_llm_adapter
-from core.vlm.engine import get_vlm_engine
+from api.dependencies import get_llm, get_vlm
 from schemas.admin import AdminSystemInfoResponse, AdminModelControlRequest
 
 logger = logging.getLogger(__name__)
@@ -24,13 +25,13 @@ async def get_system_info():
         return AdminSystemInfoResponse(  # type: ignore
             cache_stats=cache.get_cache_stats(),
             loaded_models={
-                "llm": get_llm_adapter().list_loaded_models(),
-                "vlm": get_vlm_engine().get_status(),
+                "llm": get_llm().list_loaded_models(),
+                "vlm": get_vlm().get_status(),
             },
             system_resources={
-                "gpu_memory_gb": 12.0,  # Mock data
-                "cpu_cores": 8,
-                "ram_gb": 32.0,
+                "gpu_memory_gb": 0.0,
+                "cpu_cores": os.cpu_count() or 1,
+                "ram_gb": round(psutil.virtual_memory().total / 1024**3, 2),
             },
         )
 
@@ -43,8 +44,8 @@ async def control_models(request: AdminModelControlRequest):
     """Load/unload models"""
     try:
         if request.action == "unload_all":
-            get_llm_adapter().unload_all()
-            get_vlm_engine().unload_models()
+            get_llm().unload_all()
+            get_vlm().unload_models()
             return {"message": "All models unloaded"}
         else:
             return {"message": f"Action {request.action} not implemented"}

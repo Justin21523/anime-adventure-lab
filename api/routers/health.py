@@ -3,13 +3,17 @@
 Health Check Router
 Provides system health and status information
 """
+
 from __future__ import annotations
 import time
 import psutil
 import os
 import logging
-import torch
-from pathlib import Path
+
+try:
+    import torch
+except ImportError:  # lightweight API image intentionally omits torch
+    torch = None  # type: ignore[assignment]
 from datetime import datetime
 from typing import Dict, Any
 from fastapi import APIRouter, Request, Depends
@@ -17,11 +21,9 @@ from pydantic import BaseModel
 import sys
 import platform
 
-from ..dependencies import get_cache, get_settings
+from ..dependencies import get_cache, get_llm, get_settings, get_vlm
 from core.config import get_config
 from core.shared_cache import get_shared_cache
-from core.llm.adapter import get_llm_adapter
-from core.vlm.engine import get_vlm_engine
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -103,7 +105,7 @@ async def health_check(cache=Depends(get_cache), settings=Depends(get_settings))
 
     # LLM health status
     try:
-        llm = get_llm_adapter()
+        llm = get_llm()
         llm_health = llm.health_check()
     except Exception as e:
         llm_health = {"error": str(e), "available": False}
@@ -125,8 +127,8 @@ async def detailed_status():
     """Detailed system status"""
     config = get_config()
     cache = get_shared_cache()
-    llm_adapter = get_llm_adapter()
-    vlm_engine = get_vlm_engine()
+    llm_adapter = get_llm()
+    vlm_engine = get_vlm()
     t2i_status = None
     try:
         from core.t2i.engine import get_t2i_engine
@@ -142,11 +144,13 @@ async def detailed_status():
 
     return {
         "system": {
-            "gpu_available": torch.cuda.is_available(),
+            "gpu_available": bool(torch and torch.cuda.is_available()),
             "cuda_device_count": (
-                torch.cuda.device_count() if torch.cuda.is_available() else 0
+                torch.cuda.device_count() if torch and torch.cuda.is_available() else 0
             ),
-            "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+            "cuda_device": (
+                torch.cuda.get_device_name(0) if torch and torch.cuda.is_available() else None
+            ),
         },
         "cache": cache.get_cache_stats(),
         "models": {

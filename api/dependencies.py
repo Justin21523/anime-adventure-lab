@@ -10,6 +10,7 @@ from functools import lru_cache
 from types import SimpleNamespace
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from fastapi import HTTPException
@@ -45,6 +46,7 @@ _license_mgr = None
 _attr = None
 _compliance = None
 _story_engine = None
+_story_engine_lock = threading.Lock()
 _persona_mgr = None
 
 
@@ -248,10 +250,9 @@ def _new_t2i():
 
 def _new_llm():
     try:
-        use_mock = os.getenv("LLM_MOCK", "0").lower() in {"1", "true", "yes", "on"}
-        from core.llm.adapter import get_llm_adapter
+        from core.llm.runtime import get_runtime_llm
 
-        return get_llm_adapter(use_mock=use_mock)
+        return get_runtime_llm()
     except Exception as e:
         raise RuntimeError(f"LLM engine init failed: {e}") from e
 
@@ -404,12 +405,30 @@ def get_compliance_logger():
 
 
 def get_story_engine(llm=None):
-    # If llm DI is needed, import here to avoid circulars
-    from .dependencies import get_llm  # local import to prevent cycle
+    """Return the shared Story engine with explicit dependency wiring.
 
+    ``StoryEngine`` accepts a configuration directory as its first argument.
+    The previous provider passed an LLM adapter positionally, which made the
+    first Story request fail while joining ``config_dir / game_persona.json``.
+    """
     global _story_engine
-    if _story_engine is None:
-        _story_engine = StoryEngine(get_llm())
+    if _story_engine is not None:
+        return _story_engine
+
+    with _story_engine_lock:
+        if _story_engine is None:
+            config = get_config()
+            _story_engine = StoryEngine(
+                config_dir=Path(config.config_dir),
+                enhanced_mode=True,
+            )
+            adapter = llm if llm is not None else get_llm()
+            try:
+                _story_engine.narrative_generator.llm = adapter
+            except Exception as exc:  # pragma: no cover - optional adapter hook
+                logging.getLogger(__name__).debug(
+                    "Story LLM adapter injection skipped: %s", exc
+                )
     return _story_engine
 
 

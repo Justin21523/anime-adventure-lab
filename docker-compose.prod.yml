@@ -22,12 +22,28 @@ x-backend-env: &backend_env
   CELERY_RESULT_BACKEND: redis://redis:6379/0
 
   # Production DB (override if needed)
-  DATABASE_URL: ${DATABASE_URL:-postgresql://saga:saga123@postgres:5432/sagaforge}
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
 
   # Safe defaults (mock heavy models unless explicitly disabled)
   T2I_MOCK: ${T2I_MOCK:-1}
   VLM_MOCK: ${VLM_MOCK:-1}
   CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-}
+  ENABLE_API_AUTH: "1"
+  STORY_RUNTIME_MODE: ${STORY_RUNTIME_MODE:-deterministic}
+  RAG_RUNTIME_MODE: ${RAG_RUNTIME_MODE:-deterministic}
+  WORKER_PROFILE: ${WORKER_PROFILE:-core}
+  LLM_BACKEND: ${LLM_BACKEND:-llamacpp}
+  LLAMA_SERVER_URL: ${LLAMA_SERVER_URL:-http://host.docker.internal:8080}
+  API_SECRET_KEY: ${API_SECRET_KEY:?API_SECRET_KEY must be set}
+  API_SESSION_SECRET: ${API_SESSION_SECRET:?API_SESSION_SECRET must be set}
+  API_ADMIN_PASSWORD_HASH: ${API_ADMIN_PASSWORD_HASH:?API_ADMIN_PASSWORD_HASH must be set}
+  API_COOKIE_SECURE: "1"
+  PUBLIC_API_DOCS: ${PUBLIC_API_DOCS:-0}
+  API_LOGIN_RATE_LIMIT_PER_MINUTE: ${API_LOGIN_RATE_LIMIT_PER_MINUTE:-10}
+  LOG_FORMAT: json
+  MINIO_ENDPOINT: minio:9000
+  MINIO_USER: ${MINIO_USER:?MINIO_USER must be set}
+  MINIO_PASSWORD: ${MINIO_PASSWORD:?MINIO_PASSWORD must be set}
 
 x-backend-volumes: &backend_volumes
   - ${AI_CACHE_ROOT:-./warehouse/ai_cache}:/warehouse/ai_cache
@@ -40,9 +56,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-sagaforge}
       POSTGRES_USER: ${POSTGRES_USER:-saga}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-saga123}
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -54,8 +68,6 @@ services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -68,13 +80,40 @@ services:
     image: minio/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: ${MINIO_USER:-sagaforge}
-      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-sagaforge123}
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+      MINIO_ROOT_USER: ${MINIO_USER:?MINIO_USER must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:?MINIO_PASSWORD must be set}
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mc alias set local http://minio:9000 "$$MINIO_USER" "$$MINIO_PASSWORD" &&
+        mc mb --ignore-existing local/uploads local/generated local/exports
+    environment:
+      MINIO_USER: ${MINIO_USER:?MINIO_USER must be set}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:?MINIO_PASSWORD must be set}
+    restart: "no"
+
+  migrate:
+    build: *backend_build
+    environment: *backend_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
 
   api:
     build: *backend_build
@@ -84,14 +123,21 @@ services:
       API_PORT: 8000
       API_PREFIX: ${API_PREFIX:-/api/v1}
       API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost,http://localhost:3000}
+      API_TRUSTED_HOSTS: ${API_TRUSTED_HOSTS:-localhost,127.0.0.1,api}
     volumes: *backend_volumes
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s
@@ -109,7 +155,36 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    command: ["celery", "-A", "workers.celery_app:celery_app", "worker", "-l", "INFO"]
+    command:
+      - celery
+      - -A
+      - workers.celery_app:celery_app
+      - worker
+      - -l
+      - INFO
+      - --uid=nobody
+      - --gid=nogroup
+      - --concurrency=${CELERY_WORKER_CONCURRENCY:-2}
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A workers.celery_app:celery_app inspect ping -d celery@$$HOSTNAME --timeout=5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  scheduler:
+    build: *backend_build
+    environment: *backend_env
+    volumes: *backend_volumes
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["celery", "-A", "workers.celery_app:celery_app", "beat", "-l", "INFO"]
+    healthcheck:
+      disable: true
     restart: unless-stopped
 
   frontend:
@@ -124,17 +199,26 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  portfolio:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.portfolio
+    ports:
+      - "${PORTFOLIO_PORT:-8081}:80"
+    restart: unless-stopped
+
   flower:
     image: mher/flower:latest
     environment:
       CELERY_BROKER_URL: redis://redis:6379/0
       FLOWER_PORT: 5555
     ports:
-      - "5555:5555"
+      - "127.0.0.1:${FLOWER_PORT:-5555}:5555"
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    profiles: ["ops"]
 
 volumes:
   postgres_data:

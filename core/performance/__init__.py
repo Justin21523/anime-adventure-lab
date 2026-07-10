@@ -1,74 +1,65 @@
-"""Performance utilities package."""
+"""Performance utilities with lazy optional model dependencies."""
 
-import torch
+from __future__ import annotations
 
-from .monitor import (
-    PerformanceMonitor,
-    SystemMonitor,
-    PerformanceProfiler,
-    GPUMonitor,
-    SystemMetrics,
-    RequestMetrics,
-)
+from importlib import import_module
+from typing import Any
 
-from .cache_manager import CacheManager, CacheConfig
+_EXPORTS = {
+    **{
+        name: ("core.performance.monitor", name)
+        for name in [
+            "PerformanceMonitor",
+            "SystemMonitor",
+            "PerformanceProfiler",
+            "GPUMonitor",
+            "SystemMetrics",
+            "RequestMetrics",
+        ]
+    },
+    "CacheManager": ("core.performance.cache_manager", "CacheManager"),
+    "CacheConfig": ("core.performance.cache_manager", "CacheConfig"),
+    **{
+        name: ("core.performance.quantization", name)
+        for name in [
+            "QuantizationManager",
+            "QuantizationConfig",
+            "QuantizationMode",
+            "create_quantization_config",
+            "get_quantization_manager",
+        ]
+    },
+    **{
+        name: ("core.performance.batch_optimizer", name)
+        for name in ["BatchProcessor", "BatchConfig", "BatchStrategy", "BatchMetrics"]
+    },
+}
 
-from .quantization import (
-    QuantizationManager,
-    QuantizationConfig,
-    QuantizationMode,
-    create_quantization_config,
-    get_quantization_manager,
-)
+_performance_monitor: Any = None
+__all__ = [*_EXPORTS, "gpu_available", "get_performance_monitor"]
 
-from .batch_optimizer import (
-    BatchProcessor,
-    BatchConfig,
-    BatchStrategy,
-    BatchMetrics,
-)
 
-_performance_monitor = None
+def __getattr__(name: str) -> Any:
+    target = _EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(name)
+    module_name, attribute = target
+    value = getattr(import_module(module_name), attribute)
+    globals()[name] = value
+    return value
 
 
 def gpu_available() -> bool:
-    """Return whether CUDA GPU is available."""
     try:
-        return torch.cuda.is_available()
-    except Exception:
+        import torch
+
+        return bool(torch.cuda.is_available())
+    except ImportError:
         return False
 
 
-def get_performance_monitor() -> PerformanceMonitor:
-    """Global singleton for performance monitoring."""
+def get_performance_monitor():
     global _performance_monitor
     if _performance_monitor is None:
-        _performance_monitor = PerformanceMonitor()
+        _performance_monitor = __getattr__("PerformanceMonitor")()
     return _performance_monitor
-
-
-__all__ = [
-    # Monitoring
-    "gpu_available",
-    "PerformanceMonitor",
-    "SystemMonitor",
-    "PerformanceProfiler",
-    "GPUMonitor",
-    "SystemMetrics",
-    "RequestMetrics",
-    "get_performance_monitor",
-    # Caching
-    "CacheManager",
-    "CacheConfig",
-    # Quantization
-    "QuantizationManager",
-    "QuantizationConfig",
-    "QuantizationMode",
-    "create_quantization_config",
-    "get_quantization_manager",
-    # Batch optimization
-    "BatchProcessor",
-    "BatchConfig",
-    "BatchStrategy",
-    "BatchMetrics",
-]

@@ -16,7 +16,8 @@ from enum import Enum
 from pathlib import Path
 
 # Enhanced imports
-from ..llm import ChatMessage, LLMResponse, get_llm_adapter
+from ..llm.base import ChatMessage, LLMResponse
+from ..llm.runtime import get_runtime_llm
 from ..config import get_config
 from ..exceptions import (
     GameError,
@@ -31,6 +32,7 @@ if TYPE_CHECKING:  # Avoid circular import at runtime
 
 
 logger = logging.getLogger(__name__)
+get_llm_adapter = get_runtime_llm
 
 
 # =============================================================================
@@ -278,9 +280,7 @@ class SceneContext:
             {
                 "type": "atmosphere_change",
                 "from": (
-                    old_atmosphere
-                    if hasattr(old_atmosphere, "value")
-                    else str(old_atmosphere)
+                    old_atmosphere if hasattr(old_atmosphere, "value") else str(old_atmosphere)
                 ),
                 "to": (
                     new_atmosphere.value
@@ -298,14 +298,10 @@ class SceneContext:
             "title": self.title,
             "location": self.location,
             "scene_type": (
-                self.scene_type.value
-                if hasattr(self.scene_type, "value")
-                else str(self.scene_type)
+                self.scene_type.value if hasattr(self.scene_type, "value") else str(self.scene_type)
             ),
             "atmosphere": (
-                self.atmosphere
-                if hasattr(self.atmosphere, "value")
-                else str(self.atmosphere)
+                self.atmosphere if hasattr(self.atmosphere, "value") else str(self.atmosphere)
             ),
             "character_count": len(self.present_characters),
             "present_characters": self.present_characters,
@@ -330,9 +326,7 @@ class SceneContext:
             "time_of_day": self.time_of_day,
             "weather": self.weather,
             "atmosphere": (
-                self.atmosphere.value
-                if hasattr(self.atmosphere, "value")
-                else str(self.atmosphere)
+                self.atmosphere.value if hasattr(self.atmosphere, "value") else str(self.atmosphere)
             ),
             "present_characters": self.present_characters,
             "primary_npc": self.primary_npc,
@@ -453,9 +447,7 @@ class StoryContextMemory:
         self.add_narrative_memory(
             {
                 "type": "scene_transition",
-                "from_scene": (
-                    self.scene_history[-1].scene_id if self.scene_history else None
-                ),
+                "from_scene": (self.scene_history[-1].scene_id if self.scene_history else None),
                 "to_scene": new_scene.scene_id,
                 "location": new_scene.location,
             }
@@ -497,9 +489,7 @@ class StoryContextMemory:
         """Get current scene context"""
         return self.scenes.get(self.current_scene_id)  # type: ignore
 
-    def get_characters_in_scene(
-        self, scene_id: Optional[str] = None
-    ) -> List[GameCharacter]:
+    def get_characters_in_scene(self, scene_id: Optional[str] = None) -> List[GameCharacter]:
         """Get all characters present in the specified or current scene"""
         target_scene = self.current_scene
         if scene_id:
@@ -563,9 +553,7 @@ def safe_get_enum_value(enum_obj: Any, default: str = "unknown") -> str:
         return default
 
 
-def create_default_scene(
-    location: str = "起始點", scene_id: str = "scene_001"
-) -> SceneContext:
+def create_default_scene(location: str = "起始點", scene_id: str = "scene_001") -> SceneContext:
     """Create a default scene for initialization"""
     return SceneContext(
         scene_id=scene_id,
@@ -686,11 +674,7 @@ class ContextualChoice:
 
             if current_scene and hasattr(current_scene, "present_characters"):
                 if char_id not in current_scene.present_characters:
-                    char_name = (
-                        context_chars[char_id].name
-                        if char_id in context_chars
-                        else char_id
-                    )
+                    char_name = context_chars[char_id].name if char_id in context_chars else char_id
                     return False, f"角色不在場: {char_name}"
 
         # Check flag requirements
@@ -807,18 +791,14 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         )
 
         # Determine scene changes and transitions
-        scene_changes = self._analyze_scene_changes(
-            context_memory, player_input, choice_result
-        )
+        scene_changes = self._analyze_scene_changes(context_memory, player_input, choice_result)
 
         return {
             "main_narrative": main_narrative,
             "character_dialogues": character_dialogues,
             "scene_changes": scene_changes,
             "narrative_focus": (
-                narrative_focus.value
-                if isinstance(narrative_focus, Enum)
-                else narrative_focus
+                narrative_focus.value if isinstance(narrative_focus, Enum) else narrative_focus
             ),
             "present_characters": [char.name for char in present_characters],
             "mood_shift": self._detect_mood_shift(context_memory, main_narrative),
@@ -899,15 +879,11 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         # World state context
         world_context = []
         if context_memory.world_flags:
-            active_flags = [
-                f"{k}: {v}" for k, v in context_memory.world_flags.items() if v
-            ]
+            active_flags = [f"{k}: {v}" for k, v in context_memory.world_flags.items() if v]
             world_context.append(f"世界狀態: {', '.join(active_flags[:5])}")
 
         if context_memory.main_plot_points:
-            world_context.append(
-                f"主要劇情: {'; '.join(context_memory.main_plot_points[-3:])}"
-            )
+            world_context.append(f"主要劇情: {'; '.join(context_memory.main_plot_points[-3:])}")
 
         # Recent player decisions context
         recent_decisions = []
@@ -925,34 +901,32 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
             out = str(entry.get("ai_response") or "").strip()
             turn_num = entry.get("turn", "?")
             if inp and out:
-                recent_history.append(
-                    f"  Turn {turn_num}: 玩家→{inp[:80]} | 敘事者→{out[:120]}"
-                )
+                recent_history.append(f"  Turn {turn_num}: 玩家→{inp[:80]} | 敘事者→{out[:120]}")
 
         context_prompt = f"""
 故事上下文資訊：
 
 【當前場景】
-場景: {current_scene.title if current_scene else '未知'}
-位置: {current_scene.location if current_scene else '未知'}
-時間: {current_scene.time_of_day if current_scene else '未知'}
-氣氛: {current_scene.atmosphere if current_scene else '中性'}
-場景目標: {', '.join(current_scene.scene_objectives) if current_scene and current_scene.scene_objectives else '探索'}
+場景: {current_scene.title if current_scene else "未知"}
+位置: {current_scene.location if current_scene else "未知"}
+時間: {current_scene.time_of_day if current_scene else "未知"}
+氣氛: {current_scene.atmosphere if current_scene else "中性"}
+場景目標: {", ".join(current_scene.scene_objectives) if current_scene and current_scene.scene_objectives else "探索"}
 
 【在場角色】
-{chr(10).join(character_context) if character_context else '無其他角色'}
+{chr(10).join(character_context) if character_context else "無其他角色"}
 
 【最近場景歷史】
-{chr(10).join(recent_scenes) if recent_scenes else '故事剛開始'}
+{chr(10).join(recent_scenes) if recent_scenes else "故事剛開始"}
 
 【世界狀態】
-{chr(10).join(world_context) if world_context else '無特殊狀態'}
+{chr(10).join(world_context) if world_context else "無特殊狀態"}
 
 【最近玩家決定】
-{chr(10).join(recent_decisions) if recent_decisions else '尚無重要決定'}
+{chr(10).join(recent_decisions) if recent_decisions else "尚無重要決定"}
 
 【最近回合紀錄】（防止重複生成相同的初始敘述）
-{chr(10).join(recent_history) if recent_history else '故事剛開始，尚無回合紀錄'}
+{chr(10).join(recent_history) if recent_history else "故事剛開始，尚無回合紀錄"}
 
 【當前玩家行動】
 玩家輸入: {player_input}
@@ -1085,11 +1059,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
             return True
 
         # Character hasn't spoken recently and is primary NPC
-        if (
-            character.character_id == current_scene.primary_npc
-            if current_scene
-            else False
-        ):
+        if character.character_id == current_scene.primary_npc if current_scene else False:
             if character.interaction_count < 2:  # Keep important NPCs active
                 return True
 
@@ -1107,9 +1077,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         """Generate dialogue for a single character"""
 
         # Get relationship context
-        relationship_info = context_memory.get_relationship_context(
-            character.character_id
-        )
+        relationship_info = context_memory.get_relationship_context(character.character_id)
         relationship_score = relationship_info.get("player_relationship_score", 0)
 
         # Build character-specific context
@@ -1117,7 +1085,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 角色資訊：
 - 姓名：{character.name}
 - 角色：{character.role.value}
-- 個性特徵：{', '.join(character.personality_traits)}
+- 個性特徵：{", ".join(character.personality_traits)}
 - 說話風格：{character.speaking_style}
 - 當前狀態：{character.current_state.value}
 - 與玩家關係評分：{relationship_score}/10
@@ -1138,9 +1106,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         """
 
         messages = [
-            ChatMessage(
-                role="system", content=character.persona_prompt or "你是一個故事角色"
-            ),
+            ChatMessage(role="system", content=character.persona_prompt or "你是一個故事角色"),
             ChatMessage(role="user", content=character_prompt),
         ]
 
@@ -1356,13 +1322,16 @@ class EnhancedStoryEngine:
 
             # Create initial scene
             initial_scene = self._create_initial_scene(
-                session_id, starting_location, player_name  # type: ignore
+                session_id,
+                starting_location,
+                player_name,  # type: ignore
             )
             context_memory.transition_to_scene(initial_scene)
 
             # Setup character roster
             character_roster = self._setup_character_roster(
-                session_id, custom_characters  # type: ignore
+                session_id,
+                custom_characters,  # type: ignore
             )
             self.character_managers[session_id] = character_roster  # type: ignore
 
@@ -1497,9 +1466,7 @@ class EnhancedStoryEngine:
 
         return result
 
-    def _update_character_states(
-        self, session_id: str, choice_id: str, result: Dict[str, Any]
-    ):
+    def _update_character_states(self, session_id: str, choice_id: str, result: Dict[str, Any]):
         """Update character emotional and relationship states"""
 
         if session_id not in self.character_managers:
@@ -1510,9 +1477,7 @@ class EnhancedStoryEngine:
 
         # Update based on choice consequences
         if "relationships" in result.get("consequences", {}):
-            for char_id, relationship_change in result["consequences"][
-                "relationships"
-            ].items():
+            for char_id, relationship_change in result["consequences"]["relationships"].items():
                 if char_id in characters:
                     context_memory.update_character_relationship(
                         "player", char_id, relationship_change
@@ -1600,18 +1565,11 @@ class EnhancedStoryEngine:
             enhanced_info = {
                 "context_memory": {
                     "current_scene": {
-                        "location": (
-                            current_scene.location if current_scene else "unknown"
-                        ),
-                        "atmosphere": (
-                            current_scene.atmosphere if current_scene else "unknown"
-                        ),
-                        "present_characters": len(
-                            context_memory.get_characters_in_scene()
-                        ),
+                        "location": (current_scene.location if current_scene else "unknown"),
+                        "atmosphere": (current_scene.atmosphere if current_scene else "unknown"),
+                        "present_characters": len(context_memory.get_characters_in_scene()),
                     },
-                    "total_scenes": len(context_memory.scene_history)
-                    + (1 if current_scene else 0),
+                    "total_scenes": len(context_memory.scene_history) + (1 if current_scene else 0),
                     "character_count": len(context_memory.characters),
                     "world_flags": len(context_memory.world_flags),
                     "narrative_memories": len(context_memory.narrative_memory),
@@ -1634,15 +1592,9 @@ class EnhancedStoryEngine:
 
         summary = {
             "total_relationships": len(relationships),
-            "positive_relationships": len(
-                [r for r in relationships.values() if r > 20]
-            ),
-            "negative_relationships": len(
-                [r for r in relationships.values() if r < -20]
-            ),
-            "neutral_relationships": len(
-                [r for r in relationships.values() if -20 <= r <= 20]
-            ),
+            "positive_relationships": len([r for r in relationships.values() if r > 20]),
+            "negative_relationships": len([r for r in relationships.values() if r < -20]),
+            "neutral_relationships": len([r for r in relationships.values() if -20 <= r <= 20]),
         }
 
         return summary
@@ -1735,9 +1687,9 @@ class EnhancedStoryEngine:
         for character in present_characters:
             if character.character_id != "player":
                 # 獲取關係值
-                relationship = context_memory.character_relationships.get(
-                    "player", {}
-                ).get(character.character_id, 0)
+                relationship = context_memory.character_relationships.get("player", {}).get(
+                    character.character_id, 0
+                )
 
                 # 根據關係調整選擇
                 if relationship > 20:
@@ -1881,9 +1833,7 @@ class EnhancedStoryEngine:
             "neutral": "平靜的情緒讓人能夠冷靜思考",
         }
 
-        base_framework = emotional_frameworks.get(
-            emotion_type, emotional_frameworks["neutral"]
-        )
+        base_framework = emotional_frameworks.get(emotion_type, emotional_frameworks["neutral"])
 
         # Add character emotional responses
         if characters:
@@ -1900,9 +1850,7 @@ class EnhancedStoryEngine:
             event_impact = "剛才發生的事情讓每個人都在消化和反思"
             base_framework += f"。{event_impact}"
 
-        return (
-            base_framework + "。情感的波動在這個場景中尤其明顯，影響著每個人的決定..."
-        )
+        return base_framework + "。情感的波動在這個場景中尤其明顯，影響著每個人的決定..."
 
     async def process_enhanced_turn(
         self, session_id: str, player_input: str, choice_id: Optional[str] = None
@@ -1991,7 +1939,9 @@ class EnhancedStoryEngine:
 
         # Check if choice can be executed
         can_execute, reason = selected_choice.can_execute(
-            context_memory, {}, []  # TODO: Add actual player stats and inventory
+            context_memory,
+            {},
+            [],  # TODO: Add actual player stats and inventory
         )
 
         if not can_execute:
@@ -2053,10 +2003,7 @@ class EnhancedStoryEngine:
             }
 
             for keyword, plot_point in plot_keywords.items():
-                if (
-                    keyword in narrative
-                    and plot_point not in context_memory.main_plot_points
-                ):
+                if keyword in narrative and plot_point not in context_memory.main_plot_points:
                     context_memory.main_plot_points.append(plot_point)
                     current_scene.add_plot_point(plot_point)
 
@@ -2102,9 +2049,7 @@ class EnhancedStoryEngine:
         current_scene = context_memory.get_current_scene()
 
         # Generate new scene ID
-        scene_count = (
-            len(context_memory.scenes) + 1
-        )  # 使用 scenes 字典而不是不存在的屬性
+        scene_count = len(context_memory.scenes) + 1  # 使用 scenes 字典而不是不存在的屬性
         new_scene_id = f"scene_{scene_count:03d}"
 
         # Determine new scene properties
@@ -2122,17 +2067,14 @@ class EnhancedStoryEngine:
                 "mysterious": SceneMood.MYSTERIOUS,
                 "exciting": SceneMood.EXCITING,
             }
-            new_atmosphere = mood_map.get(
-                narrative_result["mood_shift"], SceneMood.NEUTRAL
-            )
+            new_atmosphere = mood_map.get(narrative_result["mood_shift"], SceneMood.NEUTRAL)
 
         # Create new scene
         new_scene = SceneContext(
             scene_id=new_scene_id,
             scene_type=SceneType.EXPLORATION,
             title=f"場景 {scene_count}",
-            description=narrative_result.get("main_narrative", "新的場景展開...")[:200]
-            + "...",
+            description=narrative_result.get("main_narrative", "新的場景展開...")[:200] + "...",
             location=new_location,
             time_of_day=current_scene.time_of_day if current_scene else "未知",
             weather=current_scene.weather if current_scene else "未知",
@@ -2166,9 +2108,7 @@ class EmotionalAI:
             "achievement": CharacterState.EXCITED,
         }
 
-    def process_emotional_context(
-        self, event_type: str, characters: List[GameCharacter]
-    ):
+    def process_emotional_context(self, event_type: str, characters: List[GameCharacter]):
         """Process emotional context for characters"""
         if event_type in self.emotion_mappings:
             target_emotion = self.emotion_mappings[event_type]

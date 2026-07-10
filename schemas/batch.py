@@ -37,7 +37,7 @@ class BatchJobRequest(BaseModel):
     )
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "job_type": "caption",
                 "inputs": ["/path/to/image1.jpg", "/path/to/image2.jpg"],

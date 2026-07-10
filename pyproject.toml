@@ -8,4 +8,49 @@ version = "0.1.0"
 description = "LLM + RAG + T2I + VLM + LoRA service stack (FastAPI + Celery)."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+  "fastapi>=0.104,<1",
+  "uvicorn[standard]>=0.24,<1",
+  "pydantic>=2.5,<3",
+  "pydantic-settings>=2.1,<3",
+  "celery[redis]>=5.3,<6",
+  "redis>=5,<7",
+  "sqlalchemy>=2,<3",
+  "alembic>=1.13,<2",
+  "psycopg2-binary>=2.9,<3",
+  "pgvector>=0.3,<1",
+  "minio>=7.2,<8",
+  "argon2-cffi>=23.1,<26",
+  "faiss-cpu>=1.7.4,<2",
+  "rank-bm25>=0.2.2,<1",
+  "pillow>=10,<13",
+  "numpy>=1.24,<3",
+  "psutil>=5.9,<8",
+  "pyyaml>=6,<7",
+  "python-multipart>=0.0.6,<1",
+  "httpx>=0.25,<1",
+]
+
+[project.optional-dependencies]
+ai = [
+  "torch>=2.1",
+  "torchvision",
+  "transformers>=4.41,<5",
+  "sentence-transformers>=3,<6",
+  "accelerate>=0.30,<2",
+  "peft>=0.10,<1",
+  "diffusers>=0.24,<1",
+]
+dev = [
+  "pytest>=7.4,<10",
+  "pytest-asyncio>=0.21,<2",
+  "pytest-cov>=4.1,<8",
+  "pytest-mock>=3.11,<4",
+  "ruff>=0.1.6,<1",
+  "black>=23.10,<27",
+  "isort>=5.12,<7",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100

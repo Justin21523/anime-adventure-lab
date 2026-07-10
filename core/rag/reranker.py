@@ -7,10 +7,7 @@ from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
-try:
-    from sentence_transformers import CrossEncoder  # type: ignore
-except Exception:  # noqa: BLE001
-    CrossEncoder = None  # type: ignore
+CrossEncoder = None
 
 
 def _resolve_device(device: str) -> str:
@@ -51,16 +48,22 @@ class CrossEncoderReranker:
         self._load_failed: bool = False
 
     def is_enabled(self) -> bool:
-        return bool(self.model_name) and (not self._load_failed) and CrossEncoder is not None
+        return bool(self.model_name) and not self._load_failed
 
     def _load(self) -> Optional[Any]:
+        global CrossEncoder
         if self._load_failed:
             return None
         if self._model is not None:
             return self._model
         if CrossEncoder is None:
-            self._load_failed = True
-            return None
+            try:
+                from sentence_transformers import CrossEncoder as _CrossEncoder
+
+                CrossEncoder = _CrossEncoder
+            except Exception:
+                self._load_failed = True
+                return None
 
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)

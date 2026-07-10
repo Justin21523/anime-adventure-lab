@@ -1,0 +1,18 @@
+services:
+  api:
+    environment:
+      API_COOKIE_SECURE: "0"
+      STORY_RUNTIME_MODE: deterministic
+      RAG_RUNTIME_MODE: deterministic
+      PUBLIC_API_DOCS: "0"
+  worker:
+    environment:
+      STORY_RUNTIME_MODE: deterministic
+      RAG_RUNTIME_MODE: deterministic
+      DEMO_JOB_DELAY_MS: ${DEMO_JOB_DELAY_MS:-2400}
+      WORKER_PROFILE: core
+  scheduler:
+    environment:
+      STORY_RUNTIME_MODE: deterministic
+      RAG_RUNTIME_MODE: deterministic
+      WORKER_PROFILE: core

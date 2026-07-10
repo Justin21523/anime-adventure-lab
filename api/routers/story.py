@@ -21,7 +21,6 @@ from core.agents import (
     get_story_agent_manager,
 )
 from core.exceptions import GameError, SessionNotFoundError, InvalidChoiceError
-from core.safety import get_content_filter
 from schemas.game import GamePersonaInfo
 from schemas.story import (
     SceneImage,
@@ -414,6 +413,8 @@ async def _retrieve_story_context(
 def _filter_text(text: str) -> str:
     """Run safety filter to avoid unsafe prompts."""
     try:
+        from core.safety import get_content_filter
+
         cf = get_content_filter()
         result = cf.check_text_safety(text)
         return result.get("filtered_text", text)

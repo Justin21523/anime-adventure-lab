@@ -25,21 +25,24 @@ class SafeFileOperations:
     """
 
     def __init__(self, allowed_dirs: Optional[List[str]] = None):
-        # Default allowed directories (relative to current working directory)
-        default_allowed = [
-            ".",
-            "./data",
-            "./temp",
-            "./outputs",
-            "./cache",
-            tempfile.gettempdir(),
+        # File tools are disabled by default in ToolRegistry. When explicitly
+        # enabled, confine them to generated outputs and a dedicated temp area.
+        configured_roots = [
+            item.strip()
+            for item in os.getenv("AGENT_FILE_ROOTS", "").split(os.pathsep)
+            if item.strip()
         ]
-        self.allowed_dirs = allowed_dirs or default_allowed
+        default_allowed = [
+            os.getenv("AI_OUTPUT_ROOT", "/tmp/ai_output/anime-adventure-lab"),
+            os.path.join(tempfile.gettempdir(), "anime-adventure-lab-agent"),
+        ]
+        self.allowed_dirs = allowed_dirs or configured_roots or default_allowed
 
         # Convert to absolute paths
         self.allowed_paths = []
         for dir_path in self.allowed_dirs:
-            abs_path = os.path.abspath(dir_path)
+            abs_path = str(Path(dir_path).expanduser().resolve())
+            Path(abs_path).mkdir(parents=True, exist_ok=True)
             self.allowed_paths.append(abs_path)
 
         # File size limits (in bytes)
@@ -68,14 +71,15 @@ class SafeFileOperations:
     def _is_path_allowed(self, file_path: str) -> bool:
         """Check if file path is within allowed directories"""
         try:
-            abs_path = os.path.abspath(file_path)
+            candidate = Path(file_path).expanduser().resolve()
 
             for allowed_path in self.allowed_paths:
-                if abs_path.startswith(allowed_path):
+                root = Path(allowed_path).resolve()
+                if candidate == root or root in candidate.parents:
                     return True
 
             logger.warning(
-                f"Access denied to path outside allowed directories: {abs_path}"
+                "Access denied to path outside allowed directories: %s", candidate
             )
             return False
 

@@ -6,7 +6,9 @@ Adapted from charaforge-T2I-Lab/api/security.py for anime-adventure-lab.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -67,9 +69,9 @@ def resolve_api_key(
 ) -> Optional[APIKeyAuth]:
     if not presented:
         return None
-    if presented in admin_keys:
+    if any(hmac.compare_digest(presented, candidate) for candidate in admin_keys):
         return APIKeyAuth(role="admin", scopes={"*"}, key_id=None, source="env")
-    if presented in user_keys:
+    if any(hmac.compare_digest(presented, candidate) for candidate in user_keys):
         return APIKeyAuth(role="user", scopes=set(), key_id=None, source="env")
     if key_store is not None:
         verified = key_store.verify(presented)
@@ -101,7 +103,13 @@ def get_client_key(request: Request, api_key: str | None = None) -> str:
         digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:32]
         return f"key:{digest}"
 
-    forwarded = request.headers.get("X-Forwarded-For")
+    trust_proxy = os.getenv("TRUST_PROXY_HEADERS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    forwarded = request.headers.get("X-Forwarded-For") if trust_proxy else None
     if forwarded:
         candidate = forwarded.split(",")[0].strip()
         if candidate:
@@ -112,11 +120,7 @@ def get_client_key(request: Request, api_key: str | None = None) -> str:
 
 
 def extract_api_key(request: Request, header_name: str) -> Optional[str]:
-    return (
-        request.headers.get(header_name)
-        or request.query_params.get("api_key")
-        or request.query_params.get("token")
-    )
+    return request.headers.get(header_name)
 
 
 def scope_allows(scopes: set[str], required: str) -> bool:

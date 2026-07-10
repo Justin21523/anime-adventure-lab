@@ -31,7 +31,34 @@ test_env = {
 for k, v in test_env.items():
     os.environ[k] = v
 
-from api.main import app
+from api.main import app  # noqa: E402
+
+
+LEGACY_TEST_MODULES = {
+    "test_agent.py",
+    "test_agent_safety.py",
+    "test_agent_story_integration.py",
+    "test_agent_system.py",
+    "test_api_endpoints.py",
+    "test_core_modules.py",
+    "test_e2e_complete.py",
+    "test_e2e_workflow.py",
+    "test_integration_end_to_end.py",
+    "test_performance.py",
+    "test_reliability.py",
+    "test_safety_integration.py",
+    "test_story_engine.py",
+    "test_story_memory_integration.py",
+    "test_t2i_story_integration.py",
+}
+
+
+def pytest_collection_modifyitems(items):
+    """Keep retired v1/experimental contracts runnable without gating v2."""
+    legacy = pytest.mark.legacy
+    for item in items:
+        if item.path.name in LEGACY_TEST_MODULES:
+            item.add_marker(legacy)
 
 
 @pytest.fixture(scope="session")
@@ -92,7 +119,6 @@ def mock_models():
         patch("core.vlm.engine.get_vlm_engine") as mock_vlm,
         patch("torch.cuda.is_available", return_value=False),
     ):
-
         # Mock LLM adapter
         mock_llm_instance = MagicMock()
         mock_llm_instance.generate.return_value = "Mock LLM response"

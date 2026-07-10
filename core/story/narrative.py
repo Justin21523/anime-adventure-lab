@@ -11,7 +11,10 @@ from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass
 import asyncio
 
-from ..llm import ChatMessage, LLMResponse, get_llm_adapter
+from ..llm.base import ChatMessage, LLMResponse
+from ..llm.runtime import get_runtime_llm
+
+get_llm_adapter = get_runtime_llm
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +59,7 @@ class NarrativeGenerator:
         try:
             # Try to get the real underlying LLM (_llm) which may be LlamaCppServerLLM.
             # LLMAdapter.get_llm() wrongly returns a Transformers QwenLLM.
-            inner = getattr(self.llm, '_llm', None)
+            inner = getattr(self.llm, "_llm", None)
             if inner is None:
                 inner = self.llm
 
@@ -111,9 +114,7 @@ class NarrativeGenerator:
         context_prompt = self._build_context_prompt(context)
 
         # Get scene template
-        template = self.scene_templates.get(
-            scene_type, self.scene_templates["exploration"]
-        )
+        template = self.scene_templates.get(scene_type, self.scene_templates["exploration"])
 
         # Create generation prompt
         generation_prompt = f"""
@@ -123,9 +124,9 @@ class NarrativeGenerator:
 
 玩家行動：{player_input}
 場景類型：{scene_type}
-場景模板：{template['template']}
-預期情緒：{template['mood']}
-預期長度：{template['length']}
+場景模板：{template["template"]}
+預期情緒：{template["mood"]}
+預期長度：{template["length"]}
 
 生成要求：
 1. 描述生動的場景和環境
@@ -162,9 +163,7 @@ class NarrativeGenerator:
         ]
 
         if context.previous_scenes:
-            context_parts.append(
-                f"之前場景：{' -> '.join(context.previous_scenes[-3:])}"
-            )
+            context_parts.append(f"之前場景：{' -> '.join(context.previous_scenes[-3:])}")
 
         if context.active_characters:
             context_parts.append(f"在場角色：{', '.join(context.active_characters)}")
@@ -259,7 +258,7 @@ class NarrativeGenerator:
         dialogue_prompt = f"""
 為角色 {character_name} 生成對話：
 
-角色特徵：{', '.join(personality_traits)}
+角色特徵：{", ".join(personality_traits)}
 當前情緒：{current_mood}
 對話情境：{dialogue_context}
 
@@ -357,9 +356,7 @@ class NarrativeGenerator:
 
             # 角色情境
             if characters and isinstance(characters, list):
-                char_names = [
-                    str(char) for char in characters if str(char) != "player"
-                ][:2]
+                char_names = [str(char) for char in characters if str(char) != "player"][:2]
                 if char_names:
                     narrative_parts.append(f"{', '.join(char_names)}也在這裡")
 
@@ -371,10 +368,7 @@ class NarrativeGenerator:
                     narrative_parts.append("你採取了行動")
 
             if narrative_parts:
-                return (
-                    "，".join(narrative_parts)
-                    + "。故事繼續展開，每個選擇都可能帶來新的可能性。"
-                )
+                return "，".join(narrative_parts) + "。故事繼續展開，每個選擇都可能帶來新的可能性。"
             else:
                 return "你的冒險故事在這裡繼續，充滿了無限的可能性。"
 
@@ -397,9 +391,7 @@ class NarrativeGenerator:
             "夢境": f"恍惚間，{from_location}的景象消失了，取而代之的是{to_location}的畫面。",
         }
 
-        base_template = transition_templates.get(
-            transition_method, transition_templates["移動"]
-        )
+        base_template = transition_templates.get(transition_method, transition_templates["移動"])
 
         # Add some randomized details
         detail_options = [
@@ -413,9 +405,7 @@ class NarrativeGenerator:
 
         return f"{base_template} {detail}"
 
-    def get_narrative_suggestions(
-        self, player_input: str, context: StoryContext
-    ) -> List[str]:
+    def get_narrative_suggestions(self, player_input: str, context: StoryContext) -> List[str]:
         """Get narrative direction suggestions based on input"""
 
         input_lower = player_input.lower()
@@ -562,9 +552,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
             "environmental_mood": self._determine_environmental_mood(
                 location, weather, time_of_day
             ),
-            "exploration_potential": self._calculate_exploration_potential(
-                location_type
-            ),
+            "exploration_potential": self._calculate_exploration_potential(location_type),
             "safety_level": self._assess_location_safety(location_type),
         }
 
@@ -637,9 +625,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 
             # Character context
             if characters and isinstance(characters, list):
-                char_names = [
-                    str(char) for char in characters if str(char) != "player"
-                ][:2]
+                char_names = [str(char) for char in characters if str(char) != "player"][:2]
                 if char_names:
                     if len(char_names) == 1:
                         narrative_parts.append(f"{char_names[0]}也在這裡")
@@ -648,9 +634,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 
             # Action context
             if player_input:
-                action_response = self._generate_simple_action_response(
-                    player_input, choice_result
-                )
+                action_response = self._generate_simple_action_response(player_input, choice_result)
                 narrative_parts.append(action_response)
 
             # Choice outcome
@@ -662,10 +646,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
             # Combine parts
             if narrative_parts:
                 base_narrative = "，".join(narrative_parts)
-                return (
-                    base_narrative
-                    + "。故事繼續展開，每個選擇都可能帶來意想不到的結果。"
-                )
+                return base_narrative + "。故事繼續展開，每個選擇都可能帶來意想不到的結果。"
             else:
                 return f"你在{location if location != '未知地點' else '這個神秘的地方'}繼續著冒險，思考著下一步的行動。"
 
@@ -674,9 +655,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
             return "你的冒險故事在這裡繼續，充滿了無限的可能性。"
 
     # 輔助方法
-    def _determine_environmental_mood(
-        self, location: str, weather: str, time_of_day: str
-    ) -> str:
+    def _determine_environmental_mood(self, location: str, weather: str, time_of_day: str) -> str:
         """Determine environmental mood based on location factors"""
         mood_factors = []
 
@@ -756,9 +735,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 
             analysis_context = {
                 "player_input": player_input,
-                "current_location": (
-                    current_scene.location if current_scene else "未知地點"
-                ),
+                "current_location": (current_scene.location if current_scene else "未知地點"),
                 "present_characters": [
                     char.name for char in present_characters if hasattr(char, "name")
                 ],
@@ -797,16 +774,19 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
                     raw_narrative = response.content.strip()
                 else:
                     raw_narrative = str(response or "").strip()
-            
+
             if not raw_narrative:
                 raw_narrative = self.generate_narrative(analysis_context, choice_result)
 
             # 5. Extract state delta
             state_delta = self._extract_state_delta(raw_narrative)
-            
+
             # Clean JSON from narrative if present to avoid UI artifacts
             import re
-            clean_narrative = re.sub(r"```json\s*\{.*?\}\s*```", "", raw_narrative, flags=re.DOTALL).strip()
+
+            clean_narrative = re.sub(
+                r"```json\s*\{.*?\}\s*```", "", raw_narrative, flags=re.DOTALL
+            ).strip()
             clean_narrative = re.sub(r"\{.*?\}\s*$", "", clean_narrative, flags=re.DOTALL).strip()
 
             return {
@@ -818,9 +798,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
                 "scene_developments": self._generate_scene_developments_enhanced(
                     current_scene, choice_result
                 ),
-                "narrative_suggestions": progression_analysis[
-                    "plot_development_suggestions"
-                ],
+                "narrative_suggestions": progression_analysis["plot_development_suggestions"],
                 "mood_indicators": [mood_analysis["dominant_mood"]],
                 "context_analysis": {
                     "mood": mood_analysis,
@@ -833,7 +811,9 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         except Exception as e:
             logger.error(f"Enhanced narrative generation failed: {e}", exc_info=True)
             return {
-                "main_narrative": self.generate_narrative({"player_input": player_input}, choice_result),
+                "main_narrative": self.generate_narrative(
+                    {"player_input": player_input}, choice_result
+                ),
                 "state_delta": {},
                 "character_reactions": {},
                 "scene_developments": {},
@@ -981,9 +961,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         if char_count == 1:
             char = characters[0]
             rel_type = relationships.get(char, "neutral")
-            rel_desc = {"positive": "友好地", "negative": "謹慎地", "neutral": ""}[
-                rel_type
-            ]
+            rel_desc = {"positive": "友好地", "negative": "謹慎地", "neutral": ""}[rel_type]
             return f"{char}{rel_desc}在場"
         else:
             char_list = "、".join(characters[:2])
@@ -1039,19 +1017,13 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 
         for char in characters:
             if hasattr(char, "character_id") and char.character_id != "player":
-                reaction = self._generate_individual_character_reaction(
-                    char, dominant_mood
-                )
+                reaction = self._generate_individual_character_reaction(char, dominant_mood)
                 if reaction:
-                    reactions[
-                        char.name if hasattr(char, "name") else char.character_id
-                    ] = reaction
+                    reactions[char.name if hasattr(char, "name") else char.character_id] = reaction
 
         return reactions
 
-    def _generate_individual_character_reaction(
-        self, character: Any, mood: str
-    ) -> Optional[str]:
+    def _generate_individual_character_reaction(self, character: Any, mood: str) -> Optional[str]:
         """Generate individual character reaction based on mood"""
         personality_traits = getattr(character, "personality_traits", [])
 
@@ -1077,9 +1049,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         # 找到匹配的特質
         for trait in personality_traits:
             if trait in trait_reactions:
-                return trait_reactions[trait].get(
-                    mood, trait_reactions[trait]["neutral"]
-                )
+                return trait_reactions[trait].get(mood, trait_reactions[trait]["neutral"])
 
         # 預設反應
         default_reactions = {
@@ -1111,9 +1081,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         # 氣氛變化檢查
         success = choice_result.get("success", True)
         if current_scene and hasattr(current_scene, "atmosphere"):
-            new_atmosphere = self._determine_new_atmosphere(
-                current_scene, success, consequences
-            )
+            new_atmosphere = self._determine_new_atmosphere(current_scene, success, consequences)
             if new_atmosphere != getattr(current_scene, "atmosphere", None):
                 developments["atmosphere_change"] = {
                     "from": str(getattr(current_scene, "atmosphere", "unknown")),
@@ -1161,9 +1129,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 
         return "你採取了行動" if success else "你的嘗試遇到了一些挑戰"
 
-    def _generate_simple_outcome_text(
-        self, choice_result: Dict[str, Any]
-    ) -> Optional[str]:
+    def _generate_simple_outcome_text(self, choice_result: Dict[str, Any]) -> Optional[str]:
         """Generate simple outcome text"""
         consequences = choice_result.get("consequences", {})
         outcomes = []
@@ -1201,9 +1167,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 
         # Player action response
         if player_input:
-            action_response = self._generate_action_response(
-                player_input, choice_result
-            )
+            action_response = self._generate_action_response(player_input, choice_result)
             narrative_parts.append(action_response)
 
         # Choice consequence narration
@@ -1234,9 +1198,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         }
         return atmosphere_map.get(atmosphere.lower(), "特殊的氛圍")
 
-    def _generate_action_response(
-        self, player_input: str, choice_result: Dict[str, Any]
-    ) -> str:
+    def _generate_action_response(self, player_input: str, choice_result: Dict[str, Any]) -> str:
         """Generate response to player action"""
 
         success = choice_result.get("success", True)
@@ -1265,9 +1227,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
             else:
                 return "事情的發展並不完全如你所願"
 
-    def _generate_consequence_narration(
-        self, choice_result: Dict[str, Any]
-    ) -> Optional[str]:
+    def _generate_consequence_narration(self, choice_result: Dict[str, Any]) -> Optional[str]:
         """Generate narration for choice consequences"""
 
         consequences = choice_result.get("consequences", {})
@@ -1276,12 +1236,8 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         # Stat changes
         if "stats" in consequences:
             stat_changes = consequences["stats"]
-            positive_changes = [
-                stat for stat, change in stat_changes.items() if change > 0
-            ]
-            negative_changes = [
-                stat for stat, change in stat_changes.items() if change < 0
-            ]
+            positive_changes = [stat for stat, change in stat_changes.items() if change > 0]
+            negative_changes = [stat for stat, change in stat_changes.items() if change < 0]
 
             if positive_changes:
                 narration_parts.append("你感到自己在某些方面有所成長")
@@ -1384,9 +1340,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         # State-based reactions
         if current_state:
             state_value = (
-                current_state.value
-                if hasattr(current_state, "value")
-                else str(current_state)
+                current_state.value if hasattr(current_state, "value") else str(current_state)
             )
             if state_value == "happy":
                 return "顯得心情愉悅"
@@ -1621,9 +1575,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         summary_parts = []
 
         # Count different event types
-        choices_made = len(
-            [e for e in session_events if e.get("type") == "choice_executed"]
-        )
+        choices_made = len([e for e in session_events if e.get("type") == "choice_executed"])
         characters_met = len(
             set([e.get("character") for e in session_events if e.get("character")])
         )
@@ -1721,9 +1673,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         character_context = []
         for char in present_characters:
             recent_dialogue = (
-                char.get_recent_dialogue(2)
-                if hasattr(char, "get_recent_dialogue")
-                else []
+                char.get_recent_dialogue(2) if hasattr(char, "get_recent_dialogue") else []
             )
             dialogue_summary = ""
             if recent_dialogue:
@@ -1740,16 +1690,12 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         # World state context
         world_context = []
         if context_memory.world_flags:
-            active_flags = [
-                f"{k}: {v}" for k, v in context_memory.world_flags.items() if v
-            ]
+            active_flags = [f"{k}: {v}" for k, v in context_memory.world_flags.items() if v]
             if active_flags:
                 world_context.append(f"世界狀態: {', '.join(active_flags[:5])}")
 
         if context_memory.main_plot_points:
-            world_context.append(
-                f"主要劇情: {'; '.join(context_memory.main_plot_points[-3:])}"
-            )
+            world_context.append(f"主要劇情: {'; '.join(context_memory.main_plot_points[-3:])}")
 
         # Recent player decisions context
         recent_decisions = []
@@ -1760,30 +1706,30 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
 故事上下文資訊：
 
 【當前狀態】
-持有物品: {', '.join(inventory) if inventory else '空手'}
-角色屬性: {', '.join([f'{k}:{v}' for k, v in stats.items()]) if stats else '正常'}
+持有物品: {", ".join(inventory) if inventory else "空手"}
+角色屬性: {", ".join([f"{k}:{v}" for k, v in stats.items()]) if stats else "正常"}
 
 【當前場景】
-場景: {current_scene.title if current_scene else '未知'}
-位置: {current_scene.location if current_scene else '未知'}
-時間: {current_scene.time_of_day if current_scene else '未知'}
-氣氛: {current_scene.atmosphere.value if current_scene and hasattr(current_scene.atmosphere, 'value') else '中性'}
-場景目標: {', '.join(current_scene.scene_objectives) if current_scene and current_scene.scene_objectives else '探索'}
+場景: {current_scene.title if current_scene else "未知"}
+位置: {current_scene.location if current_scene else "未知"}
+時間: {current_scene.time_of_day if current_scene else "未知"}
+氣氛: {current_scene.atmosphere.value if current_scene and hasattr(current_scene.atmosphere, "value") else "中性"}
+場景目標: {", ".join(current_scene.scene_objectives) if current_scene and current_scene.scene_objectives else "探索"}
 
 【在場角色】
-{chr(10).join(character_context) if character_context else '無其他角色'}
+{chr(10).join(character_context) if character_context else "無其他角色"}
 
 【最近故事發展】
-{chr(10).join(recent_narrative) if recent_narrative else '尚無近期紀錄'}
+{chr(10).join(recent_narrative) if recent_narrative else "尚無近期紀錄"}
 
 【最近場景歷史】
-{chr(10).join(recent_scenes) if recent_scenes else '故事剛開始'}
+{chr(10).join(recent_scenes) if recent_scenes else "故事剛開始"}
 
 【世界狀態】
-{chr(10).join(world_context) if world_context else '無特殊狀態'}
+{chr(10).join(world_context) if world_context else "無特殊狀態"}
 
 【最近玩家決定】
-{chr(10).join(recent_decisions) if recent_decisions else '尚無重要決定'}
+{chr(10).join(recent_decisions) if recent_decisions else "尚無重要決定"}
 
 【當前玩家行動】
 玩家輸入: {player_input}
@@ -1907,9 +1853,7 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
             return None
 
         # Get relationship context
-        relationship_score = context_memory.player_relationships.get(
-            character.character_id, 0
-        )
+        relationship_score = context_memory.player_relationships.get(character.character_id, 0)
 
         # Build character-specific context
         personality_traits = getattr(character, "personality_traits", ["友善"])
@@ -1928,8 +1872,8 @@ class EnhancedNarrativeGenerator(NarrativeGenerator):
         character_prompt = f"""
 角色資訊：
 - 姓名：{character.name}
-- 角色：{character.role.value if hasattr(character.role, 'value') else character.role}
-- 個性特徵：{', '.join(personality_traits)}
+- 角色：{character.role.value if hasattr(character.role, "value") else character.role}
+- 個性特徵：{", ".join(personality_traits)}
 - 說話風格：{speaking_style}
 - 當前狀態：{current_state}
 - 與玩家關係評分：{relationship_score}/10

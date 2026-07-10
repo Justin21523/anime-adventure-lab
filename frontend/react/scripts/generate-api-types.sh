@@ -6,7 +6,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo "🔄 Generating OpenAPI schema from backend..."
-python ../../../scripts/generate_openapi_schema.py
+python ../../scripts/generate_openapi_schema.py
 
 if [ ! -f "openapi.json" ]; then
     echo "❌ openapi.json not found!"

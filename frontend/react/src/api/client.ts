@@ -11,6 +11,7 @@ const apiClient = axios.create({
   // In production, VITE_API_BASE should be set to the actual API URL
   baseURL: import.meta.env.VITE_API_BASE || '/api/v1',
   timeout: 30000,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -27,9 +28,20 @@ apiClient.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`
     }
 
+    const method = config.method?.toUpperCase() || 'GET'
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      const csrf = document.cookie
+        .split('; ')
+        .find((entry) => entry.startsWith('saga_csrf='))
+        ?.split('=', 2)[1]
+      if (csrf) {
+        config.headers['X-CSRF-Token'] = decodeURIComponent(csrf)
+      }
+    }
+
     // Log request with structured logger
     logger.logApiRequest(
-      config.method?.toUpperCase() || 'GET',
+      method,
       config.url || '',
       {
         baseURL: config.baseURL,
@@ -154,15 +166,16 @@ export async function apiGet<T>(
 /**
  * POST request with automatic retry
  */
-export async function apiPost<T, D = any>(
+export async function apiPost<T, D = unknown>(
   url: string,
   data?: D,
   config?: ApiRequestConfig
 ): Promise<T> {
   const { retry, ...axiosConfig } = config || {}
 
-  // If retry is explicitly disabled, make request without retry
-  if (retry === false) {
+  // Mutations are not retried unless the caller explicitly opts in. Retrying
+  // session/job creation without an idempotency key can duplicate state.
+  if (retry === undefined || retry === false) {
     const response = await apiClient.post<T>(url, data, axiosConfig)
     return response.data
   }
@@ -179,15 +192,14 @@ export async function apiPost<T, D = any>(
 /**
  * PUT request with automatic retry
  */
-export async function apiPut<T, D = any>(
+export async function apiPut<T, D = unknown>(
   url: string,
   data?: D,
   config?: ApiRequestConfig
 ): Promise<T> {
   const { retry, ...axiosConfig } = config || {}
 
-  // If retry is explicitly disabled, make request without retry
-  if (retry === false) {
+  if (retry === undefined || retry === false) {
     const response = await apiClient.put<T>(url, data, axiosConfig)
     return response.data
   }
@@ -204,14 +216,14 @@ export async function apiPut<T, D = any>(
 /**
  * PATCH request with automatic retry
  */
-export async function apiPatch<T, D = any>(
+export async function apiPatch<T, D = unknown>(
   url: string,
   data?: D,
   config?: ApiRequestConfig
 ): Promise<T> {
   const { retry, ...axiosConfig } = config || {}
 
-  if (retry === false) {
+  if (retry === undefined || retry === false) {
     const response = await apiClient.patch<T>(url, data, axiosConfig)
     return response.data
   }
@@ -233,8 +245,7 @@ export async function apiDelete<T>(
 ): Promise<T> {
   const { retry, ...axiosConfig } = config || {}
 
-  // If retry is explicitly disabled, make request without retry
-  if (retry === false) {
+  if (retry === undefined || retry === false) {
     const response = await apiClient.delete<T>(url, axiosConfig)
     return response.data
   }
@@ -256,7 +267,7 @@ export async function apiDelete<T>(
 export async function apiUploadFile<T>(
   url: string,
   file: File,
-  additionalData?: Record<string, any>,
+  additionalData?: Record<string, unknown>,
   onProgress?: (progress: number) => void,
   config?: ApiRequestConfig
 ): Promise<T> {
@@ -308,7 +319,7 @@ export async function apiUploadFile<T>(
 export async function apiUploadFiles<T>(
   url: string,
   files: File[],
-  additionalData?: Record<string, any>,
+  additionalData?: Record<string, unknown>,
   onProgress?: (progress: number) => void,
   config?: ApiRequestConfig
 ): Promise<T> {

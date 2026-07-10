@@ -1,6 +1,7 @@
 # workers/celery_app.py
 import os
-import os
+import json as _json
+from datetime import datetime as _dt
 import redis
 from kombu import Queue
 from core.shared_cache import get_shared_cache
@@ -13,20 +14,35 @@ get_shared_cache()
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 redis_client = redis.from_url(REDIS_URL)
 
+# The default worker is intentionally CPU-safe and only registers the durable
+# v2 tasks.  The legacy task set imports PyTorch and model-specific adapters;
+# operators must opt in when running a separately provisioned AI worker.
+WORKER_PROFILE = os.getenv("WORKER_PROFILE", "core").strip().lower()
+CORE_TASK_MODULES = [
+    "workers.tasks.story_v2",
+    "workers.tasks.rag_v2",
+    "workers.tasks.maintenance_v2",
+]
+EXPERIMENTAL_TASK_MODULES = [
+    "workers.tasks",
+    "workers.tasks.batch",
+    "workers.tasks.t2i",
+    "workers.tasks.story",
+    "workers.tasks.datasets",
+    "workers.tasks.rag",
+    "workers.tasks.training",
+]
+task_modules = CORE_TASK_MODULES.copy()
+if WORKER_PROFILE in {"experimental", "ai", "full"}:
+    os.environ.setdefault("ENABLE_EXPERIMENTAL_WORKER_TASKS", "1")
+    task_modules.extend(EXPERIMENTAL_TASK_MODULES)
+
 # Celery app configuration
 celery_app = Celery(
     "multi_modal_lab",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=[
-        "workers.tasks",
-        "workers.tasks.batch",
-        "workers.tasks.t2i",
-        "workers.tasks.story",
-        "workers.tasks.datasets",
-        "workers.tasks.rag",
-        "workers.tasks.training",
-    ],
+    include=task_modules,
 )
 
 # Celery configuration
@@ -48,12 +64,14 @@ celery_app.conf.update(
         "batch_vqa_task": {"queue": "vision"},
         "batch_chat_task": {"queue": "text"},
         "story_turn_task": {"queue": "text"},
+        "story_turn_v2_task": {"queue": "text"},
         "train_lora_task": {"queue": "training"},
         "generate_image_async": {"queue": "vision"},
         "story_scene_image_task": {"queue": "vision"},
         "dataset_caption_task": {"queue": "vision"},
         "rag_rebuild_task": {"queue": "training"},
         "rag_upload_task": {"queue": "training"},
+        "document_index_v2_task": {"queue": "training"},
     },
     task_default_queue="default",
     task_queues=[
@@ -66,6 +84,12 @@ celery_app.conf.update(
     worker_send_task_events=True,
     task_send_sent_event=True,
     task_acks_late=True,
+    beat_schedule={
+        "reconcile-v2-jobs": {
+            "task": "reconcile_v2_jobs_task",
+            "schedule": 30.0,
+        }
+    },
 )
 
 
@@ -73,9 +97,6 @@ celery_app.conf.update(
 #
 # Publishes progress events to Redis PubSub so the API WebSocket endpoint
 # can relay them to the client in real time.
-
-import json as _json
-from datetime import datetime as _dt
 
 
 class TaskProgress:
@@ -105,9 +126,7 @@ class TaskProgress:
         topic = (
             "training.progress"
             if state == "PROGRESS"
-            else "training.complete"
-            if state == "SUCCESS"
-            else "training.failure"
+            else "training.complete" if state == "SUCCESS" else "training.failure"
         )
 
         try:

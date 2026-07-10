@@ -1,372 +1,50 @@
 <!doctype html>
-<html lang="zh-Hant">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Anime Adventure Lab - Portfolio Demo</title>
-    <meta
-      name="description"
-      content="Anime Adventure Lab portfolio demo: LLM story engine, RAG knowledge, agent tools, T2I scene generation, and WorldPack authoring."
-    />
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">Portfolio Demo Platform</p>
-        <h1>Anime Adventure Lab</h1>
-      </div>
-      <nav class="topnav" aria-label="Demo sections">
-        <a href="#demo">Demo</a>
-        <a href="#screenshots">Screenshots</a>
-        <a href="#recording">Recording</a>
-        <a href="#architecture">Architecture</a>
-        <a href="#evidence">Evidence</a>
-        <a href="#runbook">Runbook</a>
-      </nav>
-    </header>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SagaForge — Verified AI Backend Case Study</title>
+  <meta name="description" content="A verified case study of durable AI jobs, world-scoped RAG, human review, and deterministic delivery." />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar"><div><p class="eyebrow">AI application backend case study</p><h1>SagaForge</h1></div><nav class="topnav" aria-label="Case study sections"><a href="#problem">Problem</a><a href="#evidence">Evidence</a><a href="#screenshots">Screenshots</a><a href="#architecture">Architecture</a><a href="#recording">Recording</a></nav></header>
+  <main>
+    <section id="problem" class="demo-shell" aria-label="Project overview">
+      <aside class="scenario-panel"><div class="panel-heading"><p class="eyebrow">Verified workflow</p><h2>Beyond a stateless chat demo</h2></div><div class="scenario-list">
+        <div class="scenario active"><span>01</span><strong>Durable Story Turn</strong><small>Idempotency + execution fencing + persisted event chain</small></div>
+        <div class="scenario"><span>02</span><strong>World-scoped RAG</strong><small>MinIO document + pgvector evidence + saved citations</small></div>
+        <div class="scenario"><span>03</span><strong>Human Review</strong><small>Model proposal + optimistic version + explicit approval</small></div>
+      </div><div class="status-strip"><span class="dot ok"></span><span id="evidence-state">Loading evidence…</span><span>Deterministic profile</span></div><pre id="evidence-meta" class="mini-output">No fallback metrics are used.</pre></aside>
+      <section class="stage"><img class="scene-art" src="./assets/screenshot-story.png" alt="SagaForge story workbench" /><div class="stage-hud"><span>FastAPI + React</span><span>Postgres + pgvector</span><span>Celery + Redis</span></div><div class="dialogue"><div class="speaker">AI application backend</div><p>SagaForge persists AI work before dispatch, grounds narrative in isolated world knowledge, records every lifecycle transition, and prevents model output from mutating authoritative state without review.</p><p lang="zh-Hant">繁中摘要：這不是單純 CRUD；核心展示可靠工作佇列、RAG 證據、狀態一致性與人工審核邊界。</p></div></section>
+      <section id="evidence" class="inspector" aria-label="Generated verification evidence"><div class="metric-row"><div><strong id="metric-tests">Unavailable</strong><span>verified tests</span></div><div><strong id="metric-coverage">Unavailable</strong><span>v2 core coverage</span></div><div><strong id="metric-e2e">Unavailable</strong><span>Compose E2E</span></div></div><div class="tabs" role="tablist"><button class="tab active" data-tab="e2e">E2E</button><button class="tab" data-tab="events">Events</button><button class="tab" data-tab="benchmark">Benchmark</button><button class="tab" data-tab="verification">Verification</button></div><pre id="trace-output" class="trace">Evidence unavailable until generated.</pre></section>
+    </section>
 
-    <main>
-      <section id="demo" class="demo-shell" aria-label="Interactive demo">
-        <aside class="scenario-panel">
-          <div class="panel-heading">
-            <p class="eyebrow">Scenario</p>
-            <h2>Choose a showcase flow</h2>
-          </div>
-          <div class="scenario-list" role="list">
-            <button class="scenario active" data-scenario="neon" type="button">
-              <span>01</span>
-              <strong>Neon Archive Opening</strong>
-              <small>Story turn + WorldPack + T2I scene</small>
-            </button>
-            <button class="scenario" data-scenario="rag" type="button">
-              <span>02</span>
-              <strong>RAG Lore Retrieval</strong>
-              <small>Knowledge hits + citations + rerank trace</small>
-            </button>
-            <button class="scenario" data-scenario="agent" type="button">
-              <span>03</span>
-              <strong>Agent Assisted Choice</strong>
-              <small>Tool plan + state delta + review queue</small>
-            </button>
-          </div>
+    <section id="architecture" class="band"><div class="section-title"><p class="eyebrow">Architecture</p><h2>Technical decisions a reviewer can inspect</h2></div><div class="feature-grid">
+      <article><h3>Transactional lifecycle</h3><p>Job state and append-only audit events commit atomically. Request IDs, execution IDs, attempts, progress, and actors stay correlated.</p></article>
+      <article><h3>Delivery safety</h3><p>Idempotency keys serialize Story turns; leases recover abandoned work; execution fencing rejects stale worker completion.</p></article>
+      <article><h3>Grounded generation</h3><p>Documents are isolated by World, indexed asynchronously, and returned as persisted citations with chunk ID, excerpt, and score.</p></article>
+      <article><h3>Authority boundary</h3><p>AI output creates a pending patch. Optimistic locking and a human decision are required before World state advances.</p></article>
+    </div></section>
 
-          <div class="status-strip">
-            <div>
-              <span class="dot ok"></span>
-              Static mock
-            </div>
-            <div>
-              <span class="dot ok"></span>
-              No GPU required
-            </div>
-            <button id="health-check" class="text-button" type="button">Check demo API</button>
-          </div>
-          <pre id="health-output" class="mini-output">This page works without a backend. API check is optional.</pre>
-        </aside>
+    <section id="screenshots" class="band"><div class="section-title"><p class="eyebrow">Product evidence</p><h2>Real workbench states</h2></div><div class="screenshot-grid">
+      <figure><img src="./assets/screenshot-dashboard.png" alt="Persistent World and Session dashboard" /><figcaption><strong>Persistent dashboard</strong><span>Versioned Worlds and resumable Sessions.</span></figcaption></figure>
+      <figure><img src="./assets/screenshot-knowledge.png" alt="Indexed lore document" /><figcaption><strong>Knowledge ingestion</strong><span>Object checksum, job state, and chunk count.</span></figcaption></figure>
+      <figure><img src="./assets/screenshot-rag.png" alt="RAG citation evidence" /><figcaption><strong>RAG evidence</strong><span>Filename, chunk, excerpt, and similarity score.</span></figcaption></figure>
+      <figure><img src="./assets/screenshot-job-running.png" alt="Running durable job" /><figcaption><strong>Durable job</strong><span>Progress and correlation identifiers.</span></figcaption></figure>
+      <figure><img src="./assets/screenshot-review.png" alt="Pending review proposal" /><figcaption><strong>Pending review</strong><span>Model proposal cannot write authority directly.</span></figcaption></figure>
+      <figure><img src="./assets/screenshot-review-approved.png" alt="Approved proposal" /><figcaption><strong>Versioned approval</strong><span>Human decision advances the World version.</span></figcaption></figure>
+      <figure><img src="./assets/screenshot-system.png" alt="Runtime status" /><figcaption><strong>Runtime status</strong><span>Dependencies, profiles, and migration revision.</span></figcaption></figure>
+      <figure><img src="./assets/screenshot-mobile.png" alt="Responsive mobile workbench" /><figcaption><strong>Responsive UI</strong><span>Core workflow on a mobile viewport.</span></figcaption></figure>
+    </div></section>
 
-        <section class="stage" aria-label="Visual novel showcase">
-          <img class="scene-art" src="./assets/neon-market.svg" alt="Stylized neon archive market scene" />
-          <div class="stage-hud">
-            <span id="hud-world">World: Neon Archive</span>
-            <span id="hud-turn">Turn 7</span>
-            <span id="hud-mode">RAG auto</span>
-          </div>
-          <div class="dialogue">
-            <div class="speaker" id="speaker">Archivist Mira</div>
-            <p id="narrative">
-              The archive gate wakes as your token touches the scanner. Three market signs flicker in sequence, and Mira warns that the memory shard is already rewriting nearby records.
-            </p>
-          </div>
-        </section>
-
-        <section class="inspector" aria-label="Pipeline evidence">
-          <div class="metric-row">
-            <div>
-              <strong id="metric-latency">0.12s</strong>
-              <span>mock turn latency</span>
-            </div>
-            <div>
-              <strong id="metric-hits">4</strong>
-              <span>knowledge hits</span>
-            </div>
-            <div>
-              <strong id="metric-tools">2</strong>
-              <span>agent tools</span>
-            </div>
-          </div>
-
-          <div class="tabs" role="tablist" aria-label="Pipeline tabs">
-            <button class="tab active" data-tab="story" type="button">Story</button>
-            <button class="tab" data-tab="rag" type="button">RAG</button>
-            <button class="tab" data-tab="agent" type="button">Agent</button>
-            <button class="tab" data-tab="t2i" type="button">T2I</button>
-          </div>
-          <pre id="trace-output" class="trace"></pre>
-        </section>
-      </section>
-
-      <section id="screenshots" class="band">
-        <div class="section-title">
-          <p class="eyebrow">Screenshots</p>
-          <h2>Ready-to-share interview views</h2>
-        </div>
-        <div class="screenshot-grid">
-          <figure>
-            <img src="./assets/screenshot-story.svg" alt="Story turn demo screenshot" />
-            <figcaption>
-              <strong>Story-first gameplay</strong>
-              <span>Scenario picker, visual novel stage, mock latency, and traceable turn state.</span>
-            </figcaption>
-          </figure>
-          <figure>
-            <img src="./assets/screenshot-rag.svg" alt="RAG retrieval demo screenshot" />
-            <figcaption>
-              <strong>World-scoped RAG</strong>
-              <span>Query, rerank mode, lore documents, citation scores, and retrieval evidence.</span>
-            </figcaption>
-          </figure>
-          <figure>
-            <img src="./assets/screenshot-agent.svg" alt="Agent assisted choice demo screenshot" />
-            <figcaption>
-              <strong>Agent decision support</strong>
-              <span>Tool plan, risk-aware recommendation, state delta, and review queue.</span>
-            </figcaption>
-          </figure>
-        </div>
-      </section>
-
-      <section id="recording" class="band recording">
-        <div class="section-title">
-          <p class="eyebrow">Video Demo</p>
-          <h2>Playable recording for GitHub Pages</h2>
-        </div>
-        <div class="recording-layout">
-          <video controls preload="metadata" poster="./assets/demo-video-poster.svg">
-            <source src="./assets/demo-recording.mp4" type="video/mp4" />
-            Your browser does not support the demo video.
-          </video>
-          <div class="recording-notes">
-            <h3>What the recording shows</h3>
-            <p>Stable public demo flow: story turn, RAG trace, agent plan, and T2I hooks in a mock-safe environment that does not require a GPU or private model files.</p>
-            <ul>
-              <li>Use this video as the first artifact when a reviewer only has one minute.</li>
-              <li>Use the screenshots above for resume, portfolio, and interview slide decks.</li>
-              <li>Use the live demo area at the top when you want to show the data flow interactively.</li>
-            </ul>
-          </div>
-        </div>
-      </section>
-
-      <section id="architecture" class="band">
-        <div class="section-title">
-          <p class="eyebrow">Architecture</p>
-          <h2>What this project demonstrates</h2>
-        </div>
-        <div class="feature-grid">
-          <article>
-            <h3>Story Engine</h3>
-            <p>Session state, choices, memory summaries, relationship changes, save/load, and visual novel playback.</p>
-          </article>
-          <article>
-            <h3>RAG + WorldPack</h3>
-            <p>World-scoped lore ingestion, document metadata, retrieval modes, rerank flags, and citations per turn.</p>
-          </article>
-          <article>
-            <h3>Agent Layer</h3>
-            <p>Tool catalog, assisted decisions, state deltas, world writeback suggestions, and review queue controls.</p>
-          </article>
-          <article>
-            <h3>T2I Pipeline</h3>
-            <p>Scene prompt construction, LoRA/world visual style hooks, background jobs, and mock-safe demo outputs.</p>
-          </article>
-        </div>
-      </section>
-
-      <section id="evidence" class="band evidence">
-        <div class="section-title">
-          <p class="eyebrow">Demo Evidence</p>
-          <h2>Interview-ready proof points</h2>
-        </div>
-        <div class="evidence-grid">
-          <div class="evidence-item">
-            <span class="badge">Backend</span>
-            <strong>FastAPI smoke gate</strong>
-            <p><code>pytest -m smoke</code> covers story turns, RAG batch upload, World Studio, and job artifacts in mock mode.</p>
-          </div>
-          <div class="evidence-item">
-            <span class="badge">Frontend</span>
-            <strong>React/Vite build</strong>
-            <p>The workbench builds as a production bundle and can be shown beside this static portfolio page.</p>
-          </div>
-          <div class="evidence-item">
-            <span class="badge">Deploy</span>
-            <strong>Static-first portfolio</strong>
-            <p>GitHub Pages or Vercel can host this demo without model downloads, GPU scheduling, Redis, or Celery workers.</p>
-          </div>
-        </div>
-      </section>
-
-      <section id="runbook" class="band runbook">
-        <div class="section-title">
-          <p class="eyebrow">Recording Flow</p>
-          <h2>Suggested 90-second walkthrough</h2>
-        </div>
-        <ol>
-          <li>Open this page and switch through the three scenarios to show the product value.</li>
-          <li>Play the embedded recording and show the screenshot gallery for quick visual proof.</li>
-          <li>Show the visual novel stage, then open the trace tabs to explain Story, RAG, Agent, and T2I data flow.</li>
-          <li>Run <code>make test-smoke</code> and <code>cd frontend/react && npm run build</code> as proof that the demo gate passes.</li>
-          <li>Explain that full GPU inference is optional and documented separately; public demo uses stable mock data.</li>
-        </ol>
-      </section>
-    </main>
-
-    <script>
-      const scenarios = {
-        neon: {
-          hud: ["World: Neon Archive", "Turn 7", "RAG auto"],
-          speaker: "Archivist Mira",
-          narrative:
-            "The archive gate wakes as your token touches the scanner. Three market signs flicker in sequence, and Mira warns that the memory shard is already rewriting nearby records.",
-          metrics: ["0.12s", "4", "2"],
-          traces: {
-            story: {
-              player_input: "Scan the memory token and ask Mira what changed.",
-              choices: ["Inspect the rewritten ledger", "Ask Mira to compare old lore", "Mark the shard as unstable"],
-              state_delta: { flags_added: ["archive_gate_awake"], relationship_mira: "+2" }
-            },
-            rag: {
-              mode: "auto",
-              query: "Neon Archive memory shard market gate",
-              hits: [
-                { doc: "worldpack/neon_archive.md", score: 0.91 },
-                { doc: "lore/memory_shards.md", score: 0.86 }
-              ]
-            },
-            agent: {
-              plan: ["compare_world_flags", "recommend_safe_choice"],
-              tools: ["relationship_state", "world_state"],
-              review_queue: "state_delta pending"
-            },
-            t2i: {
-              prompt: "anime style, neon archive market, glowing gate, two adventurers, cinematic lighting",
-              job: "scene_image completed (mock-safe)"
-            }
-          }
-        },
-        rag: {
-          hud: ["World: Moonlit Library", "Turn 11", "Rerank on"],
-          speaker: "System Narrator",
-          narrative:
-            "Your question pulls four fragments from the restricted stacks. The reranker moves a ritual footnote above a generic bestiary entry, changing the next available clue.",
-          metrics: ["0.18s", "6", "1"],
-          traces: {
-            story: {
-              player_input: "Search the library for the seal's missing phrase.",
-              choices: ["Read the ritual footnote", "Cross-check the bestiary", "Ask the librarian for context"],
-              state_delta: { flags_added: ["seal_phrase_candidate"], intelligence: "+1" }
-            },
-            rag: {
-              mode: "on",
-              rerank: true,
-              hits: [
-                { doc: "ritual_notes.md", score: 0.94 },
-                { doc: "archive_index.json", score: 0.89 },
-                { doc: "bestiary/moon_warden.md", score: 0.72 }
-              ]
-            },
-            agent: {
-              plan: ["summarize_citations"],
-              tools: ["rag_search"],
-              review_queue: "none"
-            },
-            t2i: {
-              prompt: "moonlit library, floating note cards, ritual diagram, quiet suspense",
-              job: "not requested this turn"
-            }
-          }
-        },
-        agent: {
-          hud: ["World: Skyrail Bazaar", "Turn 14", "Agent assist"],
-          speaker: "Tactical Agent",
-          narrative:
-            "The agent flags the bridge route as risky because your stamina is low and the merchant relationship recently improved. It suggests a negotiation path and queues a world update for review.",
-          metrics: ["0.21s", "3", "4"],
-          traces: {
-            story: {
-              player_input: "Find a safe way past the skyrail guards.",
-              choices: ["Negotiate with the merchant", "Sneak across the bridge", "Spend a favor to get a pass"],
-              state_delta: { energy: "-5", flags_added: ["merchant_pass_possible"] }
-            },
-            rag: {
-              mode: "auto",
-              query: "Skyrail guard pass merchant favor",
-              hits: [{ doc: "factions/skyrail_guard.md", score: 0.88 }]
-            },
-            agent: {
-              plan: ["check_relationships", "estimate_risk", "draft_world_writeback"],
-              tools: ["relationship_state", "calculator", "world_state", "rag_search"],
-              review_queue: "world_writeback pending"
-            },
-            t2i: {
-              prompt: "skyrail bazaar, suspended bridge, merchant stall, tense negotiation",
-              job: "queued for async worker"
-            }
-          }
-        }
-      };
-
-      let currentScenario = "neon";
-      let currentTab = "story";
-
-      const $ = (selector) => document.querySelector(selector);
-      const $$ = (selector) => Array.from(document.querySelectorAll(selector));
-
-      function render() {
-        const data = scenarios[currentScenario];
-        $("#hud-world").textContent = data.hud[0];
-        $("#hud-turn").textContent = data.hud[1];
-        $("#hud-mode").textContent = data.hud[2];
-        $("#speaker").textContent = data.speaker;
-        $("#narrative").textContent = data.narrative;
-        $("#metric-latency").textContent = data.metrics[0];
-        $("#metric-hits").textContent = data.metrics[1];
-        $("#metric-tools").textContent = data.metrics[2];
-        $("#trace-output").textContent = JSON.stringify(data.traces[currentTab], null, 2);
-      }
-
-      $$(".scenario").forEach((button) => {
-        button.addEventListener("click", () => {
-          currentScenario = button.dataset.scenario;
-          $$(".scenario").forEach((item) => item.classList.toggle("active", item === button));
-          render();
-        });
-      });
-
-      $$(".tab").forEach((button) => {
-        button.addEventListener("click", () => {
-          currentTab = button.dataset.tab;
-          $$(".tab").forEach((item) => item.classList.toggle("active", item === button));
-          render();
-        });
-      });
-
-      $("#health-check").addEventListener("click", async () => {
-        const output = $("#health-output");
-        output.textContent = "Checking api/v1/health...";
-        try {
-          const response = await fetch("api/v1/health");
-          const text = await response.text();
-          output.textContent = response.ok
-            ? text.slice(0, 280)
-            : `API unavailable (${response.status}). Static demo remains fully usable.`;
-        } catch (error) {
-          output.textContent = "API unavailable. Static demo remains fully usable.";
-        }
-      });
-
-      render();
-    </script>
-  </body>
+    <section id="recording" class="band recording"><div class="section-title"><p class="eyebrow">80-second overview</p><h2>Recorded workflow</h2></div><div class="recording-layout"><video controls preload="metadata" poster="./assets/screenshot-story.png"><source src="./assets/demo-recording.mp4" type="video/mp4" />Your browser does not support video.</video><div class="recording-notes"><h3>Interview sequence</h3><ol><li>Frame the consistency problem.</li><li>Run lore → turn → citation.</li><li>Inspect the job event chain and worker recovery.</li><li>Approve the proposal and show the version change.</li><li>Close with generated evidence and ADR tradeoffs.</li></ol><p>Reproduce with <code>make demo-up demo-e2e demo-benchmark portfolio-evidence</code>.</p></div></div></section>
+  </main>
+  <script>
+    const $ = (selector) => document.querySelector(selector); let evidence = null; let activeTab = "e2e";
+    function render() { if (!evidence) { $("#trace-output").textContent = "Evidence unavailable. Generate verification artifacts before publishing."; return; } const views = { e2e: evidence.e2e, events: evidence.e2e?.evidence?.event_types ?? null, benchmark: evidence.benchmark, verification: { verified: evidence.verified, generated_at: evidence.generated_at, source_fingerprint: evidence.source_fingerprint, migration_head: evidence.migration_head } }; $("#trace-output").textContent = JSON.stringify(views[activeTab], null, 2); }
+    document.querySelectorAll(".tab").forEach((button) => button.addEventListener("click", () => { activeTab = button.dataset.tab; document.querySelectorAll(".tab").forEach((item) => item.classList.toggle("active", item === button)); render(); }));
+    fetch("./data/evidence.json", { cache: "no-store" }).then((response) => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); }).then((data) => { if (data.schema_version !== 1) throw new Error("Unsupported evidence schema"); evidence = data; $("#evidence-state").textContent = data.verified ? "Evidence verified" : "Evidence incomplete"; $("#metric-tests").textContent = data.tests ? String(data.tests.tests) : "Unavailable"; $("#metric-coverage").textContent = data.coverage ? `${data.coverage.percent}%` : "Unavailable"; $("#metric-e2e").textContent = data.e2e ? (data.e2e.passed ? "Passed" : "Failed") : "Unavailable"; $("#evidence-meta").textContent = `Generated ${data.generated_at}\nSource ${data.source_fingerprint}`; render(); }).catch((error) => { $("#evidence-state").textContent = "Evidence unavailable"; $("#evidence-meta").textContent = `Evidence unavailable: ${error.message}`; render(); });
+  </script>
+</body>
 </html>
