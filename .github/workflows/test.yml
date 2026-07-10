@@ -139,7 +139,9 @@ jobs:
           python-version: '3.10'
       - run: pip install httpx
       - name: Start isolated deterministic stack
-        run: docker compose -p sagaforge-ci -f docker-compose.prod.yml -f docker-compose.demo.yml up -d --build --wait
+        run: |
+          docker compose -p sagaforge-ci -f docker-compose.prod.yml -f docker-compose.demo.yml up -d --build
+          timeout 180 bash -c 'until curl -fsS http://127.0.0.1:8000/healthz; do sleep 2; done'
       - name: Run recovery, RAG, review, and event-chain scenario
         run: python scripts/e2e_portfolio.py --compose-project sagaforge-ci --output reports/e2e.json
       - uses: actions/upload-artifact@v4
