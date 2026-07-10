@@ -1,0 +1,28 @@
+services:
+  api:
+    environment:
+      API_COOKIE_SECURE: "1"
+      API_CORS_ORIGINS: https://neojustin.dothost.net
+      API_TRUSTED_HOSTS: neojustin.dothost.net,localhost,127.0.0.1,api
+    networks:
+      - default
+      - portfolio_gateway
+
+  frontend:
+    build:
+      args:
+        VITE_PUBLIC_BASE: /p/anime-adventure-lab/app/
+        VITE_API_V2_BASE: /p/anime-adventure-lab/api/v2
+    networks:
+      - default
+      - portfolio_gateway
+
+  portfolio:
+    networks:
+      - default
+      - portfolio_gateway
+
+networks:
+  portfolio_gateway:
+    external: true
+    name: ${PORTFOLIO_GATEWAY_NETWORK:-justin-portfolio_default}

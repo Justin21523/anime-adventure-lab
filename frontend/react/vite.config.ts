@@ -3,11 +3,12 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 
 const apiTarget = process.env.VITE_PROXY_TARGET || process.env.API_PROXY_TARGET || 'http://127.0.0.1:8000'
+const publicBase = process.env.VITE_PUBLIC_BASE || '/'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: '/',
+  base: publicBase.endsWith('/') ? publicBase : `${publicBase}/`,
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

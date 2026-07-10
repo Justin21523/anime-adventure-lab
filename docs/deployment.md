@@ -147,3 +147,17 @@ Do not expose the deterministic demo overlay directly to the internet. For a
 remote production deployment, terminate TLS at a trusted reverse proxy, set
 secure cookies, restrict CORS/hosts, rotate all `.env.deploy` credentials, and
 use managed secret storage rather than an environment file.
+
+## dothost portfolio gateway
+
+`docker-compose.remote.yml` joins only the API, Workbench, and public case-study
+containers to the existing `justin-portfolio_default` gateway network. Database,
+Redis, and MinIO remain on the private SagaForge network. The gateway routes are:
+
+- `/p/anime-adventure-lab/` → public verified case study
+- `/p/anime-adventure-lab/app/` → authenticated React workbench
+- `/p/anime-adventure-lab/api/v2/` → FastAPI v2, with the prefix removed
+
+The remote frontend build uses matching Vite base/API paths. Deploy with the
+production and remote files; do not include `docker-compose.demo.yml`, because
+it disables secure cookies for local HTTP demonstrations.
